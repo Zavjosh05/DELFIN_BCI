@@ -1,0 +1,24 @@
+PyQt6>=6.6
+pyqtgraph>=0.13
+numpy>=1.26
+scipy>=1.11
+pandas>=2.1
+scikit-learn>=1.3
+joblib>=1.3
+# Opcional: solo para la adquisición en vivo vía LSL (OpenViBE Acquisition Server).
+# La app funciona sin él; la fuente Simulado y CyKit/TCP no lo necesitan.
+pylsl>=1.16
+
+# Opcional: redes neuronales (MLP/CNN/LSTM). Sin torch, la app funciona y solo
+# se deshabilitan las opciones de red neuronal. En Windows, para la rueda CPU:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+
+# Opcional: lector nativo del Emotiv EPOC+ por USB (sin OpenViBE ni CyKit).
+# Solo se necesitan para la fuente "Emotiv EPOC+ (USB directo)".
+hidapi>=0.14
+pycryptodome>=3.20
+
+# Opcional: clasificadores de geometría de Riemann y CSP. Sin pyriemann, la app
+# funciona y solo se deshabilitan esos modelos.
+pyriemann>=0.5

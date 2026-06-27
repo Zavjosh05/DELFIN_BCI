@@ -1,0 +1,51 @@
+{
+  "name": "Prueba_Interfaz",
+  "version": "0.1.0",
+  "sources": [
+    {
+      "id": "9d728696",
+      "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_001.csv",
+      "alias": "Prueba_001"
+    },
+    {
+      "id": "e5e6e843",
+      "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_002.csv",
+      "alias": "Prueba_002"
+    }
+  ],
+  "state": {
+    "pipeline": [],
+    "segments": [
+      {
+        "id": "60261468",
+        "source_id": "9d728696",
+        "start": 668,
+        "stop": 1282,
+        "label": "clase_1",
+        "channels": null,
+        "note": ""
+      }
+    ],
+    "channel_aliases": {
+      "Channel 1": "AF3",
+      "Channel 2": "F7",
+      "Channel 3": "F3",
+      "Channel 4": "FC5",
+      "Channel 5": "T7",
+      "Channel 6": "P7",
+      "Channel 7": "O1",
+      "Channel 8": "O2",
+      "Channel 9": "P8",
+      "Channel 10": "T8",
+      "Channel 11": "FC6",
+      "Channel 12": "F4",
+      "Channel 13": "F8",
+      "Channel 14": "AF4"
+    },
+    "excluded_channels": [],
+    "dataset": {
+      "use_bands": true,
+      "use_time": true
+    }
+  }
+}

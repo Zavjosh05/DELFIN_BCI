@@ -1,0 +1,19 @@
+# Entorno virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Proyectos y artefactos generados por la app
+*.eegproj/
+sandbox/
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

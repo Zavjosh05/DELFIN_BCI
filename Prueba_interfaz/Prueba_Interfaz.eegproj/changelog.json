@@ -1,0 +1,259 @@
+{
+  "history": [
+    {
+      "section": "sources",
+      "before": [],
+      "after": [
+        {
+          "id": "9d728696",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_001.csv",
+          "alias": "Prueba_001"
+        }
+      ],
+      "description": "Añadir fuente «Prueba_001»",
+      "timestamp": 1782509337.7378864,
+      "event": "do"
+    },
+    {
+      "section": "sources",
+      "before": [
+        {
+          "id": "9d728696",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_001.csv",
+          "alias": "Prueba_001"
+        }
+      ],
+      "after": [
+        {
+          "id": "9d728696",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_001.csv",
+          "alias": "Prueba_001"
+        },
+        {
+          "id": "e5e6e843",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_002.csv",
+          "alias": "Prueba_002"
+        }
+      ],
+      "description": "Añadir fuente «Prueba_002»",
+      "timestamp": 1782509337.7646558,
+      "event": "do"
+    },
+    {
+      "section": "pipeline",
+      "before": [],
+      "after": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "description": "Añadir paso: Filtro notch (red eléctrica)",
+      "timestamp": 1782509378.4788995,
+      "event": "do"
+    },
+    {
+      "section": "pipeline",
+      "before": [],
+      "after": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "description": "Añadir paso: Filtro notch (red eléctrica)",
+      "timestamp": 1782509378.4788995,
+      "event": "undo"
+    },
+    {
+      "section": "pipeline",
+      "before": [],
+      "after": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "description": "Añadir paso: Filtro notch (red eléctrica)",
+      "timestamp": 1782509395.8029125,
+      "event": "do"
+    },
+    {
+      "section": "pipeline",
+      "before": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "after": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "description": "Modificar parámetros de paso",
+      "timestamp": 1782509406.543705,
+      "event": "do"
+    },
+    {
+      "section": "segments",
+      "before": [],
+      "after": [
+        {
+          "id": "60261468",
+          "source_id": "9d728696",
+          "start": 668,
+          "stop": 1282,
+          "label": "clase_1",
+          "channels": null,
+          "note": ""
+        }
+      ],
+      "description": "Añadir segmento «clase_1»",
+      "timestamp": 1782509435.9703393,
+      "event": "do"
+    },
+    {
+      "section": "pipeline",
+      "before": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "after": [],
+      "description": "Eliminar paso de preprocesamiento",
+      "timestamp": 1782509505.6643002,
+      "event": "do"
+    }
+  ],
+  "undo": [
+    {
+      "section": "sources",
+      "before": [],
+      "after": [
+        {
+          "id": "9d728696",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_001.csv",
+          "alias": "Prueba_001"
+        }
+      ],
+      "description": "Añadir fuente «Prueba_001»",
+      "timestamp": 1782509337.7378864
+    },
+    {
+      "section": "sources",
+      "before": [
+        {
+          "id": "9d728696",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_001.csv",
+          "alias": "Prueba_001"
+        }
+      ],
+      "after": [
+        {
+          "id": "9d728696",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_001.csv",
+          "alias": "Prueba_001"
+        },
+        {
+          "id": "e5e6e843",
+          "path": "C:\\Users\\josh\\Documents\\GitHub\\DELFIN_BCI\\EEG\\Prueba_002.csv",
+          "alias": "Prueba_002"
+        }
+      ],
+      "description": "Añadir fuente «Prueba_002»",
+      "timestamp": 1782509337.7646558
+    },
+    {
+      "section": "pipeline",
+      "before": [],
+      "after": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "description": "Añadir paso: Filtro notch (red eléctrica)",
+      "timestamp": 1782509395.8029125
+    },
+    {
+      "section": "pipeline",
+      "before": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "after": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "description": "Modificar parámetros de paso",
+      "timestamp": 1782509406.543705
+    },
+    {
+      "section": "segments",
+      "before": [],
+      "after": [
+        {
+          "id": "60261468",
+          "source_id": "9d728696",
+          "start": 668,
+          "stop": 1282,
+          "label": "clase_1",
+          "channels": null,
+          "note": ""
+        }
+      ],
+      "description": "Añadir segmento «clase_1»",
+      "timestamp": 1782509435.9703393
+    },
+    {
+      "section": "pipeline",
+      "before": [
+        {
+          "type": "notch",
+          "params": {
+            "freq": 60.0,
+            "q": 30.0
+          }
+        }
+      ],
+      "after": [],
+      "description": "Eliminar paso de preprocesamiento",
+      "timestamp": 1782509505.6643002
+    }
+  ],
+  "redo": []
+}
