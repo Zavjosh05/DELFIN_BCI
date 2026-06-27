@@ -103,6 +103,11 @@ class AcquisitionPanel(QWidget):
         marker_row.addWidget(self.marker_edit, 1)
         marker_row.addWidget(self.marker_btn)
         rec_layout.addLayout(marker_row)
+        mk_hint = QLabel("Cada marcador se guarda en la grabación y puede convertirse "
+                         "en una clase: Dataset → «Segmentos desde marcadores».")
+        mk_hint.setWordWrap(True)
+        mk_hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+        rec_layout.addWidget(mk_hint)
         layout.addWidget(rec_box)
 
         self.status = QLabel("Desconectado.")

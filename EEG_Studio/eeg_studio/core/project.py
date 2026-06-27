@@ -302,6 +302,45 @@ class Project:
     def labels(self) -> list[str]:
         return sorted({s["label"] for s in self.state["segments"]})
 
+    def segments_from_markers(self, source_id: str, window: int = 0) -> int:
+        """Crea segmentos a partir de los marcadores (columna Event Id).
+
+        Cada marcador genera un segmento etiquetado con el texto del marcador, de
+        modo que los marcadores **sirven como clases**. ``window`` = nº de muestras
+        tras el marcador (0 = hasta el siguiente marcador o el final). Devuelve el
+        número de segmentos creados.
+        """
+        rec = self.get_recording(source_id)
+        events = rec.events
+        if not events:
+            return 0
+        starts = [int(e["sample"]) for e in events]
+        new_segments = list(self.state["segments"])
+        created = 0
+        for i, ev in enumerate(events):
+            start = starts[i]
+            if window and window > 0:
+                stop = min(start + int(window), rec.n_samples)
+            else:
+                stop = starts[i + 1] if i + 1 < len(starts) else rec.n_samples
+            if stop - start < 2:
+                continue
+            label = str(ev.get("id", "")).strip() or "marcador"
+            new_segments.append({
+                "id": uuid.uuid4().hex[:8],
+                "source_id": source_id,
+                "start": start,
+                "stop": int(stop),
+                "label": label,
+                "channels": None,
+                "note": "desde marcador",
+            })
+            created += 1
+        if created:
+            self._commit("segments", new_segments,
+                         f"Segmentos desde marcadores ({created})")
+        return created
+
     # ------------------------------------------------------------------ #
     # Preprocesamiento: edición del pipeline
     # ------------------------------------------------------------------ #
@@ -373,3 +412,15 @@ class Project:
         if cmd.section == "pipeline":
             self.invalidate_processed()
         return True
+
+    def goto_history(self, target_applied: int) -> None:
+        """Navega en el historial hasta dejar ``target_applied`` comandos aplicados."""
+        guard = 0
+        while self.changelog.applied_count() > target_applied and guard < 10000:
+            if not self.undo():
+                break
+            guard += 1
+        while self.changelog.applied_count() < target_applied and guard < 10000:
+            if not self.redo():
+                break
+            guard += 1

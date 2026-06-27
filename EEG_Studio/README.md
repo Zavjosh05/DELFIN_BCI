@@ -73,6 +73,20 @@ python -m venv .venv
 .\.venv\Scripts\python.exe run.py
 ```
 
+## Proyecto de ejemplo
+
+Para explorar la app sin partir de cero, genera un proyecto de ejemplo (referencia
+los CSV de `EEG/`, define un pipeline, segmentos etiquetados, un dataset y un
+modelo entrenado):
+
+```powershell
+.\.venv\Scripts\python.exe examples\create_example_project.py
+```
+
+Esto crea `examples\Ejemplo.eegproj`. Ábrelo en la app con **Proyecto → Abrir
+proyecto…**. Como los proyectos referencian los CSV por ruta absoluta, este
+script es la forma recomendada de (re)crearlo con las rutas correctas del equipo.
+
 ## Flujo de trabajo típico
 
 1. **Proyecto → Nuevo proyecto** y elige carpeta/nombre.
@@ -90,7 +104,13 @@ python -m venv .venv
    cruzada y **Clasificar selección actual** o **Guardar modelo**.
 
 Usa **Editar → Deshacer/Rehacer** (Ctrl+Z / Ctrl+Y) para revertir cualquier
-cambio. El historial aparece en el panel inferior.
+cambio. El **Historial** (panel inferior) muestra la línea de tiempo con iconos
+y hora: el punto **actual** va resaltado y los pasos rehacibles atenuados. Haz
+**clic en cualquier punto** para navegar directamente a ese estado.
+
+> **Ganancia** (control del visor): es una amplificación **solo visual** de la
+> señal (x2 = el doble de alta en pantalla). No modifica los datos; sirve para
+> ver mejor fluctuaciones pequeñas o evitar que señales grandes se solapen.
 
 ## Etapas: cómo se usan y qué aportan
 
@@ -99,8 +119,10 @@ cambio. El historial aparece en el panel inferior.
   destructiva (el CSV nunca cambia).
 - **Cómo se usa:** pestaña *Preprocesamiento* → elige un paso → **Añadir paso**.
   Selecciónalo en la lista para ver su descripción y editar sus parámetros (cada
-  uno explica qué hace y qué efecto tiene); reordena con ▲▼. La vista *Procesada*
-  se actualiza al instante.
+  uno explica qué hace y qué efecto tiene); reordena con ▲▼ o elimínalo. El paso
+  en edición queda **resaltado** y la selección **sigue al paso** al moverlo, para
+  saber siempre cuál se está modificando. La vista *Procesada* se actualiza al
+  instante.
 - **Qué ganas:** señal más limpia y comparable. *Pasa-banda 1–45 Hz* quita deriva
   y ruido alto; *notch 50/60 Hz* elimina la red eléctrica; *CAR* resta el ruido
   común; **ICA** elimina parpadeos/músculo automáticamente → mejor exactitud.
@@ -116,9 +138,15 @@ cambio. El historial aparece en el panel inferior.
 ### 3. Construcción del dataset
 - **Qué es:** reúne los segmentos etiquetados de uno o varios CSV en una matriz
   lista para entrenar.
-- **Cómo se usa:** en el visor, arrastra la región y **Crear segmento** con su
+- **Cómo se usa:** en el visor, los **marcadores** (Event Id) se dibujan como
+  líneas con su etiqueta (interruptor *Marcadores*), como **referencia visual**
+  para decidir dónde segmentar. Arrastra la región y **Crear segmento** con su
   etiqueta (repite con varias clases/CSV); en *Dataset* pulsa **Construir
-  dataset** y, opcionalmente, **Guardar dataset**.
+  dataset** y, opcionalmente, **Guardar dataset**. (Atajo opcional: *Segmentos
+  desde marcadores* crea segmentos automáticamente a partir de los marcadores.)
+- **Ayuda visual:** los segmentos ya creados se **sombrean sobre la señal** con
+  un color por clase y su etiqueta (interruptor *Segmentos*), para ver de un
+  vistazo qué tramos ya están etiquetados mientras trabajas.
 - **Qué ganas:** integras varias grabaciones y clases en un conjunto único y
   reproducible; la extracción aprovecha varios núcleos (ver *Rendimiento*).
 
@@ -157,7 +185,15 @@ construcción y entrenamiento en equipos multinúcleo.
 Pestaña **Tiempo real** (dock derecho) + vista **Tiempo real** (centro). Eliges
 la fuente, **Conectar**, y opcionalmente **Iniciar grabación** (escribe un CSV
 nuevo en `recordings/` del proyecto, formato OpenViBE, que puedes añadir como
-fuente al terminar). Los **marcadores** se vuelcan en la columna `Event Id`.
+fuente al terminar).
+
+**Marcadores.** Durante la grabación, escribe una etiqueta y pulsa **Marcar**: el
+marcador se guarda en la columna `Event Id`. Esos marcadores se **dibujan sobre
+la señal** en el visor (interruptor *Marcadores*) como **ayuda visual** para
+etiquetar manualmente las regiones de interés. Como atajo opcional, en la pestaña
+**Dataset** → **«Segmentos desde marcadores»** puedes crear segmentos
+automáticamente a partir de ellos (ventana en muestras, 0 = hasta el siguiente
+marcador). También funciona con CSV de OpenViBE que ya traigan estimulaciones.
 
 > La captura es opcional: si solo quieres procesar CSV, ignora esta pestaña.
 
@@ -367,4 +403,6 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `acq_gui_smoke`, `lsl_smoke`, `params_smoke`, `nn_smoke`, `nn_gui_smoke`,
 `emotiv_smoke`, `cykit_smoke`, `svm_smoke`, `ui_extras_smoke`, `riemann_smoke`,
 `ica_smoke`, `concurrency_smoke`, `diskcache_smoke`, `tcp_parser_smoke`,
-`e2e_smoke` (flujo completo de extremo a extremo).
+`pipeline_select_smoke`, `example_smoke`, `markers_smoke`, `marker_view_smoke`,
+`segment_view_smoke`, `history_smoke`, `e2e_smoke` (flujo completo de extremo a
+extremo).

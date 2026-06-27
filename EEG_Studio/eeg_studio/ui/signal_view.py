@@ -6,9 +6,11 @@ crear un segmento etiquetado (agrupar/aislar señales para el dataset).
 """
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,6 +29,18 @@ _CURVE_COLORS = [
     "#FF8A65", "#90A4AE",
 ]
 
+# Paleta para colorear los segmentos por clase (color estable por etiqueta).
+_SEGMENT_PALETTE = [
+    "#66BB6A", "#42A5F5", "#FFA726", "#EC407A", "#AB47BC",
+    "#26C6DA", "#D4E157", "#FF7043", "#8D6E63", "#5C6BC0",
+]
+
+
+def segment_color(label: str) -> str:
+    """Color estable (mismo para la misma etiqueta) tomado de la paleta."""
+    idx = int(hashlib.md5(str(label).encode("utf-8")).hexdigest(), 16) % len(_SEGMENT_PALETTE)
+    return _SEGMENT_PALETTE[idx]
+
 
 class SignalView(QWidget):
     segment_requested = pyqtSignal(int, int)  # (start_sample, stop_sample)
@@ -38,6 +52,8 @@ class SignalView(QWidget):
         self._fs: float = 128.0
         self._channel_names: list[str] = []
         self._spacing: float = 0.0
+        self._markers: list[tuple[int, str]] = []   # (muestra, etiqueta) — ayuda visual
+        self._segments: list[tuple[int, int, str]] = []  # (inicio, fin, etiqueta)
 
         self._build_ui()
 
@@ -56,6 +72,11 @@ class SignalView(QWidget):
         self.gain_box = QComboBox()
         self.gain_box.addItems(["x0.25", "x0.5", "x1", "x2", "x4", "x8"])
         self.gain_box.setCurrentText("x1")
+        self.gain_box.setToolTip(
+            "Ganancia: amplificación SOLO visual de la señal (x2 = el doble de "
+            "alta en pantalla). No modifica los datos; sirve para ver mejor "
+            "fluctuaciones pequeñas o evitar que señales grandes se solapen."
+        )
         self.gain_box.currentTextChanged.connect(self._redraw)
         controls.addWidget(QLabel("Ganancia:"))
         controls.addWidget(self.gain_box)
@@ -64,6 +85,24 @@ class SignalView(QWidget):
         self.norm_chk.setChecked(True)
         self.norm_chk.stateChanged.connect(self._redraw)
         controls.addWidget(self.norm_chk)
+
+        self.markers_chk = QCheckBox("Marcadores")
+        self.markers_chk.setChecked(True)
+        self.markers_chk.setToolTip(
+            "Muestra los marcadores (Event Id) sobre la señal como ayuda visual "
+            "para etiquetar manualmente las regiones de interés."
+        )
+        self.markers_chk.stateChanged.connect(self._redraw)
+        controls.addWidget(self.markers_chk)
+
+        self.segments_chk = QCheckBox("Segmentos")
+        self.segments_chk.setChecked(True)
+        self.segments_chk.setToolTip(
+            "Sombrea los segmentos ya etiquetados sobre la señal, con un color "
+            "por clase, para ver de un vistazo qué tramos ya están etiquetados."
+        )
+        self.segments_chk.stateChanged.connect(self._redraw)
+        controls.addWidget(self.segments_chk)
 
         controls.addStretch(1)
         self.sel_label = QLabel("Selección: —")
@@ -100,6 +139,17 @@ class SignalView(QWidget):
         self._fs = fs
         self._channel_names = channel_names
         self._redraw()
+
+    def set_markers(self, markers: list[tuple[int, str]]) -> None:
+        """Marcadores ``(muestra, etiqueta)`` a dibujar sobre la señal.
+
+        Solo los almacena; el redibujado lo hace :meth:`set_data` a continuación.
+        """
+        self._markers = list(markers)
+
+    def set_segments(self, segments: list[tuple[int, int, str]]) -> None:
+        """Segmentos ``(inicio, fin, etiqueta)`` a sombrear sobre la señal."""
+        self._segments = list(segments)
 
     def clear(self) -> None:
         self._data = None
@@ -144,6 +194,9 @@ class SignalView(QWidget):
         axis.setTicks([ticks])
         self.plot.setLabel("left", "Canal")
 
+        self._draw_segments(n, top_y=(n_ch - 0.4) * self._spacing)
+        self._draw_markers(n)
+
         self.plot.addItem(self.region)
         # Coloca la región en el primer 10% si no estaba visible.
         if not self.region.isVisible():
@@ -152,6 +205,51 @@ class SignalView(QWidget):
         self.plot.setXRange(0, t[-1], padding=0.01)
         self.add_seg_btn.setEnabled(True)
         self._on_region_changed()
+
+    def _draw_segments(self, n_samples: int, top_y: float) -> None:
+        """Sombrea cada segmento etiquetado con un color por clase."""
+        if not self.segments_chk.isChecked() or not self._segments:
+            return
+        show_labels = len(self._segments) <= 80
+        for start, stop, label in self._segments:
+            t0 = max(0, start) / self._fs
+            t1 = min(stop, n_samples) / self._fs
+            if t1 <= t0:
+                continue
+            color = segment_color(label)
+            fill = pg.mkColor(color); fill.setAlpha(45)
+            edge = pg.mkColor(color); edge.setAlpha(130)
+            band = pg.LinearRegionItem(values=(t0, t1), brush=pg.mkBrush(fill),
+                                       pen=pg.mkPen(edge), movable=False)
+            band.setZValue(-10)               # detrás de las curvas
+            self.plot.addItem(band)
+            if show_labels:
+                txt = pg.TextItem(str(label), color=color, anchor=(0, 1))
+                txt.setPos(t0, top_y)
+                txt.setZValue(6)
+                self.plot.addItem(txt)
+
+    def _draw_markers(self, n_samples: int) -> None:
+        """Dibuja líneas verticales con la etiqueta de cada marcador."""
+        if not self.markers_chk.isChecked() or not self._markers:
+            return
+        # Con muchos marcadores se omiten las etiquetas para no saturar la vista.
+        show_labels = len(self._markers) <= 80
+        for sample, label in self._markers:
+            if not (0 <= sample <= n_samples):
+                continue
+            tm = sample / self._fs
+            opts = {}
+            if show_labels:
+                opts = {"label": str(label), "labelOpts": {
+                    "position": 0.92, "color": "#FFD54F", "rotateAxis": (1, 0),
+                    "fill": (20, 20, 20, 160)}}
+            line = pg.InfiniteLine(
+                pos=tm, angle=90,
+                pen=pg.mkPen("#FFD54F", width=1, style=Qt.PenStyle.DashLine), **opts,
+            )
+            line.setZValue(5)
+            self.plot.addItem(line)
 
     # --- Selección --------------------------------------------------------
     def _on_region_changed(self) -> None:

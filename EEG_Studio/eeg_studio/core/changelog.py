@@ -92,6 +92,29 @@ class ChangeLog:
         self._history.append({**cmd.to_dict(), "event": "redo"})
         return cmd
 
+    # --- Navegación por la línea de tiempo --------------------------------
+    def applied_count(self) -> int:
+        """Nº de comandos aplicados (posición actual en la línea de tiempo)."""
+        return len(self._undo)
+
+    def timeline(self) -> list[dict]:
+        """Comandos en orden cronológico: los aplicados y los rehacibles.
+
+        Cada entrada: ``{description, timestamp, section, applied}``. El nº de
+        entradas con ``applied=True`` coincide con :meth:`applied_count`.
+        """
+        out = [
+            {"description": c.description, "timestamp": c.timestamp,
+             "section": c.section, "applied": True}
+            for c in self._undo
+        ]
+        out += [
+            {"description": c.description, "timestamp": c.timestamp,
+             "section": c.section, "applied": False}
+            for c in reversed(self._redo)
+        ]
+        return out
+
     # --- Auditoría / persistencia ----------------------------------------
     @property
     def history(self) -> list[dict]:

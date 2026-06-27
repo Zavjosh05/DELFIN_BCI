@@ -17,6 +17,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
+from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from eeg_studio.core.project import Project  # noqa: E402
@@ -99,6 +100,17 @@ def main() -> int:
     assert not panel.raw_box.isHidden(), "no se mostró la ventana para Riemann"
     assert panel.raw_window_value() > 0
     print(f"    EEGNet config OK (F1={cfg['F1']}, D={cfg['D']}), Riemann ventana={panel.raw_window_value()}")
+
+    print("[5] Historial navegable")
+    win.refresh_all()
+    hist = win.changelog_list
+    assert hist.count() >= 2, "el historial no se pobló"
+    assert hist.item(0).data(Qt.ItemDataRole.UserRole) == 0, "falta 'Estado inicial'"
+    win._on_history_click(hist.item(0))                 # navegar al inicio
+    assert win.project.changelog.applied_count() == 0, "no navegó al inicio"
+    win._on_history_click(win.changelog_list.item(win.changelog_list.count() - 1))
+    assert win.project.changelog.applied_count() > 0, "no volvió hacia adelante"
+    print("    clic en el historial navega por la línea de tiempo")
 
     win.acq_panel.shutdown()
     print("\nUI EXTRAS OK ✓")

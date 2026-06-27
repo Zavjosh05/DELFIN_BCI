@@ -34,6 +34,7 @@ class PreprocessingPanel(QWidget):
         super().__init__()
         self.controller = controller
         self._param_widgets: dict[str, QWidget] = {}
+        self._pending_row: int | None = None   # fila a seleccionar tras refrescar
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -52,6 +53,13 @@ class PreprocessingPanel(QWidget):
         layout.addWidget(QLabel("Pipeline (se aplica en orden):"))
         self.steps_list = QListWidget()
         self.steps_list.currentRowChanged.connect(self._show_params)
+        # El paso seleccionado se resalta siempre (también cuando la lista pierde
+        # el foco al pulsar ▲▼/Eliminar), para saber cuál se está modificando.
+        self.steps_list.setStyleSheet(
+            "QListWidget::item:selected,"
+            "QListWidget::item:selected:!active {"
+            " background: #2f6fb0; color: #ffffff; }"
+        )
         layout.addWidget(self.steps_list, 1)
 
         btns = QHBoxLayout()
@@ -77,21 +85,31 @@ class PreprocessingPanel(QWidget):
     # --- Acciones ---------------------------------------------------------
     def _add_step(self) -> None:
         key = self.step_combo.currentData()
+        if self.controller.project is not None:
+            # El paso nuevo se añade al final: seleccionarlo.
+            self._pending_row = len(self.controller.project.state["pipeline"])
         self.controller.add_pipeline_step(key)
 
     def _remove(self) -> None:
         row = self.steps_list.currentRow()
         if row >= 0:
+            self._pending_row = row   # seleccionar el paso que ocupa ese lugar
             self.controller.remove_pipeline_step(row)
 
     def _move(self, delta: int) -> None:
         row = self.steps_list.currentRow()
-        if row >= 0:
-            self.controller.move_pipeline_step(row, delta)
+        if row < 0:
+            return
+        target = row + delta
+        if 0 <= target < self.steps_list.count():
+            self._pending_row = target   # la selección sigue al paso movido
+        self.controller.move_pipeline_step(row, delta)
 
     def refresh(self) -> None:
         proj = self.controller.project
-        prev_row = self.steps_list.currentRow()
+        # Reubicar la selección en el paso modificado, o conservar la actual.
+        target = self._pending_row if self._pending_row is not None else self.steps_list.currentRow()
+        self._pending_row = None
         self.steps_list.blockSignals(True)
         self.steps_list.clear()
         if proj is not None:
@@ -100,9 +118,8 @@ class PreprocessingPanel(QWidget):
                 p = step.get("params", {})
                 desc = ", ".join(f"{k}={v}" for k, v in p.items()) if p else "sin parámetros"
                 self.steps_list.addItem(QListWidgetItem(f"{i + 1}. {label}  [{desc}]"))
-        # Conservar (o reubicar) la selección para que editar sea fluido.
         n = self.steps_list.count()
-        row = prev_row if 0 <= prev_row < n else (n - 1 if n else -1)
+        row = target if 0 <= target < n else (n - 1 if n else -1)
         self.steps_list.setCurrentRow(row)
         self.steps_list.blockSignals(False)
         self._show_params(row)
@@ -215,6 +232,26 @@ class DatasetPanel(QWidget):
         seg_btns.addWidget(relabel_btn)
         seg_btns.addWidget(remove_btn)
         layout.addLayout(seg_btns)
+
+        # Crear segmentos a partir de los marcadores (Event Id) -> clases.
+        mk_box = QGroupBox("Segmentos desde marcadores")
+        mk_layout = QVBoxLayout(mk_box)
+        mk_layout.addWidget(QLabel(
+            "Convierte los marcadores de la fuente seleccionada en segmentos "
+            "etiquetados (cada marcador = una clase)."))
+        mk_row = QHBoxLayout()
+        mk_row.addWidget(QLabel("Ventana:"))
+        self.marker_window = QSpinBox()
+        self.marker_window.setRange(0, 100000)
+        self.marker_window.setSingleStep(64)
+        self.marker_window.setValue(0)
+        self.marker_window.setToolTip("Muestras tras cada marcador (0 = hasta el siguiente marcador).")
+        mk_row.addWidget(self.marker_window, 1)
+        mk_btn = QPushButton("Crear")
+        mk_btn.clicked.connect(lambda: self.controller.create_segments_from_markers(self.marker_window.value()))
+        mk_row.addWidget(mk_btn)
+        mk_layout.addLayout(mk_row)
+        layout.addWidget(mk_box)
 
         feat_box = QGroupBox("Características")
         feat_layout = QVBoxLayout(feat_box)

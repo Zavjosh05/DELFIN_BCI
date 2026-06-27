@@ -2,21 +2,25 @@
 from __future__ import annotations
 
 import os
+import time
 
 import numpy as np
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtGui import QAction, QColor, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QDockWidget,
     QFileDialog,
     QInputDialog,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..config import APP_NAME, EPOC_CHANNELS, FREQ_BANDS, PROJECT_EXT
@@ -83,10 +87,25 @@ class MainWindow(QMainWindow):
         right_dock.setMinimumWidth(340)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, right_dock)
 
-        # Abajo: historial de cambios (control de cambios).
+        # Abajo: historial de cambios navegable (línea de tiempo).
+        hist_container = QWidget()
+        hist_layout = QVBoxLayout(hist_container)
+        hist_layout.setContentsMargins(6, 4, 6, 6)
+        hint = QLabel("Línea de tiempo · haz clic en un punto para navegar")
+        hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+        hist_layout.addWidget(hint)
         self.changelog_list = QListWidget()
-        log_dock = QDockWidget("Historial de cambios", self)
-        log_dock.setWidget(self.changelog_list)
+        self.changelog_list.setAlternatingRowColors(True)
+        self.changelog_list.setStyleSheet(
+            "QListWidget { border: none; background: #14181d; }"
+            "QListWidget::item { padding: 3px 4px; }"
+            "QListWidget::item:alternate { background: #181d23; }"
+            "QListWidget::item:hover { background: #243042; }"
+        )
+        self.changelog_list.itemClicked.connect(self._on_history_click)
+        hist_layout.addWidget(self.changelog_list)
+        log_dock = QDockWidget("Historial", self)
+        log_dock.setWidget(hist_container)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
 
     def _build_menu(self) -> None:
@@ -190,6 +209,14 @@ class MainWindow(QMainWindow):
             return
         rec = self.project.get_recording(self.current_source_id)
         names = self.project.display_channel_names(rec)
+        # Marcadores (Event Id) como ayuda visual para etiquetar manualmente.
+        self.signal_view.set_markers([(e["sample"], e["id"]) for e in rec.events])
+        # Segmentos ya etiquetados de esta fuente, sombreados por clase.
+        self.signal_view.set_segments([
+            (s["start"], s["stop"], s["label"])
+            for s in self.project.state["segments"]
+            if s["source_id"] == self.current_source_id
+        ])
 
         if self.signal_view.mode == "raw" or not self.project.state["pipeline"]:
             self.signal_view.set_data(rec.data, rec.sample_rate, names)
@@ -258,6 +285,21 @@ class MainWindow(QMainWindow):
     def remove_segment(self, segment_id: str) -> None:
         self.project.remove_segment(segment_id)
         self._after_state_change()
+
+    def create_segments_from_markers(self, window: int) -> None:
+        if not self._require_project():
+            return
+        if self.current_source_id is None:
+            self.info("Sin fuente", "Selecciona una fuente en el panel izquierdo primero.")
+            return
+        n = self.project.segments_from_markers(self.current_source_id, window)
+        if n == 0:
+            self.info("Sin marcadores",
+                      "La fuente seleccionada no tiene marcadores (columna «Event Id» vacía).\n"
+                      "Graba en vivo insertando marcadores, o usa un CSV con estimulaciones.")
+            return
+        self._after_state_change()
+        self.statusBar().showMessage(f"{n} segmentos creados desde marcadores.")
 
     # ------------------------------------------------------------------ #
     # Dataset
@@ -429,7 +471,7 @@ class MainWindow(QMainWindow):
 
     def refresh_all(self) -> None:
         self._refresh_sources()
-        self._refresh_changelog()
+        self._refresh_history()
         self.preproc_panel.refresh()
         self.dataset_panel.refresh()
         self.clf_panel.refresh()
@@ -473,14 +515,60 @@ class MainWindow(QMainWindow):
                     self.sources_list.setCurrentRow(ids.index(self.current_source_id))
         self.sources_list.blockSignals(False)
 
-    def _refresh_changelog(self) -> None:
+    # Iconos por sección, para identificar de un vistazo el tipo de cambio.
+    _HISTORY_ICONS = {
+        "pipeline": "🎛", "segments": "✂", "sources": "📁",
+        "dataset": "📊", "channel_aliases": "🏷", "excluded_channels": "🚫",
+    }
+
+    def _add_history_item(self, text: str, target: int, *, current: bool,
+                          applied: bool) -> None:
+        item = QListWidgetItem(text)
+        item.setData(Qt.ItemDataRole.UserRole, target)
+        if current:
+            font = item.font(); font.setBold(True); item.setFont(font)
+            item.setForeground(QColor("#9be7c4"))
+            item.setBackground(QColor("#1f3a2e"))
+        elif not applied:
+            font = item.font(); font.setItalic(True); item.setFont(font)
+            item.setForeground(QColor("#727a83"))   # rehacible: atenuado
+        else:
+            item.setForeground(QColor("#c8d0d8"))
+        self.changelog_list.addItem(item)
+
+    def _refresh_history(self) -> None:
         self.changelog_list.clear()
         if not self.project:
             return
-        for entry in self.project.changelog.history[-200:]:
-            ev = {"do": "✓", "undo": "↶", "redo": "↷"}.get(entry.get("event"), "•")
-            self.changelog_list.addItem(f"{ev} {entry.get('description', '')}")
-        self.changelog_list.scrollToBottom()
+        cl = self.project.changelog
+        applied = cl.applied_count()
+
+        # Punto de partida (antes de cualquier cambio).
+        self._add_history_item(
+            ("▶  " if applied == 0 else "      ") + "⏮  Estado inicial",
+            target=0, current=(applied == 0), applied=True,
+        )
+        current_item = None
+        for idx, entry in enumerate(cl.timeline()):
+            target = idx + 1
+            icon = self._HISTORY_ICONS.get(entry["section"], "•")
+            ts = time.strftime("%H:%M:%S", time.localtime(entry["timestamp"]))
+            is_current = entry["applied"] and target == applied
+            prefix = "▶  " if is_current else ("↪  " if not entry["applied"] else "      ")
+            text = f"{prefix}{icon}  {entry['description']}    ·  {ts}"
+            self._add_history_item(text, target, current=is_current, applied=entry["applied"])
+            if is_current:
+                current_item = self.changelog_list.item(self.changelog_list.count() - 1)
+        if current_item is not None:
+            self.changelog_list.scrollToItem(current_item)
+
+    def _on_history_click(self, item) -> None:
+        target = item.data(Qt.ItemDataRole.UserRole)
+        if self.project is None or target is None:
+            return
+        if target != self.project.changelog.applied_count():
+            self.project.goto_history(int(target))
+            self._after_state_change()
 
     def _update_actions(self) -> None:
         has_proj = self.project is not None
