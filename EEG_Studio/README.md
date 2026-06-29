@@ -21,24 +21,33 @@ y disponen de **deshacer/rehacer** e historial.
   (CAR), referencia a canal, normalización y **eliminación de artefactos por ICA**
   (rechazo automático de componentes por kurtosis). Cada filtro y cada parámetro
   muestran en la interfaz **qué hacen y qué efecto tiene modificarlos**.
+- **Selección de canales**: activa/desactiva canales (p. ej. excluir los EOG de
+  un dataset ajeno); afecta a CAR, características y modelos.
 - **Procesamiento / extracción de características**: potencias por banda
   (delta, theta, alpha, beta, gamma) y características temporales (RMS, longitud
   de línea, parámetros de Hjorth…).
 - **Construcción de datasets**: aísla segmentos de varios CSV, etiquétalos y
   genera una matriz de características (extracción **en multiproceso**).
-- **Clasificación**: Random Forest, **SVM** (kernel seleccionable: lineal, RBF,
-  polinomial o sigmoide, con C/gamma/grado) o LDA; **geometría de Riemann** (MDM,
+- **Clasificación**: **Random Forest** (nº de árboles, profundidad, criterio…),
+  **SVM** (kernel seleccionable: lineal, RBF, polinomial o sigmoide, con
+  C/gamma/grado) o LDA; **geometría de Riemann** (MDM,
   *tangent space* + regresión logística) y **CSP + LDA** sobre señal cruda
   (scikit-learn / pyriemann); y **redes neuronales** (PyTorch) configurables en
   detalle — MLP, CNN 1D, LSTM y **EEGNet** sobre señal cruda, con activación por
   capa, nº de capas, dropout, kernel/bidireccional, optimizador y épocas.
-  Validación, guardado/carga de modelo y predicción de la región seleccionada.
+  Se pueden entrenar **varios modelos por proyecto**, ver sus **métricas**
+  (exactitud, matriz de confusión, precisión/recall/F1 por clase), **activar** uno,
+  **exportarlo/importarlo** (.joblib) y predecir la región seleccionada.
 - **Control de cambios no destructivo**: cada edición se registra con
   deshacer/rehacer y queda en `changelog.json`. El CSV original es de solo lectura.
 - **Adquisición en tiempo real (opcional)**: visor en vivo y grabación a CSV
-  local desde tres fuentes intercambiables: **Simulado** (sin hardware),
-  **OpenViBE Acquisition Server vía LSL** y **CyKit/TCP** (directo del dongle).
+  local desde fuentes intercambiables: **Simulado** (sin hardware), **OpenViBE
+  Acquisition Server vía LSL**, **Emotiv EPOC+ (lector integrado)** y **CyKit/TCP**.
   La app funciona igual sin conectarse a nada (solo procesar CSV).
+- **Control en tiempo real (opcional)**: con un modelo entrenado, clasifica la
+  señal en vivo (tratada por el preprocesamiento) y envía la clase detectada a un
+  **controlador externo** (brazo robótico, carrito…) por **UDP**, **puerto serie**
+  (Arduino) o registro, con suavizado para evitar oscilaciones.
 - **Rendimiento**: tareas pesadas en hilos (`QThread`), preprocesado de varias
   fuentes en paralelo y extracción de características con `ProcessPoolExecutor`
   (multiprocessing). Ver la sección *Rendimiento*.
@@ -57,7 +66,12 @@ nombre.eegproj/
 ```
 
 > Los CSV **no se copian** dentro del proyecto: se referencian por ruta y se leen
-> en modo solo lectura.
+> en modo solo lectura. El **CSV es el formato de intercambio** (compatible con
+> OpenViBE, inspeccionable, con marcadores incluidos); los archivos convertidos de
+> `.mat`/`.fif` se guardan **comprimidos** (`.csv.gz`) y los datos pesados internos
+> del proyecto ya son binarios (`cache/` y `datasets/` en `.npz`, modelos en
+> `.joblib`). Para recomprimir fuentes ya añadidas: **Proyecto → Comprimir fuentes
+> a .csv.gz…** (mismo contenido, ~3-6× más pequeño; opción de borrar los originales).
 
 ## Instalación
 
@@ -87,6 +101,52 @@ Esto crea `examples\Ejemplo.eegproj`. Ábrelo en la app con **Proyecto → Abrir
 proyecto…**. Como los proyectos referencian los CSV por ruta absoluta, este
 script es la forma recomendada de (re)crearlo con las rutas correctas del equipo.
 
+## Importar datasets externos (.mat / .fif / .edf… → CSV)
+
+Para trabajar con otros dispositivos/datasets, **Proyecto → Importar dataset…**
+convierte a un CSV en formato OpenViBE y lo añade como fuente. Soporta:
+
+- **`.mat`** del dataset **BCI Competition IV 2a / BNCI 001‑2014** (ver abajo).
+- **`.fif`** (formato nativo de MNE) y otros formatos profesionales que lee MNE:
+  **`.edf`/`.bdf`, `.gdf`, BrainVision `.vhdr`, EEGLAB `.set`**. Conserva los
+  canales de datos (descarta los de estímulo/auxiliares), reescala a µV y toma
+  los marcadores de las **anotaciones** o de un canal de estímulo con códigos de
+  evento. Requiere `mne` (opcional).
+
+> **Etiquetar un `.fif` sin etiquetas:** si un `.fif` trae la señal pero no los
+> eventos, `mne_loader.label_fif_from_mat(fif, mat)` (o
+> `python examples/label_fif_from_mat.py`) crea una **copia** `*_etiquetado.fif`
+> con las clases del `.mat` original como anotaciones, **sin modificar la señal**
+> (requiere que el `.fif` sea la concatenación de los runs del `.mat`).
+
+Para el `.mat` de 2a, además:
+
+- Concatena los *runs* de imaginación motora (250 Hz, **25 canales**: 22 EEG + 3
+  EOG) y coloca un **marcador** al inicio de cada ensayo con el nombre de su clase
+  (`left_hand`, `right_hand`, `feet`, `tongue`) — 288 marcadores por sesión.
+- Los **nombres reales de canal** (Fz, C3, Cz…) se conservan: la app no fuerza el
+  montaje del EPOC+ cuando el CSV ya trae nombres (admite cualquier nº de canales).
+
+> Los archivos convertidos se guardan **comprimidos** (`.csv.gz`, ~3-4× más
+> pequeños: una sesión 2a pasa de ~107 MB a ~33 MB) y pandas los lee de forma
+> transparente. La conversión corre en segundo plano y se reutiliza si ya existe.
+
+### Pipeline recomendado para el dataset 2a (imaginación motora, 4 clases)
+
+1. **Canales:** *Preprocesamiento → Seleccionar canales…* → **Excluir EOG**
+   (deja solo los 22 EEG). La exclusión afecta a CAR, características y modelos.
+2. **Preprocesamiento:** *Filtro pasa-banda* **8–30 Hz** (ritmos μ y β de la
+   imaginación motora) + *CAR*. (Opcional: *notch* 50 Hz.)
+3. **Etiquetado:** *Dataset → Segmentos desde marcadores* con **Desfase ≈ 750**
+   (3 s) y **Ventana ≈ 750** (3 s) → captura el periodo de imaginación [3–6 s].
+   Cada marcador aporta su clase (4 clases).
+4. **Modelo:** **Riemann — Tangent Space + LR** o **CSP + LDA** (de referencia en
+   imaginación motora) sobre señal cruda; o **EEGNet** si prefieres red neuronal.
+
+> **Proyecto de ejemplo 2a:** `python examples/create_2a_example_project.py` crea
+> `examples/Ejemplo_2a.eegproj` con todo este pipeline ya montado y un modelo
+> Riemann entrenado (en el sujeto A01 da ~80 % de validación cruzada, 4 clases).
+
 ## Flujo de trabajo típico
 
 1. **Proyecto → Nuevo proyecto** y elige carpeta/nombre.
@@ -102,6 +162,10 @@ script es la forma recomendada de (re)crearlo con las rutas correctas del equipo
    **Guardar dataset**.
 7. Pestaña **Clasificación**: elige el modelo, **Entrenar**, revisa la validación
    cruzada y **Clasificar selección actual** o **Guardar modelo**.
+
+El proyecto se **guarda solo** (autoguardado) poco después de cada cambio, sin
+necesidad de **Ctrl+S** (que sigue disponible para guardar al instante). Al salir
+se vuelca cualquier cambio pendiente.
 
 Usa **Editar → Deshacer/Rehacer** (Ctrl+Z / Ctrl+Y) para revertir cualquier
 cambio. El **Historial** (panel inferior) muestra la línea de tiempo con iconos
@@ -126,6 +190,10 @@ y hora: el punto **actual** va resaltado y los pasos rehacibles atenuados. Haz
 - **Qué ganas:** señal más limpia y comparable. *Pasa-banda 1–45 Hz* quita deriva
   y ruido alto; *notch 50/60 Hz* elimina la red eléctrica; *CAR* resta el ruido
   común; **ICA** elimina parpadeos/músculo automáticamente → mejor exactitud.
+- **Marcadores y segmentos legibles:** en grabaciones largas con muchos marcadores
+  (p. ej. 288 ensayos), el visor solo dibuja los **visibles en el rango actual**
+  (atenuados, con etiqueta al acercar) y arranca en una ventana de ~30 s, en vez de
+  saturar la pantalla. Usa la rueda/arrastre para navegar.
 
 ### 2. Extracción de características
 - **Qué es:** convierte cada segmento en un vector (potencias por banda δθαβγ +
@@ -143,21 +211,29 @@ y hora: el punto **actual** va resaltado y los pasos rehacibles atenuados. Haz
   para decidir dónde segmentar. Arrastra la región y **Crear segmento** con su
   etiqueta (repite con varias clases/CSV); en *Dataset* pulsa **Construir
   dataset** y, opcionalmente, **Guardar dataset**. (Atajo opcional: *Segmentos
-  desde marcadores* crea segmentos automáticamente a partir de los marcadores.)
+  desde marcadores* crea segmentos automáticamente a partir de los marcadores —
+  de la **fuente abierta** o, marcando *«Todas las fuentes»*, de **todo el
+  proyecto** de una vez.)
 - **Ayuda visual:** los segmentos ya creados se **sombrean sobre la señal** con
   un color por clase y su etiqueta (interruptor *Segmentos*), para ver de un
-  vistazo qué tramos ya están etiquetados mientras trabajas.
+  vistazo qué tramos ya están etiquetados mientras trabajas. Al **pasar el ratón**
+  por un segmento se muestra su detalle (clase, rango en segundos y nº de muestras).
 - **Qué ganas:** integras varias grabaciones y clases en un conjunto único y
   reproducible; la extracción aprovecha varios núcleos (ver *Rendimiento*).
 
 ### 4. Clasificación
-- **Cómo se usa:** pestaña *Clasificación* → elige el modelo (aparece su
-  configuración) → **Entrenar** → revisa la validación → **Clasificar selección
-  actual** o **Guardar modelo**.
+- **Cómo se usa:** pestaña *Clasificación* → elige el tipo (aparece su
+  configuración) → **Entrenar y añadir al proyecto**. Cada modelo entrenado se
+  añade a la lista **«Modelos entrenados»**, donde puedes **Activar** uno,
+  ver **Métricas…** (matriz de confusión + por clase), **Exportar…**/**Importar…**
+  (.joblib) o **Eliminar**. **Clasificar selección actual** usa el modelo activo.
+  Los modelos se guardan con el proyecto (carpeta `models/`).
 - **Qué familia conviene:**
   - **Clásicos (RF / SVM / LDA)** sobre características: rápidos y robustos, buena
-    línea base. El **SVM** permite elegir kernel (lineal/RBF/poly/sigmoide) para
-    fronteras no lineales.
+    línea base. Al seleccionarlos aparece su configuración: el **Random Forest**
+    expone nº de árboles, profundidad máxima, mínimo para dividir, nº de
+    características y criterio; el **SVM** permite elegir kernel (lineal/RBF/poly/
+    sigmoide) y C/gamma/grado.
   - **Riemann (MDM / Tangent+LR) y CSP+LDA** sobre señal cruda: muy efectivos en
     imaginación motora y multiclase, robustos al ruido y con pocos datos.
   - **Redes (MLP / CNN / LSTM / EEGNet)**: aprenden los filtros de los datos;
@@ -339,6 +415,31 @@ una época de 512) y ajusta si la validación no mejora.
 > las opciones de red neuronal. Instalación CPU en Windows:
 > `pip install torch --index-url https://download.pytorch.org/whl/cpu`
 
+## Control en tiempo real (clasificación en línea → controlador)
+
+Con un modelo entrenado puedes clasificar la señal **en vivo** y enviar la clase
+detectada a un controlador externo (brazo robótico, carrito…). Pestaña **Control**:
+
+1. Entrena o importa uno o varios modelos (pestaña *Clasificación*).
+2. Conecta una fuente en la pestaña **Tiempo real** (Simulado, LSL, Emotiv, CyKit).
+3. En **Control**: elige el **modelo** (si el proyecto tiene varios), ajusta la
+   **ventana** (muestras a clasificar), el **intervalo**
+   y la **confirmación K** (nº de predicciones iguales seguidas para confirmar una
+   clase — evita que el controlador oscile).
+4. Define el **comando por clase** (texto que se envía por cada clase; por defecto
+   el nombre de la clase).
+5. Elige la **salida**: *Registro* (solo mostrar), *UDP* (host/puerto) o *Puerto
+   serie* (Arduino). Pulsa **Iniciar control**.
+
+Cada ventana entrante se procesa con el **mismo pipeline** del proyecto y se
+clasifica; cuando una clase se confirma (K iguales seguidas) se envía su comando
+una sola vez (al cambiar de clase estable). En pantalla ves la predicción actual,
+su confianza y el último comando enviado.
+
+> El controlador externo (tu robot/carrito) solo tiene que **escuchar** los
+> comandos: por UDP, un script o microcontrolador que reciba en ese puerto; por
+> serie, un Arduino que lea líneas. La salida serie requiere `pyserial` (opcional).
+
 ## Métodos basados en la literatura
 
 Algunas técnicas implementadas y las referencias en que se apoyan:
@@ -368,6 +469,8 @@ eeg_studio/
 ├── app.py               # arranque de QApplication
 ├── core/                # lógica de dominio (sin dependencias de UI)
 │   ├── csv_loader.py     # lectura de CSV de OpenViBE
+│   ├── mat_loader.py     # conversión .mat (BNCI 2a) -> CSV
+│   ├── mne_loader.py     # conversión .fif/.edf/.gdf… (MNE) -> CSV
 │   ├── recording.py      # grabación inmutable (fuente de solo lectura)
 │   ├── preprocessing.py  # pipeline de filtros/referencia/normalización
 │   ├── processing.py     # extracción de características (picklable)
@@ -383,6 +486,9 @@ eeg_studio/
 │   ├── emotiv.py         # lector nativo EPOC+ por USB (HID+AES, sin OpenViBE/CyKit)
 │   ├── tcp.py            # CyKit / socket TCP genérico (respaldo)
 │   └── recorder.py       # grabación a CSV formato OpenViBE
+├── inference/           # control en tiempo real (clasificación en línea)
+│   ├── online.py         # clasificar ventana + suavizado de predicciones
+│   └── sinks.py          # salida de comandos: registro / UDP / serie
 ├── workers/             # ejecución asíncrona (QThread)
 └── ui/                  # widgets PyQt6 (visor, paneles, ventana principal)
     ├── nn_config.py      # editor de arquitectura de redes neuronales
@@ -404,5 +510,9 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `emotiv_smoke`, `cykit_smoke`, `svm_smoke`, `ui_extras_smoke`, `riemann_smoke`,
 `ica_smoke`, `concurrency_smoke`, `diskcache_smoke`, `tcp_parser_smoke`,
 `pipeline_select_smoke`, `example_smoke`, `markers_smoke`, `marker_view_smoke`,
-`segment_view_smoke`, `history_smoke`, `e2e_smoke` (flujo completo de extremo a
-extremo).
+`segment_view_smoke`, `rf_params_smoke`, `online_smoke`, `control_gui_smoke`,
+`mat_smoke`, `fif_smoke`, `fif_label_smoke`, `channels_smoke`, `models_smoke`,
+`compress_smoke`, `marker_cull_smoke`, `autosave_smoke`, `history_smoke`,
+`features_view_smoke`, `missing_source_smoke`, `project_files_smoke`,
+`dataset_build_smoke`, `theme_smoke`, `train_progress_smoke`,
+`e2e_smoke` (flujo completo de extremo a extremo).

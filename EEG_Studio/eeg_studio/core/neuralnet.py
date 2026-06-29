@@ -156,8 +156,14 @@ if TORCH_AVAILABLE:
             k = int(config.get("kernel_length", 64))
             p = float(config.get("dropout", 0.25))
 
+            # Padding 'same' explícito sobre el eje temporal: equivale a padding="same"
+            # con stride 1, pero sin el UserWarning de PyTorch por kernel par.
+            def _pad_t(kt: int) -> nn.Module:
+                return nn.ZeroPad2d(((kt - 1) // 2, kt // 2, 0, 0))   # (izq, der, arr, ab)
+
             self.block1 = nn.Sequential(
-                nn.Conv2d(1, F1, (1, k), padding="same", bias=False),
+                _pad_t(k),
+                nn.Conv2d(1, F1, (1, k), bias=False),
                 nn.BatchNorm2d(F1),
             )
             self.depthwise = nn.Sequential(
@@ -166,7 +172,8 @@ if TORCH_AVAILABLE:
                 nn.AvgPool2d((1, 4)), nn.Dropout(p),
             )
             self.separable = nn.Sequential(
-                nn.Conv2d(F1 * D, F1 * D, (1, 16), groups=F1 * D, padding="same", bias=False),
+                _pad_t(16),
+                nn.Conv2d(F1 * D, F1 * D, (1, 16), groups=F1 * D, bias=False),
                 nn.Conv2d(F1 * D, F2, (1, 1), bias=False),
                 nn.BatchNorm2d(F2), nn.ELU(),
                 nn.AvgPool2d((1, 8)), nn.Dropout(p),
@@ -241,7 +248,7 @@ class TorchClassifier:
         return np.nan_to_num(Xn, copy=False).astype(np.float32)
 
     # --- Entrenamiento ----------------------------------------------------
-    def fit(self, X, y):
+    def fit(self, X, y, progress=None):
         if not TORCH_AVAILABLE:
             raise RuntimeError("PyTorch no está instalado.")
         X = np.asarray(X, dtype=np.float32)
@@ -266,12 +273,14 @@ class TorchClassifier:
         epochs = int(self.config.get("epochs", 80))
 
         self.module_.train()
-        for _ in range(epochs):
+        for ep in range(epochs):
             for xb, yb in loader:
-                opt.zero_grad()
-                loss = crit(self.module_(xb), yb)
-                loss.backward()
-                opt.step()
+                opt.zero_grad()                  # 1) reinicia gradientes
+                loss = crit(self.module_(xb), yb)  # 2) forward + pérdida (CE)
+                loss.backward()                  # 3) backpropagation (autograd)
+                opt.step()                       # 4) actualiza pesos (Adam/SGD)
+            if progress is not None:
+                progress(ep + 1, epochs)         # avance por época para la GUI
         return self
 
     # --- Inferencia -------------------------------------------------------

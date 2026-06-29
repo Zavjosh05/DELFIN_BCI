@@ -28,6 +28,21 @@ def _detect_sample_rate(time_col_name: str, default: float) -> float:
     return float(m.group(1)) if m else default
 
 
+def compress_csv(src_path: str, dst_path: str | None = None) -> str:
+    """Comprime un CSV a ``.csv.gz`` (gzip) byte a byte, sin reparsear.
+
+    El contenido es idéntico (solo comprimido), así que la señal y los marcadores
+    se conservan exactamente. Devuelve la ruta del archivo comprimido.
+    """
+    import gzip
+    import shutil
+
+    dst_path = dst_path or (src_path + ".gz")
+    with open(src_path, "rb") as fin, gzip.open(dst_path, "wb", compresslevel=6) as fout:
+        shutil.copyfileobj(fin, fout)
+    return dst_path
+
+
 def load_recording(path: str, default_sample_rate: float = 128.0) -> Recording:
     """Lee un CSV de OpenViBE y devuelve una :class:`Recording` inmutable.
 
@@ -36,7 +51,9 @@ def load_recording(path: str, default_sample_rate: float = 128.0) -> Recording:
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
 
-    df = pd.read_csv(path)
+    # low_memory=False evita el DtypeWarning de la columna «Event Id» (códigos de
+    # marcador en pocas filas y vacío en el resto -> tipos mixtos por trozos).
+    df = pd.read_csv(path, low_memory=False)
     cols = list(df.columns)
 
     # Columna de tiempo (primera que empieza por "Time:").

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import time
 
+import numpy as np
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -40,6 +41,7 @@ from ..config import (
     LIVE_REFRESH_MS,
     LIVE_WINDOW_SECONDS,
     LSL_SIGNAL_NAME,
+    ONLINE_BUFFER_SAMPLES,
     RECORDINGS_DIR,
 )
 
@@ -53,6 +55,8 @@ class AcquisitionPanel(QWidget):
         self._configured = False
         self._n_samples = 0
         self._t_start = 0.0
+        self._roll: np.ndarray | None = None    # buffer circular para inferencia
+        self._roll_filled = 0
 
         self._timer = QTimer(self)
         self._timer.setInterval(LIVE_REFRESH_MS)
@@ -254,6 +258,9 @@ class AcquisitionPanel(QWidget):
         if self.source is not None:
             self.source.stop()
         self.source = None
+        self._roll = None
+        self._roll_filled = 0
+        self._configured = False
         self.status.setText("Desconectado.")
         self._update_states()
 
@@ -273,12 +280,42 @@ class AcquisitionPanel(QWidget):
             self.controller.live_view.configure(
                 self.source.channel_names, self.source.sample_rate, LIVE_WINDOW_SECONDS
             )
+            self._roll = np.zeros((self.source.n_channels, ONLINE_BUFFER_SAMPLES))
+            self._roll_filled = 0
             self._configured = True
         self.controller.live_view.append(chunk)
+        self._push_buffer(chunk)
         if self.recorder is not None:
             self.recorder.write(chunk)
         self._n_samples += chunk.shape[1]
         self._update_status()
+
+    def _push_buffer(self, chunk) -> None:
+        """Mantiene el buffer circular con las últimas muestras (para inferencia)."""
+        if self._roll is None:
+            return
+        k = chunk.shape[1]
+        cap = self._roll.shape[1]
+        if k >= cap:
+            self._roll[:] = chunk[:, -cap:]
+            self._roll_filled = cap
+        else:
+            self._roll = np.roll(self._roll, -k, axis=1)
+            self._roll[:, -k:] = chunk
+            self._roll_filled = min(self._roll_filled + k, cap)
+
+    # --- API para el modo de control en tiempo real -----------------------
+    def is_streaming(self) -> bool:
+        return self.source is not None and self._configured
+
+    def stream_fs(self) -> float | None:
+        return self.source.sample_rate if self.source is not None else None
+
+    def latest_window(self, n: int):
+        """Últimas ``n`` muestras ``(n_canales, n)`` o ``None`` si aún no hay suficientes."""
+        if self._roll is None or self._roll_filled < n:
+            return None
+        return self._roll[:, -n:].copy()
 
     def _update_status(self) -> None:
         elapsed = max(1e-6, time.perf_counter() - self._t_start)

@@ -30,6 +30,7 @@ class Dataset:
     y: np.ndarray              # (n_segmentos,) etiquetas (str)
     feature_names: list[str]
     segment_ids: list[str]
+    skipped: int = 0           # segmentos omitidos por fuente no disponible
 
     @property
     def n_samples(self) -> int:
@@ -51,6 +52,7 @@ class RawDataset:
     X: np.ndarray              # (n_segmentos, n_canales, T)
     y: np.ndarray              # (n_segmentos,)
     segment_ids: list[str]
+    skipped: int = 0           # segmentos omitidos por fuente no disponible
 
     @property
     def n_samples(self) -> int:
@@ -135,11 +137,33 @@ def build_features_parallel(
     return X, names
 
 
+def _usable_segments(project, segments) -> tuple[list, int]:
+    """Filtra los segmentos cuyas fuentes se pueden cargar del disco.
+
+    Reconstruir un dataset completo cada vez es lo correcto (los segmentos
+    persisten en el proyecto, así que «Construir» siempre incluye lo antiguo +
+    lo nuevo); pero si alguna fuente falta, se omite en vez de romper todo.
+    """
+    ok: set[str] = set()
+    for sid in dict.fromkeys(seg["source_id"] for seg in segments):
+        try:
+            project.get_recording(sid)
+            ok.add(sid)
+        except Exception:  # noqa: BLE001 — fuente faltante o ilegible
+            pass
+    usable = [seg for seg in segments if seg["source_id"] in ok]
+    return usable, len(segments) - len(usable)
+
+
 def build_dataset(project, progress=None) -> Dataset:
     """Construye un :class:`Dataset` a partir de los segmentos del proyecto."""
     segments = project.state["segments"]
     if not segments:
         raise ValueError("El proyecto no tiene segmentos etiquetados.")
+    segments, skipped = _usable_segments(project, segments)
+    if not segments:
+        raise ValueError("Ninguna fuente de los segmentos se pudo cargar "
+                         "(archivos faltantes). Reubica o quita esas fuentes.")
 
     # Pre-calcula en paralelo la señal procesada de todas las fuentes implicadas.
     project.prewarm([seg["source_id"] for seg in segments])
@@ -154,7 +178,7 @@ def build_dataset(project, progress=None) -> Dataset:
         use_time=cfg.get("use_time", True),
         progress=progress,
     )
-    return Dataset(X=X, y=labels, feature_names=names, segment_ids=ids)
+    return Dataset(X=X, y=labels, feature_names=names, segment_ids=ids, skipped=skipped)
 
 
 def build_raw_dataset(project, window_samples: int = 512, progress=None) -> RawDataset:
@@ -166,6 +190,10 @@ def build_raw_dataset(project, window_samples: int = 512, progress=None) -> RawD
     segments = project.state["segments"]
     if not segments:
         raise ValueError("El proyecto no tiene segmentos etiquetados.")
+    segments, skipped = _usable_segments(project, segments)
+    if not segments:
+        raise ValueError("Ninguna fuente de los segmentos se pudo cargar "
+                         "(archivos faltantes). Reubica o quita esas fuentes.")
 
     # Pre-calcula en paralelo la señal procesada de todas las fuentes implicadas.
     project.prewarm([seg["source_id"] for seg in segments])
@@ -184,7 +212,7 @@ def build_raw_dataset(project, window_samples: int = 512, progress=None) -> RawD
             progress(i + 1, n)
 
     X = np.stack(windows, axis=0)
-    return RawDataset(X=X, y=np.array(labels, dtype=object), segment_ids=ids)
+    return RawDataset(X=X, y=np.array(labels, dtype=object), segment_ids=ids, skipped=skipped)
 
 
 def save_dataset(project, dataset: Dataset, name: str = "dataset") -> str:

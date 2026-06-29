@@ -52,7 +52,13 @@ def main() -> int:
     assert len(_texts(win.signal_view)) == 2, f"etiquetas: {len(_texts(win.signal_view))}"
     print(f"    {len(_bands(win.signal_view))} bandas, {len(_texts(win.signal_view))} etiquetas")
 
-    print("[3] El interruptor 'Segmentos' las oculta/muestra")
+    print("[3] Detalle del segmento al pasar el ratón (tooltip)")
+    band = _bands(win.signal_view)[0]
+    tip = band.toolTip()
+    assert "Clase:" in tip and "Rango:" in tip and "Muestras:" in tip, f"tooltip: {tip!r}"
+    print(f"    tooltip: {tip.splitlines()[0]} | {tip.splitlines()[1]}")
+
+    print("[4] El interruptor 'Segmentos' las oculta/muestra")
     win.signal_view.segments_chk.setChecked(False)
     assert len(_bands(win.signal_view)) == 0 and len(_texts(win.signal_view)) == 0
     win.signal_view.segments_chk.setChecked(True)

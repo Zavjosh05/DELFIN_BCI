@@ -65,6 +65,15 @@ def main() -> int:
     assert panel.svm_degree.isEnabled(), "grado debería habilitarse con 'poly'"
     print(f"    kernels={kernels}, seleccionado=poly")
 
+    print("[2b] Cuadro Random Forest con parámetros")
+    _select(panel.clf_combo, "random_forest")
+    assert not panel.rf_box.isHidden(), "no se mostró el cuadro del RF"
+    panel.rf_estimators.setValue(123)
+    panel.rf_max_depth.setValue(7)
+    rfp = panel.classic_params()
+    assert rfp["n_estimators"] == 123 and rfp["max_depth"] == 7, f"rf_params: {rfp}"
+    print(f"    n_estimators={rfp['n_estimators']} max_depth={rfp['max_depth']}")
+
     print("[3] Capas de entrada/salida de la red")
     # Dos clases a partir de segmentos etiquetados.
     src = proj.add_source(os.path.abspath(os.path.join(

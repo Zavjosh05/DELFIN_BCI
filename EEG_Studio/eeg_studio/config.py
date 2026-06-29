@@ -43,6 +43,7 @@ CACHE_DIR = "cache"
 DATASETS_DIR = "datasets"
 MODELS_DIR = "models"
 RECORDINGS_DIR = "recordings"  # CSV capturados en vivo (formato OpenViBE)
+IMPORTED_DIR = "imported"      # CSV convertidos de .mat/.fif (no se tocan los originales)
 
 # --- Adquisición en tiempo real (opcional) --------------------------------
 # La interfaz NO necesita conectarse a ningún dispositivo: la adquisición es
@@ -60,6 +61,15 @@ CYKIT_PORT = 5555
 # Columna donde empiezan los 14 canales en cada línea de CyKit. Con la salida
 # por defecto (COUNTER, INTERPOLATED, AF3, ...) los canales empiezan en la 2.
 CYKIT_CHANNEL_START = 2
+
+# --- Control en tiempo real (clasificación en línea -> controlador) --------
+ONLINE_BUFFER_SAMPLES = 4096   # tamaño del buffer circular para inferencia
+ONLINE_WINDOW_SAMPLES = 256    # muestras por ventana a clasificar
+ONLINE_INTERVAL_MS = 250       # cada cuánto se clasifica (4 Hz)
+ONLINE_SMOOTH_K = 3            # predicciones iguales seguidas para confirmar una clase
+ONLINE_UDP_HOST = "127.0.0.1"
+ONLINE_UDP_PORT = 9001
+ONLINE_SERIAL_BAUD = 9600
 
 # --- Rendimiento -----------------------------------------------------------
 # Nº de procesos para la extracción de características en lote.

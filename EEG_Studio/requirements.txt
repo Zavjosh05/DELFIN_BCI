@@ -22,3 +22,11 @@ pycryptodome>=3.20
 # Opcional: clasificadores de geometría de Riemann y CSP. Sin pyriemann, la app
 # funciona y solo se deshabilitan esos modelos.
 pyriemann>=0.5
+
+# Opcional: salida por puerto serie en el modo de control (p. ej. Arduino).
+# Sin pyserial, el control por UDP y por registro siguen funcionando.
+pyserial>=3.5
+
+# Opcional: importar formatos profesionales (.fif, .edf, .gdf, BrainVision…)
+# mediante MNE-Python. La app funciona sin él (solo .mat y CSV).
+mne>=1.6

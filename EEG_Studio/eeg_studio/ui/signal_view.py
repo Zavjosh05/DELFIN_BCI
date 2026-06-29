@@ -10,7 +10,7 @@ import hashlib
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -54,6 +54,16 @@ class SignalView(QWidget):
         self._spacing: float = 0.0
         self._markers: list[tuple[int, str]] = []   # (muestra, etiqueta) — ayuda visual
         self._segments: list[tuple[int, int, str]] = []  # (inicio, fin, etiqueta)
+        self._marker_items: list = []               # ítems del overlay (se reciclan)
+        self._segment_items: list = []
+        self._n = 0                                  # nº de muestras
+        self._seg_top_y = 0.0                        # y para las etiquetas de segmento
+        self._drawing = False                        # evita recursión al fijar el rango
+
+        self._overlay_timer = QTimer(self)           # agrupa redibujos al hacer pan/zoom
+        self._overlay_timer.setSingleShot(True)
+        self._overlay_timer.setInterval(40)
+        self._overlay_timer.timeout.connect(self._redraw_overlay)
 
         self._build_ui()
 
@@ -92,7 +102,7 @@ class SignalView(QWidget):
             "Muestra los marcadores (Event Id) sobre la señal como ayuda visual "
             "para etiquetar manualmente las regiones de interés."
         )
-        self.markers_chk.stateChanged.connect(self._redraw)
+        self.markers_chk.stateChanged.connect(self._redraw_overlay)
         controls.addWidget(self.markers_chk)
 
         self.segments_chk = QCheckBox("Segmentos")
@@ -101,7 +111,7 @@ class SignalView(QWidget):
             "Sombrea los segmentos ya etiquetados sobre la señal, con un color "
             "por clase, para ver de un vistazo qué tramos ya están etiquetados."
         )
-        self.segments_chk.stateChanged.connect(self._redraw)
+        self.segments_chk.stateChanged.connect(self._redraw_overlay)
         controls.addWidget(self.segments_chk)
 
         controls.addStretch(1)
@@ -119,6 +129,8 @@ class SignalView(QWidget):
         self.plot.showGrid(x=True, y=False, alpha=0.2)
         self.plot.setDownsampling(auto=True, mode="peak")
         self.plot.setClipToView(True)
+        # Redibuja solo los marcadores/segmentos visibles al hacer pan/zoom.
+        self.plot.getViewBox().sigXRangeChanged.connect(self._on_xrange_changed)
         layout.addWidget(self.plot, 1)
 
         # Región de selección de tiempo.
@@ -161,13 +173,18 @@ class SignalView(QWidget):
         return float(self.gain_box.currentText().replace("x", ""))
 
     def _redraw(self) -> None:
+        self._drawing = True
         self.plot.clear()
+        self._marker_items = []
+        self._segment_items = []
         if self._data is None or self._data.size == 0:
             self.add_seg_btn.setEnabled(False)
+            self._drawing = False
             return
 
         data = self._data
         n_ch, n = data.shape
+        self._n = n
         t = np.arange(n) / self._fs
 
         # Normalización por canal solo para la visualización (no altera datos).
@@ -193,63 +210,105 @@ class SignalView(QWidget):
         axis = self.plot.getAxis("left")
         axis.setTicks([ticks])
         self.plot.setLabel("left", "Canal")
-
-        self._draw_segments(n, top_y=(n_ch - 0.4) * self._spacing)
-        self._draw_markers(n)
+        self._seg_top_y = (n_ch - 0.4) * self._spacing
 
         self.plot.addItem(self.region)
-        # Coloca la región en el primer 10% si no estaba visible.
+        total = float(t[-1]) if n > 1 else 1.0
+        # Ventana inicial legible: si la grabación es larga y hay muchos marcadores,
+        # se muestra un tramo en torno al primer marcador (no los ~45 min de golpe).
         if not self.region.isVisible():
-            self.region.setRegion((0, max(t[-1] * 0.1, t[1] if n > 1 else 0.1)))
+            if total > 60 and len(self._markers) > 30:
+                start = max(0.0, min(s for s, _ in self._markers) / self._fs - 2.0)
+                x0, x1 = start, min(total, start + 30.0)
+            else:
+                x0, x1 = 0.0, total
+            self.region.setRegion((x0, x0 + min(4.0, (x1 - x0) * 0.5)))
             self.region.show()
-        self.plot.setXRange(0, t[-1], padding=0.01)
+            self.plot.setXRange(x0, x1, padding=0.0)
         self.add_seg_btn.setEnabled(True)
+        self._drawing = False
+        self._redraw_overlay()
         self._on_region_changed()
 
-    def _draw_segments(self, n_samples: int, top_y: float) -> None:
-        """Sombrea cada segmento etiquetado con un color por clase."""
+    def _on_xrange_changed(self, *_):
+        if not self._drawing and self._data is not None:
+            self._overlay_timer.start()          # agrupa redibujos del overlay
+
+    def _visible_x(self) -> tuple[float, float]:
+        try:
+            (x0, x1), _ = self.plot.getViewBox().viewRange()
+            return float(x0), float(x1)
+        except Exception:  # noqa: BLE001
+            return 0.0, self._n / self._fs
+
+    def _redraw_overlay(self, *_) -> None:
+        """Redibuja SOLO los marcadores/segmentos visibles en el rango actual."""
+        for it in self._marker_items + self._segment_items:
+            self.plot.removeItem(it)
+        self._marker_items = []
+        self._segment_items = []
+        if self._data is None:
+            return
+        x0, x1 = self._visible_x()
+        self._draw_segments(x0, x1)
+        self._draw_markers(x0, x1)
+
+    def _draw_segments(self, x0: float, x1: float) -> None:
+        """Sombrea los segmentos visibles, con color por clase."""
         if not self.segments_chk.isChecked() or not self._segments:
             return
-        show_labels = len(self._segments) <= 80
-        for start, stop, label in self._segments:
-            t0 = max(0, start) / self._fs
-            t1 = min(stop, n_samples) / self._fs
+        fs, n = self._fs, self._n
+        vis = [(a, b, l) for (a, b, l) in self._segments
+               if max(0, a) / fs < x1 and min(b, n) / fs > x0]
+        show_labels = len(vis) <= 40
+        for start, stop, label in vis:
+            t0 = max(0, start) / fs
+            t1 = min(stop, n) / fs
             if t1 <= t0:
                 continue
             color = segment_color(label)
             fill = pg.mkColor(color); fill.setAlpha(45)
             edge = pg.mkColor(color); edge.setAlpha(130)
+            tip = (f"Clase: {label}\nRango: {t0:.2f}–{t1:.2f} s\n"
+                   f"Muestras: {int(start)}–{int(stop)}  ({int(stop) - int(start)})")
             band = pg.LinearRegionItem(values=(t0, t1), brush=pg.mkBrush(fill),
                                        pen=pg.mkPen(edge), movable=False)
-            band.setZValue(-10)               # detrás de las curvas
+            band.setZValue(-10)
+            band.setToolTip(tip)
             self.plot.addItem(band)
+            self._segment_items.append(band)
             if show_labels:
                 txt = pg.TextItem(str(label), color=color, anchor=(0, 1))
-                txt.setPos(t0, top_y)
+                txt.setPos(t0, self._seg_top_y)
                 txt.setZValue(6)
+                txt.setToolTip(tip)
                 self.plot.addItem(txt)
+                self._segment_items.append(txt)
 
-    def _draw_markers(self, n_samples: int) -> None:
-        """Dibuja líneas verticales con la etiqueta de cada marcador."""
+    def _draw_markers(self, x0: float, x1: float) -> None:
+        """Dibuja los marcadores visibles: atenuados, con etiqueta solo si hay pocos."""
         if not self.markers_chk.isChecked() or not self._markers:
             return
-        # Con muchos marcadores se omiten las etiquetas para no saturar la vista.
-        show_labels = len(self._markers) <= 80
-        for sample, label in self._markers:
-            if not (0 <= sample <= n_samples):
-                continue
-            tm = sample / self._fs
+        fs, n = self._fs, self._n
+        vis = [(s, l) for (s, l) in self._markers if 0 <= s <= n and x0 <= s / fs <= x1]
+        if not vis:
+            return
+        if len(vis) > 300:                       # submuestrea para no dibujar miles
+            vis = vis[:: len(vis) // 300 + 1]
+        show_labels = len(vis) <= 25
+        col = pg.mkColor("#FFD54F")
+        col.setAlpha(170 if show_labels else 70)  # tenue cuando hay muchos
+        pen = pg.mkPen(col, width=1, style=Qt.PenStyle.DashLine)
+        for sample, label in vis:
             opts = {}
             if show_labels:
                 opts = {"label": str(label), "labelOpts": {
-                    "position": 0.92, "color": "#FFD54F", "rotateAxis": (1, 0),
-                    "fill": (20, 20, 20, 160)}}
-            line = pg.InfiniteLine(
-                pos=tm, angle=90,
-                pen=pg.mkPen("#FFD54F", width=1, style=Qt.PenStyle.DashLine), **opts,
-            )
+                    "position": 0.93, "color": "#FFE082", "rotateAxis": (1, 0),
+                    "fill": (20, 20, 20, 180)}}
+            line = pg.InfiniteLine(pos=sample / fs, angle=90, pen=pen, **opts)
             line.setZValue(5)
             self.plot.addItem(line)
+            self._marker_items.append(line)
 
     # --- Selección --------------------------------------------------------
     def _on_region_changed(self) -> None:

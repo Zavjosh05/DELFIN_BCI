@@ -50,6 +50,16 @@ def main() -> int:
     assert all(s["stop"] - s["start"] == 8 for s in proj2.state["segments"])
     print("    ventana de 8 muestras aplicada")
 
+    print("[4] Todas las fuentes a la vez")
+    proj3 = Project.create(tempfile.mkdtemp(), "mk3")
+    proj3.add_source(csv)          # misma grabación como 2 fuentes (2 marcadores c/u)
+    proj3.add_source(csv)
+    n_all = proj3.segments_from_markers_all(window=0)
+    assert n_all == 4, f"esperaba 4 (2 fuentes × 2 marcadores), hay {n_all}"
+    srcs = {s["source_id"] for s in proj3.state["segments"]}
+    assert len(srcs) == 2, "deberían venir de las 2 fuentes"
+    print(f"    {n_all} segmentos de {len(srcs)} fuentes")
+
     print("\nMARCADORES → CLASES OK ✓")
     return 0
 

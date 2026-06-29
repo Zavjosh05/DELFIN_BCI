@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication
 
 from .config import APP_NAME, ORG_NAME
 from .ui.main_window import MainWindow
+from .ui.theme import apply_dark_theme
 
 
 def main() -> int:
@@ -17,7 +18,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
-    app.setStyle("Fusion")
+    apply_dark_theme(app)
 
     window = MainWindow()
     window.show()

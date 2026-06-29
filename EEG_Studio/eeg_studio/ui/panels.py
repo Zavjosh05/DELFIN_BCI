@@ -77,6 +77,12 @@ class PreprocessingPanel(QWidget):
         self.params_form = QFormLayout(self.params_box)
         layout.addWidget(self.params_box)
 
+        channels_btn = QPushButton("Seleccionar canales…")
+        channels_btn.setToolTip("Activa/desactiva canales (p. ej. excluir los EOG). "
+                                "Afecta a CAR, características y modelos.")
+        channels_btn.clicked.connect(self.controller.select_channels)
+        layout.addWidget(channels_btn)
+
         cache_btn = QPushButton("Guardar señal procesada en el proyecto (.npz)")
         cache_btn.setToolTip("Escribe el resultado en cache/ — nunca toca el CSV original")
         cache_btn.clicked.connect(self.controller.cache_processed)
@@ -229,26 +235,43 @@ class DatasetPanel(QWidget):
         relabel_btn.clicked.connect(self._relabel)
         remove_btn = QPushButton("Eliminar")
         remove_btn.clicked.connect(self._remove)
+        clear_btn = QPushButton("Vaciar todo")
+        clear_btn.setToolTip("Elimina TODOS los segmentos de una vez (se puede deshacer).")
+        clear_btn.clicked.connect(self.controller.clear_all_segments)
         seg_btns.addWidget(relabel_btn)
         seg_btns.addWidget(remove_btn)
+        seg_btns.addWidget(clear_btn)
         layout.addLayout(seg_btns)
 
         # Crear segmentos a partir de los marcadores (Event Id) -> clases.
         mk_box = QGroupBox("Segmentos desde marcadores")
         mk_layout = QVBoxLayout(mk_box)
         mk_layout.addWidget(QLabel(
-            "Convierte los marcadores de la fuente seleccionada en segmentos "
-            "etiquetados (cada marcador = una clase)."))
+            "Convierte los marcadores en segmentos etiquetados (cada marcador = "
+            "una clase)."))
+        self.marker_all = QCheckBox("Todas las fuentes (no solo la abierta)")
+        self.marker_all.setToolTip("Si está marcado, segmenta los marcadores de TODAS las "
+                                   "fuentes del proyecto de una vez; si no, solo la actual.")
+        mk_layout.addWidget(self.marker_all)
         mk_row = QHBoxLayout()
+        mk_row.addWidget(QLabel("Desfase:"))
+        self.marker_offset = QSpinBox()
+        self.marker_offset.setRange(0, 1000000)
+        self.marker_offset.setSingleStep(64)
+        self.marker_offset.setValue(0)
+        self.marker_offset.setToolTip("Muestras a saltar tras el marcador antes de empezar el segmento "
+                                      "(p. ej. para llegar al periodo de interés).")
+        mk_row.addWidget(self.marker_offset)
         mk_row.addWidget(QLabel("Ventana:"))
         self.marker_window = QSpinBox()
-        self.marker_window.setRange(0, 100000)
+        self.marker_window.setRange(0, 1000000)
         self.marker_window.setSingleStep(64)
         self.marker_window.setValue(0)
-        self.marker_window.setToolTip("Muestras tras cada marcador (0 = hasta el siguiente marcador).")
-        mk_row.addWidget(self.marker_window, 1)
+        self.marker_window.setToolTip("Muestras del segmento (0 = hasta el siguiente marcador).")
+        mk_row.addWidget(self.marker_window)
         mk_btn = QPushButton("Crear")
-        mk_btn.clicked.connect(lambda: self.controller.create_segments_from_markers(self.marker_window.value()))
+        mk_btn.clicked.connect(lambda: self.controller.create_segments_from_markers(
+            self.marker_window.value(), self.marker_offset.value(), self.marker_all.isChecked()))
         mk_row.addWidget(mk_btn)
         mk_layout.addLayout(mk_row)
         layout.addWidget(mk_box)
@@ -263,6 +286,11 @@ class DatasetPanel(QWidget):
         self.time_chk.stateChanged.connect(self._save_cfg)
         feat_layout.addWidget(self.bands_chk)
         feat_layout.addWidget(self.time_chk)
+        view_btn = QPushButton("Ver características de la selección…")
+        view_btn.setToolTip("Calcula y muestra las potencias por banda y características "
+                            "temporales de la región seleccionada en el visor.")
+        view_btn.clicked.connect(self.controller.show_features)
+        feat_layout.addWidget(view_btn)
         layout.addWidget(feat_box)
 
         build_btn = QPushButton("Construir dataset (multiproceso)")
@@ -296,6 +324,7 @@ class DatasetPanel(QWidget):
             return
         cfg = {"use_bands": self.bands_chk.isChecked(), "use_time": self.time_chk.isChecked()}
         self.controller.project.state["dataset"] = cfg
+        self.controller.request_autosave()
 
     def refresh(self) -> None:
         proj = self.controller.project
@@ -380,6 +409,37 @@ class ClassificationPanel(QWidget):
         self.svm_box.setVisible(False)
         layout.addWidget(self.svm_box)
 
+        # Parámetros del Random Forest (visible solo para RF).
+        self.rf_box = QGroupBox("Parámetros del Random Forest")
+        rf_form = QFormLayout(self.rf_box)
+        self.rf_estimators = QSpinBox()
+        self.rf_estimators.setRange(1, 2000)
+        self.rf_estimators.setValue(200)
+        self.rf_estimators.setToolTip("Nº de árboles: más árboles = más estable, pero más lento.")
+        self.rf_max_depth = QSpinBox()
+        self.rf_max_depth.setRange(0, 200)
+        self.rf_max_depth.setValue(0)
+        self.rf_max_depth.setToolTip("Profundidad máxima de cada árbol (0 = sin límite).")
+        self.rf_min_split = QSpinBox()
+        self.rf_min_split.setRange(2, 100)
+        self.rf_min_split.setValue(2)
+        self.rf_min_split.setToolTip("Mínimo de muestras para dividir un nodo (mayor = menos sobreajuste).")
+        self.rf_max_features = QComboBox()
+        self.rf_max_features.addItem("sqrt", "sqrt")
+        self.rf_max_features.addItem("log2", "log2")
+        self.rf_max_features.addItem("todas", None)
+        self.rf_max_features.setToolTip("Nº de características consideradas en cada división.")
+        self.rf_criterion = QComboBox()
+        self.rf_criterion.addItems(["gini", "entropy", "log_loss"])
+        self.rf_criterion.setToolTip("Medida de calidad de las divisiones.")
+        rf_form.addRow("Nº de árboles:", self.rf_estimators)
+        rf_form.addRow("Profundidad máx.:", self.rf_max_depth)
+        rf_form.addRow("Mín. para dividir:", self.rf_min_split)
+        rf_form.addRow("Máx. características:", self.rf_max_features)
+        rf_form.addRow("Criterio:", self.rf_criterion)
+        self.rf_box.setVisible(False)
+        layout.addWidget(self.rf_box)
+
         # Ventana para modelos de señal cruda no neuronales (Riemann/CSP).
         self.raw_box = QGroupBox("Señal cruda")
         raw_form = QFormLayout(self.raw_box)
@@ -399,24 +459,41 @@ class ClassificationPanel(QWidget):
         layout.addWidget(self.nn_config_widget)
         self._on_svm_kernel_changed()
 
-        train_btn = QPushButton("Entrenar con el dataset")
+        train_btn = QPushButton("Entrenar y añadir al proyecto")
         train_btn.clicked.connect(self.controller.train_model)
         layout.addWidget(train_btn)
 
-        save_btn = QPushButton("Guardar modelo (.joblib)")
-        save_btn.clicked.connect(self.controller.save_model)
-        layout.addWidget(save_btn)
+        # Modelos entrenados del proyecto (se pueden tener varios).
+        models_box = QGroupBox("Modelos entrenados")
+        mlay = QVBoxLayout(models_box)
+        self.models_list = QListWidget()
+        self.models_list.itemDoubleClicked.connect(lambda *_: self._activate_selected())
+        self.models_list.currentRowChanged.connect(self._show_selected_metrics)
+        mlay.addWidget(self.models_list)
+        row1 = QHBoxLayout()
+        for text, slot in (("Activar", self._activate_selected),
+                           ("Métricas…", self._metrics_selected),
+                           ("Eliminar", self._remove_selected)):
+            b = QPushButton(text)
+            b.clicked.connect(slot)
+            row1.addWidget(b)
+        mlay.addLayout(row1)
+        row2 = QHBoxLayout()
+        exp = QPushButton("Exportar…")
+        exp.clicked.connect(self._export_selected)
+        imp = QPushButton("Importar…")
+        imp.clicked.connect(self.controller.import_model)
+        row2.addWidget(exp)
+        row2.addWidget(imp)
+        mlay.addLayout(row2)
+        layout.addWidget(models_box)
 
-        load_btn = QPushButton("Cargar modelo…")
-        load_btn.clicked.connect(self.controller.load_model)
-        layout.addWidget(load_btn)
-
-        predict_btn = QPushButton("Clasificar selección actual")
+        predict_btn = QPushButton("Clasificar selección actual (modelo activo)")
         predict_btn.setToolTip("Extrae la región seleccionada y predice su clase")
         predict_btn.clicked.connect(self.controller.predict_selection)
         layout.addWidget(predict_btn)
 
-        self.result_label = QLabel("Sin modelo entrenado.")
+        self.result_label = QLabel("Sin modelos entrenados.")
         self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
         layout.addStretch(1)
@@ -426,6 +503,7 @@ class ClassificationPanel(QWidget):
         is_nn = classification.is_nn(key)
         self.nn_config_widget.setVisible(is_nn)
         self.svm_box.setVisible(key == "svm")
+        self.rf_box.setVisible(key == "random_forest")
         self.raw_box.setVisible(classification.is_riemann(key))
         if is_nn:
             self.nn_config_widget.set_net_type(classification.net_type(key))
@@ -450,6 +528,24 @@ class ClassificationPanel(QWidget):
             "gamma": self.svm_gamma.currentText(),
             "degree": self.svm_degree.value(),
         }
+
+    def rf_params(self) -> dict:
+        return {
+            "n_estimators": self.rf_estimators.value(),
+            "max_depth": self.rf_max_depth.value(),     # 0 = sin límite
+            "min_samples_split": self.rf_min_split.value(),
+            "max_features": self.rf_max_features.currentData(),
+            "criterion": self.rf_criterion.currentText(),
+        }
+
+    def classic_params(self) -> dict | None:
+        """Parámetros del clasificador clásico seleccionado (SVM o RF)."""
+        key = self.classifier_key
+        if key == "svm":
+            return self.svm_params()
+        if key == "random_forest":
+            return self.rf_params()
+        return None
 
     def raw_window_value(self) -> int:
         """Ventana (muestras) para modelos de señal cruda no neuronales."""
@@ -478,6 +574,64 @@ class ClassificationPanel(QWidget):
 
     def refresh(self) -> None:
         self.update_io_info()
+        self.refresh_models()
+
+    # --- Registro de modelos ---------------------------------------------
+    def refresh_models(self) -> None:
+        self.models_list.blockSignals(True)
+        self.models_list.clear()
+        active = self.controller.active_model_name
+        for name, result in self.controller.models.items():
+            cv = f"{result.cv_mean * 100:.1f}%" if result.cv_scores.size else "—"
+            star = "★ " if name == active else "   "
+            item = QListWidgetItem(f"{star}{name}   ({cv})")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            if name == active:
+                f = item.font(); f.setBold(True); item.setFont(f)
+            self.models_list.addItem(item)
+        # Seleccionar el modelo activo para mostrar sus métricas.
+        names = list(self.controller.models)
+        if active in names:
+            self.models_list.setCurrentRow(names.index(active))
+        self.models_list.blockSignals(False)
+        if not self.controller.models:
+            self.result_label.setText("Sin modelos entrenados.")
+        else:
+            self._show_selected_metrics()
+
+    def _selected_name(self) -> str | None:
+        item = self.models_list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _show_selected_metrics(self, *_):
+        name = self._selected_name()
+        if not name or name not in self.controller.models:
+            return
+        r = self.controller.models[name]
+        label = classification.CLASSIFIER_LABELS.get(r.classifier_name, r.classifier_name)
+        cv = (f"{r.score_label}: {r.cv_mean * 100:.1f}% (±{r.cv_std * 100:.1f})"
+              if r.cv_scores.size else "Sin validación (pocos datos)")
+        self.result_label.setText(f"{name} — {label}\n{cv}\nClases: {', '.join(r.classes)}")
+
+    def _activate_selected(self):
+        name = self._selected_name()
+        if name:
+            self.controller.activate_model(name)
+
+    def _metrics_selected(self):
+        name = self._selected_name()
+        if name:
+            self.controller.show_model_metrics(name)
+
+    def _remove_selected(self):
+        name = self._selected_name()
+        if name:
+            self.controller.remove_model(name)
+
+    def _export_selected(self):
+        name = self._selected_name()
+        if name:
+            self.controller.export_model(name)
 
     def set_result(self, text: str) -> None:
         self.result_label.setText(text)

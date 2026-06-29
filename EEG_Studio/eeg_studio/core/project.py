@@ -31,6 +31,7 @@ from ..config import (
     DATASETS_DIR,
     DISK_CACHE_PROCESSED,
     EPOC_CHANNELS,
+    IMPORTED_DIR,
     MODELS_DIR,
     PROJECT_EXT,
     PROJECT_MANIFEST,
@@ -70,7 +71,7 @@ class Project:
     def create(cls, folder: str, name: str) -> "Project":
         path = folder if folder.endswith(PROJECT_EXT) else os.path.join(folder, name + PROJECT_EXT)
         os.makedirs(path, exist_ok=True)
-        for sub in (CACHE_DIR, DATASETS_DIR, MODELS_DIR, RECORDINGS_DIR):
+        for sub in (CACHE_DIR, DATASETS_DIR, MODELS_DIR, RECORDINGS_DIR, IMPORTED_DIR):
             os.makedirs(os.path.join(path, sub), exist_ok=True)
         proj = cls(path, name)
         proj.save()
@@ -91,7 +92,7 @@ class Project:
         return proj
 
     def save(self) -> None:
-        for sub in (CACHE_DIR, DATASETS_DIR, MODELS_DIR, RECORDINGS_DIR):
+        for sub in (CACHE_DIR, DATASETS_DIR, MODELS_DIR, RECORDINGS_DIR, IMPORTED_DIR):
             os.makedirs(os.path.join(self.path, sub), exist_ok=True)
         manifest = {
             "name": self.name,
@@ -130,6 +131,32 @@ class Project:
     def get_source(self, source_id: str) -> dict | None:
         return next((s for s in self.sources if s["id"] == source_id), None)
 
+    def is_internal_path(self, path: str) -> bool:
+        """True si ``path`` vive dentro de la carpeta del proyecto.
+
+        Sirve para decidir si un archivo se puede borrar del disco (solo los del
+        proyecto) sin tocar nunca la carpeta de datos de origen.
+        """
+        if not path:
+            return False
+        root = os.path.abspath(self.path)
+        try:
+            return os.path.commonpath([os.path.abspath(path), root]) == root
+        except ValueError:                       # distinto volumen (Windows)
+            return False
+
+    def set_source_path(self, source_id: str, new_path: str,
+                        description: str = "Cambiar ruta de fuente") -> None:
+        """Actualiza la ruta de una fuente (p. ej. tras comprimirla a .csv.gz)."""
+        new_sources = [dict(s) for s in self.sources]
+        for s in new_sources:
+            if s["id"] == source_id:
+                s["path"] = os.path.abspath(new_path)
+        self._commit("sources", new_sources, description,
+                     setter=lambda v: setattr(self, "sources", v))
+        with self._lock:                       # forzar recarga desde la nueva ruta
+            self._recordings.pop(source_id, None)
+
     def get_recording(self, source_id: str) -> Recording:
         with self._lock:
             rec = self._recordings.get(source_id)
@@ -144,28 +171,56 @@ class Project:
         return rec
 
     def _set_default_channel_aliases(self, rec: Recording) -> None:
-        aliases = {}
-        for i, name in enumerate(rec.channel_names):
-            aliases[name] = EPOC_CHANNELS[i] if i < len(EPOC_CHANNELS) else name
+        import re
+
+        names = rec.channel_names
+        # Solo se aplican los nombres del EPOC+ cuando los canales son genéricos
+        # ("Channel 1".."Channel 14"), como en los CSV de OpenViBE. Si el CSV ya
+        # trae nombres reales (p. ej. un dataset ajeno: Fz, C3, …), se respetan.
+        generic = all(re.fullmatch(r"Channel \d+", str(n)) for n in names)
+        if generic and len(names) == len(EPOC_CHANNELS):
+            aliases = {n: EPOC_CHANNELS[i] for i, n in enumerate(names)}
+        else:
+            aliases = {n: n for n in names}
         self.state["channel_aliases"] = aliases
 
     def display_channel_names(self, rec: Recording) -> list[str]:
         aliases = self.state.get("channel_aliases", {})
         return [aliases.get(n, n) for n in rec.channel_names]
 
+    # --- Canales activos (exclusión, p. ej. de los EOG) -------------------
+    def excluded_channels(self) -> list[str]:
+        return list(self.state.get("excluded_channels", []))
+
+    def kept_indices(self, rec: Recording) -> list[int]:
+        """Índices de los canales NO excluidos, en orden original."""
+        excluded = set(self.state.get("excluded_channels", []))
+        return [i for i, n in enumerate(rec.channel_names) if n not in excluded]
+
+    def kept_channel_names(self, rec: Recording) -> list[str]:
+        excluded = set(self.state.get("excluded_channels", []))
+        return [n for n in rec.channel_names if n not in excluded]
+
+    def kept_display_names(self, rec: Recording) -> list[str]:
+        """Nombres mostrados de los canales activos (coinciden con get_processed)."""
+        aliases = self.state.get("channel_aliases", {})
+        return [aliases.get(n, n) for n in self.kept_channel_names(rec)]
+
     # ------------------------------------------------------------------ #
     # Procesamiento (no destructivo): pipeline aplicado sobre copias
     # ------------------------------------------------------------------ #
     def _pipeline_signature(self) -> str:
-        raw = json.dumps(self.state["pipeline"], sort_keys=True)
+        # La firma incluye los canales excluidos: cambiarlos invalida la caché.
+        raw = json.dumps([self.state["pipeline"], sorted(self.state.get("excluded_channels", []))],
+                         sort_keys=True)
         return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
     def get_processed(self, source_id: str) -> np.ndarray:
-        """Devuelve la señal completa con el pipeline aplicado (en caché en RAM).
+        """Señal de los **canales activos** con el pipeline aplicado (en caché).
 
-        Seguro para hilos: el cómputo pesado (filtros, ICA) corre fuera del lock,
-        de modo que varias fuentes pueden procesarse en paralelo. Nunca modifica
-        la grabación original; opera sobre una copia.
+        Selecciona primero los canales no excluidos y luego aplica el pipeline, de
+        modo que CAR y los filtros operan solo sobre esos canales. Seguro para
+        hilos; nunca modifica la grabación original.
         """
         rec = self.get_recording(source_id)
         sig = self._pipeline_signature()
@@ -174,13 +229,14 @@ class Project:
             if cached and cached[0] == sig:
                 return cached[1]
 
+        base = np.ascontiguousarray(rec.data[self.kept_indices(rec)], dtype=np.float64)
         pipeline = self.state["pipeline"]
         if not pipeline:
-            out = rec.data.copy()                 # sin procesar: no se cachea en disco
+            out = base                            # sin procesar: no se cachea en disco
         else:
             out = self._load_disk_cache(source_id, sig)
             if out is None:
-                out = preprocessing.apply_pipeline(rec.data, rec.sample_rate, pipeline)
+                out = preprocessing.apply_pipeline(base, rec.sample_rate, pipeline)
                 self._write_disk_cache(source_id, sig, out)
         with self._lock:
             self._processed[source_id] = (sig, out)
@@ -255,7 +311,7 @@ class Project:
             out_path,
             data=data,
             sample_rate=rec.sample_rate,
-            channels=np.array(self.display_channel_names(rec), dtype=object),
+            channels=np.array(self.kept_display_names(rec), dtype=object),
         )
         return out_path
 
@@ -281,6 +337,13 @@ class Project:
         new_segments = [s for s in self.state["segments"] if s["id"] != segment_id]
         self._commit("segments", new_segments, "Eliminar segmento")
 
+    def clear_segments(self) -> int:
+        """Elimina TODOS los segmentos de una vez. Devuelve cuántos se quitaron."""
+        n = len(self.state["segments"])
+        if n:
+            self._commit("segments", [], f"Eliminar todos los segmentos ({n})")
+        return n
+
     def relabel_segment(self, segment_id: str, label: str) -> None:
         new_segments = snapshot(self.state["segments"])
         for s in new_segments:
@@ -302,44 +365,72 @@ class Project:
     def labels(self) -> list[str]:
         return sorted({s["label"] for s in self.state["segments"]})
 
-    def segments_from_markers(self, source_id: str, window: int = 0) -> int:
-        """Crea segmentos a partir de los marcadores (columna Event Id).
-
-        Cada marcador genera un segmento etiquetado con el texto del marcador, de
-        modo que los marcadores **sirven como clases**. ``window`` = nº de muestras
-        tras el marcador (0 = hasta el siguiente marcador o el final). Devuelve el
-        número de segmentos creados.
-        """
+    def _build_marker_segments(self, source_id: str, window: int, offset: int) -> list[dict]:
+        """Segmentos (sin registrar) a partir de los marcadores de una fuente."""
         rec = self.get_recording(source_id)
         events = rec.events
         if not events:
-            return 0
+            return []
         starts = [int(e["sample"]) for e in events]
-        new_segments = list(self.state["segments"])
-        created = 0
+        out: list[dict] = []
         for i, ev in enumerate(events):
-            start = starts[i]
+            start = starts[i] + int(offset)
             if window and window > 0:
                 stop = min(start + int(window), rec.n_samples)
             else:
                 stop = starts[i + 1] if i + 1 < len(starts) else rec.n_samples
             if stop - start < 2:
                 continue
-            label = str(ev.get("id", "")).strip() or "marcador"
-            new_segments.append({
+            out.append({
                 "id": uuid.uuid4().hex[:8],
                 "source_id": source_id,
                 "start": start,
                 "stop": int(stop),
-                "label": label,
+                "label": str(ev.get("id", "")).strip() or "marcador",
                 "channels": None,
                 "note": "desde marcador",
             })
-            created += 1
-        if created:
-            self._commit("segments", new_segments,
-                         f"Segmentos desde marcadores ({created})")
-        return created
+        return out
+
+    def segments_from_markers(self, source_id: str, window: int = 0, offset: int = 0) -> int:
+        """Crea segmentos a partir de los marcadores (Event Id) de **una** fuente.
+
+        Cada marcador genera un segmento etiquetado con el texto del marcador, de
+        modo que los marcadores **sirven como clases**. ``offset`` = muestras a
+        saltar tras el marcador; ``window`` = nº de muestras (0 = hasta el siguiente
+        marcador o el final). Devuelve el número de segmentos creados.
+        """
+        new = self._build_marker_segments(source_id, window, offset)
+        if new:
+            self._commit("segments", self.state["segments"] + new,
+                         f"Segmentos desde marcadores ({len(new)})")
+        return len(new)
+
+    def segments_from_markers_all(self, window: int = 0, offset: int = 0,
+                                  skip_existing: bool = True) -> int:
+        """Crea segmentos desde los marcadores de **todas** las fuentes (un solo paso).
+
+        Por defecto omite las fuentes que ya tienen segmentos (para no duplicar) y
+        las que no se puedan cargar del disco (se saltan sin romper la operación).
+        """
+        have = ({s["source_id"] for s in self.state["segments"]}
+                if skip_existing else set())
+        new: list[dict] = []
+        used = 0
+        for src in self.sources:
+            if src["id"] in have:
+                continue
+            try:
+                seg = self._build_marker_segments(src["id"], window, offset)
+            except Exception:  # noqa: BLE001 — fuente no disponible: se omite
+                continue
+            if seg:
+                new += seg
+                used += 1
+        if new:
+            self._commit("segments", self.state["segments"] + new,
+                         f"Segmentos desde marcadores · {used} fuentes ({len(new)})")
+        return len(new)
 
     # ------------------------------------------------------------------ #
     # Preprocesamiento: edición del pipeline
@@ -381,10 +472,13 @@ class Project:
         self._apply_section(section, after, setter)
         self.changelog.push(cmd)
 
+    # Cambios en estas secciones invalidan la señal procesada en caché.
+    _REPROCESS_SECTIONS = ("pipeline", "excluded_channels")
+
     def edit(self, section: str, new_value, description: str) -> None:
         """API pública para editar una sección arbitraria del estado."""
         self._commit(section, new_value, description)
-        if section == "pipeline":
+        if section in self._REPROCESS_SECTIONS:
             self.invalidate_processed()
 
     def _apply_section(self, section: str, value, setter=None) -> None:
@@ -400,7 +494,7 @@ class Project:
         if cmd is None:
             return False
         self._apply_section(cmd.section, snapshot(cmd.before))
-        if cmd.section == "pipeline":
+        if cmd.section in self._REPROCESS_SECTIONS:
             self.invalidate_processed()
         return True
 
@@ -409,7 +503,7 @@ class Project:
         if cmd is None:
             return False
         self._apply_section(cmd.section, snapshot(cmd.after))
-        if cmd.section == "pipeline":
+        if cmd.section in self._REPROCESS_SECTIONS:
             self.invalidate_processed()
         return True
 
