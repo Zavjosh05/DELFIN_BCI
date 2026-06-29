@@ -45,6 +45,7 @@ from .control_panel import ControlPanel
 from .live_view import LiveSignalView
 from .panels import ClassificationPanel, DatasetPanel, PreprocessingPanel
 from .signal_view import SignalView
+from .signal_window import SignalWindow
 
 
 class MainWindow(QMainWindow):
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         self.active_model_name: str | None = None
         self.current_source_id: str | None = None
         self._threads: list = []  # mantiene vivos los hilos en ejecución
+        self._signal_windows: set = set()  # ventanas de señal abiertas (varias a la vez)
 
         # Guardado continuo (autosave): guarda el proyecto poco después de cada
         # cambio, sin necesidad de Ctrl+S (que sigue funcionando).
@@ -207,6 +209,8 @@ class MainWindow(QMainWindow):
         # Izquierda: fuentes (CSV) del proyecto.
         self.sources_list = QListWidget()
         self.sources_list.currentRowChanged.connect(self._on_source_selected)
+        self.sources_list.itemDoubleClicked.connect(
+            lambda _it: self.open_source_window())   # doble clic: abrir en ventana
         self.sources_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.sources_list.customContextMenuRequested.connect(self._on_sources_menu)
         self.src_dock = QDockWidget("Fuentes (CSV)", self)
@@ -261,9 +265,10 @@ class MainWindow(QMainWindow):
         self.act_open = QAction("Abrir proyecto…", self, triggered=self.open_project)
         self.act_save = QAction("Guardar proyecto", self, triggered=self.save_project)
         self.act_save.setShortcut(QKeySequence.StandardKey.Save)
-        self.act_add_src = QAction("Añadir CSV…", self, triggered=self.add_source)
-        self.act_import_mat = QAction("Importar dataset (.mat / .fif / .edf…)…",
-                                      self, triggered=self.import_dataset)
+        self.act_add = QAction("Añadir o importar señal…", self,
+                               triggered=self.add_or_import_source)
+        self.act_add.setToolTip("Añade CSV o importa datasets (.mat / .fif / .edf / .gdf…) "
+                                "en un solo paso.")
         self.act_compress = QAction("Comprimir fuentes a .csv.gz…", self,
                                     triggered=self.compress_sources)
         self.act_del_src = QAction("Quitar fuente del proyecto…", self,
@@ -274,8 +279,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.aboutToShow.connect(self._build_recent_menu)
         m_proj.addAction(self.act_save)
         m_proj.addSeparator()
-        m_proj.addAction(self.act_add_src)
-        m_proj.addAction(self.act_import_mat)
+        m_proj.addAction(self.act_add)
         m_proj.addAction(self.act_compress)
         m_proj.addAction(self.act_del_src)
         m_proj.addSeparator()
@@ -297,8 +301,7 @@ class MainWindow(QMainWindow):
         self.act_new.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_FileIcon))
         self.act_open.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.act_save.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
-        self.act_add_src.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
-        self.act_import_mat.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
+        self.act_add.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
         self.act_undo.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
         self.act_redo.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
 
@@ -309,7 +312,7 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         # La misma QAction sirve en el menú y en la barra (Qt comparte su estado).
         for group in ((self.act_new, self.act_open, self.act_save),
-                      (self.act_add_src, self.act_import_mat),
+                      (self.act_add,),
                       (self.act_undo, self.act_redo)):
             for a in group:
                 tb.addAction(a)
@@ -492,60 +495,59 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self.statusBar().showMessage(f"No se pudo autoguardar: {exc}", 3000)
 
-    def add_source(self) -> None:
-        if not self._require_project():
-            return
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Añadir CSV de EEG", "", "CSV (*.csv *.csv.gz)")
-        for p in paths:
-            try:
-                self.project.add_source(p)
-            except Exception as exc:  # noqa: BLE001
-                QMessageBox.warning(self, "No se pudo cargar", f"{p}\n\n{exc}")
-        self.refresh_all()
-        self.request_autosave()
+    def add_or_import_source(self) -> None:
+        """Añade fuentes CSV **o** importa datasets (.mat/.fif/.edf…) en un solo paso.
 
-    def import_dataset(self) -> None:
+        Los ``.csv``/``.csv.gz`` se referencian tal cual; el resto se convierte a
+        ``.csv.gz`` dentro del proyecto (carpeta ``imported/``) sin tocar el origen.
+        """
         if not self._require_project():
             return
         mne_exts = " ".join(f"*{e}" for e in mne_loader.supported_extensions())
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Importar dataset", "",
-            f"Datasets (*.mat {mne_exts});;MATLAB (*.mat);;MNE/FIF/EDF ({mne_exts})")
+            self, "Añadir o importar señal EEG", "",
+            f"Señal EEG (*.csv *.csv.gz *.mat {mne_exts});;"
+            f"CSV de OpenViBE (*.csv *.csv.gz);;MATLAB BNCI 2a (*.mat);;"
+            f"MNE / FIF / EDF / GDF ({mne_exts})")
         if not paths:
             return
-        self._busy("Convirtiendo a CSV (puede tardar)…")
+        self._busy("Añadiendo / convirtiendo señal…")
         self.progress.setRange(0, 0)
         self.progress.show()
 
-        # El CSV convertido se guarda DENTRO del proyecto (no se toca el origen).
+        # Las conversiones se guardan DENTRO del proyecto (no se toca el origen).
         imported_dir = os.path.join(self.project.path, IMPORTED_DIR)
         os.makedirs(imported_dir, exist_ok=True)
 
         def task():
             out = []
             for p in paths:
+                low = p.lower()
+                if low.endswith(".csv") or low.endswith(".csv.gz"):
+                    out.append(p)                       # CSV: se referencia directo
+                    continue
                 base = os.path.splitext(os.path.basename(p))[0]
-                gz = os.path.join(imported_dir, base + ".csv.gz")   # comprimido, en el proyecto
-                if os.path.isfile(gz):                              # reutiliza si ya se importó
-                    csv = gz
+                gz = os.path.join(imported_dir, base + ".csv.gz")
+                if os.path.isfile(gz):                  # reutiliza si ya se importó
+                    out.append(gz)
                 elif os.path.splitext(p)[1].lower() == ".mat":
-                    csv = mat_loader.convert_bnci_mat(p, gz)
+                    out.append(mat_loader.convert_bnci_mat(p, gz))
                 else:
-                    csv = mne_loader.convert_with_mne(p, gz)
-                out.append(csv)
+                    out.append(mne_loader.convert_with_mne(p, gz))
             return out
 
         def done(csvs):
+            added = 0
             for c in csvs:
                 try:
                     self.project.add_source(c)
+                    added += 1
                 except Exception as exc:  # noqa: BLE001
                     QMessageBox.warning(self, "No se pudo añadir", f"{c}\n\n{exc}")
             self._idle()
             self.refresh_all()
             self.request_autosave()
-            self.statusBar().showMessage(f"{len(csvs)} archivo(s) importado(s) como CSV.")
+            self.statusBar().showMessage(f"{added} fuente(s) añadida(s) al proyecto.")
 
         self._spawn(task, done)
 
@@ -666,12 +668,24 @@ class MainWindow(QMainWindow):
         # Procesamiento en segundo plano para no bloquear la interfaz.
         sid = self.current_source_id
         self._busy("Aplicando preprocesamiento…")
+        self.progress.setRange(0, 0)        # indeterminado hasta el 1er paso
+        self.progress.show()
 
         def done(data):
             self._idle()
             self.signal_view.set_data(data, rec.sample_rate, names)
 
-        self._spawn(lambda: self.project.get_processed(sid), done)
+        self._spawn(lambda progress=None: self.project.get_processed(sid, progress=progress),
+                    done, on_progress=self._on_filter_progress)
+
+    def _on_filter_progress(self, done_n: int, total: int) -> None:
+        """Barra determinada con el paso de filtrado en curso."""
+        if total <= 0:
+            return
+        if self.progress.maximum() != total:
+            self.progress.setRange(0, total)
+        self.progress.setValue(done_n)
+        self.statusBar().showMessage(f"Aplicando preprocesamiento… paso {done_n}/{total}")
 
     # ------------------------------------------------------------------ #
     # Preprocesamiento (delegado desde el panel)
@@ -692,6 +706,13 @@ class MainWindow(QMainWindow):
 
     def update_pipeline_step(self, index: int, params: dict) -> None:
         self.project.update_pipeline_step(index, params)
+        self._after_state_change()
+
+    def set_pipeline_step_enabled(self, index: int, enabled: bool) -> None:
+        """Activa/desactiva un paso del pipeline sin eliminarlo."""
+        if not self._require_project():
+            return
+        self.project.set_step_enabled(index, enabled)
         self._after_state_change()
 
     def cache_processed(self) -> None:
@@ -1110,6 +1131,7 @@ class MainWindow(QMainWindow):
     def _after_state_change(self) -> None:
         self.refresh_all()
         self._update_signal_view()
+        self._refresh_signal_windows()
         self.request_autosave()
 
     def refresh_all(self) -> None:
@@ -1156,9 +1178,30 @@ class MainWindow(QMainWindow):
         if row < 0 or row >= len(self.project.sources):
             return
         self.sources_list.setCurrentRow(row)
+        sid = self.project.sources[row]["id"]
         menu = QMenu(self)
+        menu.addAction("Abrir en ventana nueva", lambda: self.open_source_window(sid))
+        menu.addSeparator()
         menu.addAction("Quitar del proyecto…", self.remove_current_source)
         menu.exec(self.sources_list.mapToGlobal(pos))
+
+    def open_source_window(self, source_id: str | None = None) -> None:
+        """Abre una fuente en una ventana aparte (se pueden tener varias a la vez)."""
+        if not self._require_project():
+            return
+        sid = source_id or self.current_source_id
+        if sid is None or self.project.get_source(sid) is None:
+            self.info("Sin fuente", "Selecciona una fuente en el panel izquierdo.")
+            return
+        win = SignalWindow(self, sid)
+        self._signal_windows.add(win)
+        win.show()
+        win.raise_()
+
+    def _refresh_signal_windows(self) -> None:
+        """Resincroniza las ventanas de señal abiertas tras un cambio de estado."""
+        for win in list(self._signal_windows):
+            win.reload()
 
     def _refresh_sources(self) -> None:
         self.sources_list.blockSignals(True)
@@ -1229,8 +1272,7 @@ class MainWindow(QMainWindow):
 
     def _update_actions(self) -> None:
         has_proj = self.project is not None
-        for a in (self.act_save, self.act_add_src, self.act_import_mat, self.act_compress,
-                  self.act_del_src):
+        for a in (self.act_save, self.act_add, self.act_compress, self.act_del_src):
             a.setEnabled(has_proj)
         self.act_undo.setEnabled(has_proj and self.project.changelog.can_undo())
         self.act_redo.setEnabled(has_proj and self.project.changelog.can_redo())

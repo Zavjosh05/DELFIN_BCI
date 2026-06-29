@@ -515,4 +515,4 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `compress_smoke`, `marker_cull_smoke`, `autosave_smoke`, `history_smoke`,
 `features_view_smoke`, `missing_source_smoke`, `project_files_smoke`,
 `dataset_build_smoke`, `theme_smoke`, `train_progress_smoke`,
-`e2e_smoke` (flujo completo de extremo a extremo).
+`pipeline_toggle_smoke`, `e2e_smoke` (flujo completo de extremo a extremo).

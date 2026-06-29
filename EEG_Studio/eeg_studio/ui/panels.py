@@ -6,6 +6,7 @@ principal), que centraliza el acceso al modelo y los refrescos de la vista.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -50,9 +51,11 @@ class PreprocessingPanel(QWidget):
         add_box.addWidget(add_btn)
         layout.addLayout(add_box)
 
-        layout.addWidget(QLabel("Pipeline (se aplica en orden):"))
+        layout.addWidget(QLabel("Pipeline (marca la casilla para activar/desactivar):"))
         self.steps_list = QListWidget()
         self.steps_list.currentRowChanged.connect(self._show_params)
+        # La casilla de cada paso lo activa/desactiva (sin borrarlo).
+        self.steps_list.itemChanged.connect(self._on_step_toggled)
         # El paso seleccionado se resalta siempre (también cuando la lista pierde
         # el foco al pulsar ▲▼/Eliminar), para saber cuál se está modificando.
         self.steps_list.setStyleSheet(
@@ -111,6 +114,15 @@ class PreprocessingPanel(QWidget):
             self._pending_row = target   # la selección sigue al paso movido
         self.controller.move_pipeline_step(row, delta)
 
+    def _on_step_toggled(self, item: QListWidgetItem) -> None:
+        """Marca/desmarca la casilla de un paso → activarlo/desactivarlo."""
+        row = self.steps_list.row(item)
+        if row < 0:
+            return
+        enabled = item.checkState() == Qt.CheckState.Checked
+        self._pending_row = row          # conservar la selección tras refrescar
+        self.controller.set_pipeline_step_enabled(row, enabled)
+
     def refresh(self) -> None:
         proj = self.controller.project
         # Reubicar la selección en el paso modificado, o conservar la actual.
@@ -123,7 +135,15 @@ class PreprocessingPanel(QWidget):
                 label = preprocessing.STEP_LABELS.get(step["type"], step["type"])
                 p = step.get("params", {})
                 desc = ", ".join(f"{k}={v}" for k, v in p.items()) if p else "sin parámetros"
-                self.steps_list.addItem(QListWidgetItem(f"{i + 1}. {label}  [{desc}]"))
+                enabled = step.get("enabled", True)
+                item = QListWidgetItem(f"{i + 1}. {label}  [{desc}]")
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked if enabled
+                                   else Qt.CheckState.Unchecked)
+                if not enabled:                          # paso desactivado: atenuado/tachado
+                    f = item.font(); f.setStrikeOut(True); item.setFont(f)
+                    item.setForeground(QColor("#7c848d"))
+                self.steps_list.addItem(item)
         n = self.steps_list.count()
         row = target if 0 <= target < n else (n - 1 if n else -1)
         self.steps_list.setCurrentRow(row)
@@ -259,21 +279,34 @@ class DatasetPanel(QWidget):
         self.marker_offset.setRange(0, 1000000)
         self.marker_offset.setSingleStep(64)
         self.marker_offset.setValue(0)
-        self.marker_offset.setToolTip("Muestras a saltar tras el marcador antes de empezar el segmento "
-                                      "(p. ej. para llegar al periodo de interés).")
+        self.marker_offset.setToolTip(
+            "Desfase en MUESTRAS a saltar tras el marcador antes de empezar el "
+            "segmento (p. ej. para llegar al periodo de interés). segundos × fs = muestras.")
         mk_row.addWidget(self.marker_offset)
         mk_row.addWidget(QLabel("Ventana:"))
         self.marker_window = QSpinBox()
         self.marker_window.setRange(0, 1000000)
         self.marker_window.setSingleStep(64)
         self.marker_window.setValue(0)
-        self.marker_window.setToolTip("Muestras del segmento (0 = hasta el siguiente marcador).")
+        self.marker_window.setToolTip(
+            "Duración del segmento en MUESTRAS (0 = hasta el siguiente marcador). "
+            "segundos × fs = muestras (250 Hz → 2 s = 500).")
         mk_row.addWidget(self.marker_window)
         mk_btn = QPushButton("Crear")
         mk_btn.clicked.connect(lambda: self.controller.create_segments_from_markers(
             self.marker_window.value(), self.marker_offset.value(), self.marker_all.isChecked()))
         mk_row.addWidget(mk_btn)
         mk_layout.addLayout(mk_row)
+        mk_help = QLabel(
+            "Cada segmento empieza en (marcador + Desfase) y dura Ventana muestras.\n"
+            "• Desfase (muestras): cuántas muestras saltar tras el marcador antes de "
+            "empezar; sirve para llegar al periodo de interés (p. ej. saltar el cue).\n"
+            "• Ventana (muestras): duración del segmento; 0 = hasta el siguiente marcador.\n"
+            "Unidad = muestras. Para pasar a segundos: muestras = segundos × fs "
+            "(p. ej. 250 Hz → 2 s = 500 muestras; EPOC+ 128 Hz → 2 s = 256).")
+        mk_help.setWordWrap(True)
+        mk_help.setStyleSheet("color: #8a929b; font-size: 11px;")
+        mk_layout.addWidget(mk_help)
         layout.addWidget(mk_box)
 
         feat_box = QGroupBox("Características")
@@ -447,8 +480,18 @@ class ClassificationPanel(QWidget):
         self.raw_window.setRange(16, 8192)
         self.raw_window.setSingleStep(32)
         self.raw_window.setValue(512)
-        self.raw_window.setToolTip("Muestras por segmento usadas para la covarianza/CSP.")
+        self.raw_window.setToolTip(
+            "Longitud fija (en MUESTRAS) a la que se ajusta cada segmento antes de "
+            "entrar al modelo. segundos × fs = muestras (250 Hz → 512 ≈ 2.05 s).")
         raw_form.addRow("Ventana (muestras):", self.raw_window)
+        raw_help = QLabel(
+            "Riemann/CSP y las redes necesitan que todos los segmentos tengan la "
+            "MISMA longitud. Como cada segmento puede durar distinto, se recorta o "
+            "rellena (centrado) a esta ventana fija de muestras. Mayor ventana = más "
+            "contexto temporal pero más cómputo; debe caber en tus segmentos.")
+        raw_help.setWordWrap(True)
+        raw_help.setStyleSheet("color: #8a929b; font-size: 11px;")
+        raw_form.addRow(raw_help)
         self.raw_box.setVisible(False)
         layout.addWidget(self.raw_box)
 

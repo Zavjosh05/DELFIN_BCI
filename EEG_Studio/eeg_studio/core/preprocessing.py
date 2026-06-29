@@ -79,14 +79,23 @@ def ica_artifact(data: np.ndarray, n_components: int = 0, kurt_threshold: float 
     ICA, se anulan esos componentes y se reconstruye. Enfoque clásico de
     eliminación de artefactos (revisión doi:10.18280/isi.290124).
     """
+    import warnings
+
     from sklearn.decomposition import FastICA
+    from sklearn.exceptions import ConvergenceWarning
 
     n_ch = data.shape[0]
     ncomp = n_ch if not n_components else min(int(n_components), n_ch)
     X = data.T  # (muestras, canales)
-    ica = FastICA(n_components=ncomp, random_state=0, max_iter=500, whiten="unit-variance")
+    # max_iter alto + tol algo más laxa reducen los avisos de no-convergencia;
+    # aun sin converger del todo el resultado es utilizable, así que se silencia
+    # el ConvergenceWarning (la no-convergencia ya se gestiona con el try/except).
+    ica = FastICA(n_components=ncomp, random_state=0, max_iter=1000, tol=1e-3,
+                  whiten="unit-variance")
     try:
-        sources = ica.fit_transform(X)               # (muestras, componentes)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            sources = ica.fit_transform(X)           # (muestras, componentes)
     except Exception:  # noqa: BLE001 - no converge: devolver la señal intacta
         return data.copy()
     k = _kurtosis(sources, axis=0, fisher=True)       # exceso de kurtosis por componente
@@ -143,11 +152,19 @@ STEP_DESCRIPTIONS = {
                "pasar las bajas.",
     "notch": "Elimina una banda muy estrecha en torno a 'freq': sirve para quitar la "
              "interferencia de la red eléctrica (50/60 Hz).",
-    "car": "Referencia de promedio común: resta a cada canal la media de todos los "
-           "canales en cada instante. Reduce el ruido común a todo el casco.",
-    "reference": "Re-referencia la señal restando un canal de referencia al resto.",
+    "car": "Referencia de promedio común (CAR). A cada canal le resta, en cada "
+           "instante, el promedio de TODOS los canales activos. Así elimina lo que "
+           "es común a todo el casco (interferencia de red, deriva global, la "
+           "referencia física) y resalta la actividad local de cada electrodo. "
+           "No tiene parámetros: usa todos los canales activos, por lo que si "
+           "excluyes los EOG, esos no entran en el promedio. Cuidado con pocos "
+           "canales o con un canal saturado: ese ruido se repartiría a todos.",
+    "reference": "Re-referencia la señal restando un canal concreto (el de referencia) "
+                 "a todos los demás. Útil si quieres una referencia física (p. ej. "
+                 "una mastoides) en lugar del promedio común (CAR).",
     "normalize": "Reescala cada canal para homogeneizar amplitudes entre canales y "
-                 "grabaciones.",
+                 "grabaciones. 'zscore' deja media 0 y desviación 1; 'minmax' lleva "
+                 "cada canal al rango 0–1. Útil antes de modelos sensibles a la escala.",
     "ica": "Descompone la señal en componentes independientes (ICA) y elimina los de "
            "kurtosis alta (parpadeos, músculo), reconstruyendo sin esos artefactos.",
 }
@@ -187,13 +204,22 @@ STEP_DEFAULTS = {
 }
 
 
-def apply_pipeline(data: np.ndarray, fs: float, pipeline: list[dict]) -> np.ndarray:
-    """Aplica una secuencia de pasos a una copia de ``data``."""
+def apply_pipeline(data: np.ndarray, fs: float, pipeline: list[dict],
+                   progress: Callable | None = None) -> np.ndarray:
+    """Aplica la secuencia de pasos **activos** a una copia de ``data``.
+
+    Los pasos con ``"enabled": False`` se omiten (se pueden activar/desactivar sin
+    borrarlos). ``progress(hechos, total)`` informa del avance paso a paso.
+    """
     out = np.ascontiguousarray(data, dtype=np.float64).copy()
-    for step in pipeline:
+    steps = [s for s in pipeline if s.get("enabled", True)]
+    total = len(steps)
+    for i, step in enumerate(steps):
         stype = step.get("type")
         if stype not in STEP_REGISTRY:
             raise ValueError(f"Paso de preprocesamiento desconocido: {stype}")
         params = dict(step.get("params", {}))
         out = STEP_REGISTRY[stype](out, fs, **params)
+        if progress is not None:
+            progress(i + 1, total)
     return np.ascontiguousarray(out, dtype=np.float64)

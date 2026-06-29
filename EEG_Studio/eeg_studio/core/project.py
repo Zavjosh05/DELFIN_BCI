@@ -215,12 +215,13 @@ class Project:
                          sort_keys=True)
         return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
-    def get_processed(self, source_id: str) -> np.ndarray:
+    def get_processed(self, source_id: str, progress=None) -> np.ndarray:
         """Señal de los **canales activos** con el pipeline aplicado (en caché).
 
         Selecciona primero los canales no excluidos y luego aplica el pipeline, de
         modo que CAR y los filtros operan solo sobre esos canales. Seguro para
-        hilos; nunca modifica la grabación original.
+        hilos; nunca modifica la grabación original. ``progress(hechos, total)``
+        informa del avance cuando hay que recalcular (no si sale de caché).
         """
         rec = self.get_recording(source_id)
         sig = self._pipeline_signature()
@@ -236,7 +237,8 @@ class Project:
         else:
             out = self._load_disk_cache(source_id, sig)
             if out is None:
-                out = preprocessing.apply_pipeline(base, rec.sample_rate, pipeline)
+                out = preprocessing.apply_pipeline(base, rec.sample_rate, pipeline,
+                                                   progress=progress)
                 self._write_disk_cache(source_id, sig, out)
         with self._lock:
             self._processed[source_id] = (sig, out)
@@ -445,6 +447,19 @@ class Project:
     def remove_pipeline_step(self, index: int) -> None:
         new_pipeline = [s for i, s in enumerate(self.state["pipeline"]) if i != index]
         self._commit("pipeline", new_pipeline, "Eliminar paso de preprocesamiento")
+        self.invalidate_processed()
+
+    def set_step_enabled(self, index: int, enabled: bool) -> None:
+        """Activa/desactiva un paso sin borrarlo (queda en el pipeline)."""
+        new_pipeline = snapshot(self.state["pipeline"])
+        if not (0 <= index < len(new_pipeline)):
+            return
+        if bool(new_pipeline[index].get("enabled", True)) == bool(enabled):
+            return
+        new_pipeline[index]["enabled"] = bool(enabled)
+        label = preprocessing.STEP_LABELS.get(new_pipeline[index]["type"], "paso")
+        verb = "Activar" if enabled else "Desactivar"
+        self._commit("pipeline", new_pipeline, f"{verb}: {label}")
         self.invalidate_processed()
 
     def update_pipeline_step(self, index: int, params: dict) -> None:
