@@ -173,8 +173,11 @@ class PreprocessingPanel(QWidget):
             d.setStyleSheet("color: #aeb6bf; font-style: italic;")
             self.params_form.addRow(d)
 
-        for key, value in step.get("params", {}).items():
-            w = self._make_editor(key, value)
+        # Mezcla los valores guardados con los por defecto del paso: así los pasos
+        # creados antes (p. ej. sin 'design'/'numtaps') también muestran las opciones.
+        merged = {**preprocessing.STEP_DEFAULTS.get(stype, {}), **step.get("params", {})}
+        for key, value in merged.items():
+            w = self._make_editor(key, value, stype)
             help_text = preprocessing.PARAM_DESCRIPTIONS.get(key, "")
             w.setToolTip(help_text)
             self._param_widgets[key] = w
@@ -196,7 +199,7 @@ class PreprocessingPanel(QWidget):
             note.setStyleSheet("color: #9aa4ae; font-style: italic;")
             self.params_form.addRow(note)
 
-    def _make_editor(self, key: str, value) -> QWidget:
+    def _make_editor(self, key: str, value, stype: str | None = None) -> QWidget:
         if isinstance(value, bool):
             w = QCheckBox()
             w.setChecked(value)
@@ -210,11 +213,14 @@ class PreprocessingPanel(QWidget):
             w.setDecimals(2)
             w.setSingleStep(0.5)
             w.setValue(value)
-        else:  # str (método, tipo...)
+        else:  # str (método, tipo de diseño…)
             w = QComboBox()
+            # El notch ofrece iir/fir; los demás filtros, butter/fir.
+            design_opts = ["iir", "fir"] if stype == "notch" else ["butter", "fir"]
             options = {
                 "type": ["linear", "constant"],
                 "method": ["zscore", "minmax"],
+                "design": design_opts,
             }.get(key, [str(value)])
             w.addItems(options)
             w.setCurrentText(str(value))

@@ -49,7 +49,16 @@
     }
   ],
   "state": {
-    "pipeline": [],
+    "pipeline": [
+      {
+        "type": "bandpass",
+        "params": {
+          "low": 1.0,
+          "high": 45.0,
+          "order": 4
+        }
+      }
+    ],
     "segments": [
       {
         "id": "4a83380f",

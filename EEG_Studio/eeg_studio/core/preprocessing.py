@@ -19,30 +19,83 @@ def detrend(data: np.ndarray, type: str = "linear") -> np.ndarray:
     return sp_signal.detrend(data, axis=1, type=type)
 
 
-def bandpass(data: np.ndarray, fs: float, low: float, high: float, order: int = 4) -> np.ndarray:
+def _odd_numtaps(numtaps: int, n_samples: int) -> int:
+    """Nº de coeficientes FIR impar y lo bastante corto para ``filtfilt``.
+
+    ``filtfilt`` necesita que la señal sea más larga que ~3·(numtaps-1); en
+    segmentos cortos se recorta el filtro para no fallar.
+    """
+    numtaps = max(3, int(numtaps))
+    if numtaps % 2 == 0:
+        numtaps += 1
+    max_taps = max(3, n_samples // 3)
+    if max_taps % 2 == 0:
+        max_taps -= 1
+    return min(numtaps, max_taps)
+
+
+def bandpass(data: np.ndarray, fs: float, low: float, high: float, order: int = 4,
+             design: str = "butter", numtaps: int = 101) -> np.ndarray:
+    """Pasa-banda en fase cero. ``design``: 'butter' (IIR) o 'fir' (FIR ventaneado)."""
     nyq = fs / 2.0
     low = max(low, 1e-6)
     high = min(high, nyq - 1e-6)
+    if design == "fir":
+        taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), [low, high],
+                                pass_zero=False, fs=fs)
+        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
     sos = sp_signal.butter(order, [low / nyq, high / nyq], btype="band", output="sos")
     return sp_signal.sosfiltfilt(sos, data, axis=1)
 
 
-def highpass(data: np.ndarray, fs: float, cutoff: float, order: int = 4) -> np.ndarray:
+def highpass(data: np.ndarray, fs: float, cutoff: float, order: int = 4,
+             design: str = "butter", numtaps: int = 101) -> np.ndarray:
     nyq = fs / 2.0
+    cutoff = min(max(cutoff, 1e-6), nyq - 1e-6)
+    if design == "fir":
+        taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), cutoff,
+                                pass_zero=False, fs=fs)
+        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
     sos = sp_signal.butter(order, cutoff / nyq, btype="high", output="sos")
     return sp_signal.sosfiltfilt(sos, data, axis=1)
 
 
-def lowpass(data: np.ndarray, fs: float, cutoff: float, order: int = 4) -> np.ndarray:
+def lowpass(data: np.ndarray, fs: float, cutoff: float, order: int = 4,
+            design: str = "butter", numtaps: int = 101) -> np.ndarray:
     nyq = fs / 2.0
-    sos = sp_signal.butter(order, min(cutoff, nyq - 1e-6) / nyq, btype="low", output="sos")
+    cutoff = min(cutoff, nyq - 1e-6)
+    if design == "fir":
+        taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), cutoff,
+                                pass_zero=True, fs=fs)
+        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
+    sos = sp_signal.butter(order, cutoff / nyq, btype="low", output="sos")
     return sp_signal.sosfiltfilt(sos, data, axis=1)
 
 
-def notch(data: np.ndarray, fs: float, freq: float = 60.0, q: float = 30.0) -> np.ndarray:
+def notch(data: np.ndarray, fs: float, freq: float = 60.0, q: float = 30.0,
+          design: str = "iir", numtaps: int = 257) -> np.ndarray:
+    """Elimina una banda estrecha en torno a ``freq`` (interferencia de red).
+
+    Parámetros:
+      * ``freq``    Frecuencia central a eliminar en Hz (50 o 60 según el país).
+      * ``q``       Factor de calidad: ancho de la muesca ≈ ``freq/q`` Hz. Mayor Q
+                    = muesca más estrecha (afecta menos a las frecuencias vecinas).
+      * ``design``  ``"iir"`` (recomendado) = notch IIR (``scipy.iirnotch``), muy
+                    estrecho y barato; ``"fir"`` = band-stop FIR de **fase lineal**.
+      * ``numtaps`` Solo para FIR: nº de coeficientes. Una muesca tan estrecha
+                    necesita MUCHOS coeficientes y **segmentos largos**; si el
+                    segmento es corto se recorta (la muesca se ensancha/atenúa).
+    """
     nyq = fs / 2.0
     if freq >= nyq:
         return data.copy()
+    if design == "fir":
+        bw = max(freq / max(q, 1e-6), 0.5)         # ancho de banda de la muesca (Hz)
+        lo = max(freq - bw / 2.0, 1e-6)
+        hi = min(freq + bw / 2.0, nyq - 1e-6)
+        taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), [lo, hi],
+                                pass_zero=True, fs=fs)   # pass_zero=True => band-stop
+        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
     b, a = sp_signal.iirnotch(freq / nyq, q)
     return sp_signal.filtfilt(b, a, data, axis=1)
 
@@ -145,13 +198,15 @@ STEP_DESCRIPTIONS = {
     "detrend": "Elimina la tendencia (deriva lenta) de cada canal restando una "
                "recta o la media ajustada a la señal.",
     "bandpass": "Deja pasar solo las frecuencias entre 'low' y 'high' y atenúa el "
-                "resto: quita a la vez la deriva lenta y el ruido de alta frecuencia.",
+                "resto: quita a la vez la deriva lenta y el ruido de alta frecuencia. "
+                "Elige el diseño con 'design': Butterworth (IIR) o FIR (fase lineal).",
     "highpass": "Atenúa las frecuencias por debajo de 'cutoff' (deriva, offset DC) "
                 "y deja pasar las altas.",
     "lowpass": "Atenúa las frecuencias por encima de 'cutoff' (ruido rápido) y deja "
                "pasar las bajas.",
     "notch": "Elimina una banda muy estrecha en torno a 'freq': sirve para quitar la "
-             "interferencia de la red eléctrica (50/60 Hz).",
+             "interferencia de la red eléctrica (50/60 Hz). 'design': 'iir' (notch "
+             "estrecho recomendado) o 'fir' (band-stop de fase lineal).",
     "car": "Referencia de promedio común (CAR). A cada canal le resta, en cada "
            "instante, el promedio de TODOS los canales activos. Así elimina lo que "
            "es común a todo el casco (interferencia de red, deriva global, la "
@@ -176,11 +231,23 @@ PARAM_DESCRIPTIONS = {
     "high": "Frecuencia de corte superior (Hz). Bájala para quitar más ruido rápido; "
             "súbela para conservar componentes de alta frecuencia.",
     "cutoff": "Frecuencia de corte (Hz) a partir de la cual el filtro empieza a atenuar.",
-    "order": "Orden del filtro. Mayor orden = transición más abrupta entre lo que pasa "
-             "y lo que se atenúa, pero más riesgo de distorsión/inestabilidad.",
-    "freq": "Frecuencia central a eliminar (Hz). Normalmente 50 o 60 Hz (red eléctrica).",
-    "q": "Factor de calidad. Mayor Q = muesca más estrecha, afecta menos a las "
-         "frecuencias vecinas.",
+    "order": "Orden del filtro Butterworth (IIR). Mayor orden = transición más abrupta "
+             "entre lo que pasa y lo que se atenúa, pero más riesgo de inestabilidad. "
+             "No aplica al diseño FIR (ahí manda 'numtaps').",
+    "design": "Diseño del filtro. En pasa-banda/altas/bajas: 'butter' = Butterworth "
+              "(IIR, recursivo, eficiente, orden bajo, fase cero con filtfilt) o "
+              "'fir' = FIR ventaneado (fase lineal exacta, muy estable, más cómputo). "
+              "En el notch: 'iir' (notch IIR estrecho, recomendado) o 'fir' "
+              "(band-stop FIR de fase lineal; necesita muchos coeficientes).",
+    "numtaps": "Nº de coeficientes del filtro FIR (solo si design='fir'). Más "
+               "coeficientes = transición más abrupta (y muesca más estrecha en el "
+               "notch), pero más cómputo y requiere segmentos más largos. Debe ser "
+               "impar y caber en el segmento; se ajusta automáticamente.",
+    "freq": "Frecuencia central a eliminar (Hz). Normalmente 50 Hz (Europa) o 60 Hz "
+            "(América) por la red eléctrica. Debe ser menor que fs/2.",
+    "q": "Factor de calidad del notch. El ancho de la muesca es ≈ freq/Q Hz "
+         "(p. ej. 60/30 = 2 Hz). Mayor Q = muesca más estrecha y selectiva, afecta "
+         "menos a las frecuencias vecinas. En FIR define el ancho del band-stop.",
     "type": "Tipo de tendencia a quitar: 'linear' (una recta) o 'constant' (solo la media).",
     "method": "Método de escalado: 'zscore' (media 0, desviación 1) o 'minmax' (rango 0–1).",
     "channel": "Índice del canal que se usa como referencia para restar a los demás.",
@@ -193,10 +260,10 @@ PARAM_DESCRIPTIONS = {
 # Parámetros por defecto al añadir un paso desde la interfaz.
 STEP_DEFAULTS = {
     "detrend": {"type": "linear"},
-    "bandpass": {"low": 1.0, "high": 45.0, "order": 4},
-    "highpass": {"cutoff": 1.0, "order": 4},
-    "lowpass": {"cutoff": 45.0, "order": 4},
-    "notch": {"freq": 60.0, "q": 30.0},
+    "bandpass": {"low": 1.0, "high": 45.0, "order": 4, "design": "butter", "numtaps": 101},
+    "highpass": {"cutoff": 1.0, "order": 4, "design": "butter", "numtaps": 101},
+    "lowpass": {"cutoff": 45.0, "order": 4, "design": "butter", "numtaps": 101},
+    "notch": {"freq": 60.0, "q": 30.0, "design": "iir", "numtaps": 257},
     "car": {},
     "reference": {"channel": 0},
     "normalize": {"method": "zscore"},

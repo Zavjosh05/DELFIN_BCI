@@ -5,6 +5,10 @@ scipy>=1.11
 pandas>=2.1
 scikit-learn>=1.3
 joblib>=1.3
+# Dependencia en tiempo de ejecución de scikit-learn. Normalmente se instala
+# sola con scikit-learn, pero se lista explícitamente para evitar el error
+# "ModuleNotFoundError: No module named 'threadpoolctl'" en instalaciones parciales.
+threadpoolctl>=3.1
 # Opcional: solo para la adquisición en vivo vía LSL (OpenViBE Acquisition Server).
 # La app funciona sin él; la fuente Simulado y CyKit/TCP no lo necesitan.
 pylsl>=1.16

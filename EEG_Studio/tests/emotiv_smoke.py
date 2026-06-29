@@ -76,12 +76,17 @@ def main() -> int:
     assert good > wrong, "la métrica de plausibilidad no discrimina"
     print(f"    correcta={good:.1f} > aleatoria={wrong:.1f}")
 
-    print("[4] Autodetección de modo (14/16-bit) sobre frames cifrados")
+    print("[4] Autodetección de modo (14/16-bit) por el byte contador")
     for mode in ("16bit", "14bit"):
-        ct = AES.new(build_key(serial, mode), AES.MODE_ECB).encrypt(plain)
+        enc = AES.new(build_key(serial, mode), AES.MODE_ECB)
+        frames_ct = []
+        for i in range(50):
+            fb = bytearray(plain)
+            fb[0] = i % 128                  # contador incremental (señal del modo correcto)
+            frames_ct.append(enc.encrypt(bytes(fb)))
         src = EmotivDongleSource(mode="auto", serial=serial)
         src._running.set()
-        chosen, _cipher = src._select_mode(_FakeDevice([ct] * 50), serial)
+        chosen, _cipher = src._select_mode(_FakeDevice(frames_ct), serial)
         src._running.clear()
         assert chosen == mode, f"esperaba {mode}, eligió {chosen}"
         print(f"    cifrado en {mode} → detectado {chosen} ✓")
@@ -100,13 +105,16 @@ def main() -> int:
         em.hid.enumerate = saved
     print("    detección por nombre y por vendor id OK")
 
-    print("[6] Sin dongle conectado: la fuente debe fallar limpiamente")
-    src = EmotivDongleSource(mode="auto")
-    src.start()
-    time.sleep(0.5)
-    src.stop()
-    assert src.error is not None, "debería reportar que no encontró el dispositivo"
-    print(f"    error esperado: {src.error.splitlines()[0]}")
+    print("[6] Comportamiento según haya o no dongle conectado")
+    if EmotivDongleSource._find_device() is None:
+        src = EmotivDongleSource(mode="auto")
+        src.start()
+        time.sleep(0.5)
+        src.stop()
+        assert src.error is not None, "sin dongle debería reportar que no lo encontró"
+        print(f"    sin dongle: error esperado: {src.error.splitlines()[0]}")
+    else:
+        print("    dongle Emotiv detectado en el sistema; se omite la prueba de 'sin dongle'.")
 
     print("\nEMOTIV (descifrado/conversión/autodetección) OK ✓")
     return 0

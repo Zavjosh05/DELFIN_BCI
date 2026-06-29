@@ -32,7 +32,9 @@ from ..acquisition import (
     TCPSource,
     emotiv_deps_available,
     pylsl_available,
+    quality,
 )
+from ..acquisition.emotiv import quick_diagnose
 from ..acquisition.recorder import CSVRecorder
 from ..config import (
     CYKIT_CHANNEL_START,
@@ -57,6 +59,7 @@ class AcquisitionPanel(QWidget):
         self._t_start = 0.0
         self._roll: np.ndarray | None = None    # buffer circular para inferencia
         self._roll_filled = 0
+        self._quality_tick = 0                   # para refrescar la calidad cada N ticks
 
         self._timer = QTimer(self)
         self._timer.setInterval(LIVE_REFRESH_MS)
@@ -117,6 +120,11 @@ class AcquisitionPanel(QWidget):
         self.status = QLabel("Desconectado.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+
+        # Indicador de calidad/ruido de la señal recibida (verde/ámbar/rojo).
+        self.quality_label = QLabel("")
+        self.quality_label.setWordWrap(True)
+        layout.addWidget(self.quality_label)
         layout.addStretch(1)
 
     def _sim_params(self) -> QWidget:
@@ -162,7 +170,35 @@ class AcquisitionPanel(QWidget):
         note = QLabel(hint)
         note.setWordWrap(True)
         lay.addRow(note)
+        self.emotiv_test_btn = QPushButton("Probar dongle Emotiv…")
+        self.emotiv_test_btn.setToolTip("Comprueba detección, datos, modo y calidad de "
+                                        "señal sin necesidad de conectar.")
+        self.emotiv_test_btn.clicked.connect(self._test_emotiv)
+        self.emotiv_test_btn.setEnabled(emotiv_deps_available())
+        lay.addRow(self.emotiv_test_btn)
         return w
+
+    def _test_emotiv(self) -> None:
+        """Diagnóstico rápido del dongle (en un hilo, con su resultado en un diálogo)."""
+        if not emotiv_deps_available():
+            self.controller.warn("Faltan dependencias",
+                                 "Instala 'hidapi' y 'pycryptodome' en el venv.")
+            return
+        if self.source is not None:
+            self.controller.info("Ocupado",
+                                 "Desconecta la fuente antes de probar el dongle.")
+            return
+        serial = self.emotiv_serial.text().strip() or None
+        self.controller._busy("Probando dongle Emotiv…")
+        self.controller.progress.setRange(0, 0)
+        self.controller.progress.show()
+
+        def done(report):
+            self.controller._idle()
+            title = "Dongle Emotiv — OK" if report.get("ok") else "Dongle Emotiv — revisar"
+            self.controller.info(title, report["summary"])
+
+        self.controller._spawn(lambda: quick_diagnose(serial=serial), done)
 
     def _tcp_params(self) -> QWidget:
         w = QWidget()
@@ -261,6 +297,7 @@ class AcquisitionPanel(QWidget):
         self._roll = None
         self._roll_filled = 0
         self._configured = False
+        self.quality_label.setText("")
         self.status.setText("Desconectado.")
         self._update_states()
 
@@ -289,6 +326,9 @@ class AcquisitionPanel(QWidget):
             self.recorder.write(chunk)
         self._n_samples += chunk.shape[1]
         self._update_status()
+        self._quality_tick = (self._quality_tick + 1) % 8
+        if self._quality_tick == 0:              # ~4 Hz: evita parpadeo
+            self._update_quality()
 
     def _push_buffer(self, chunk) -> None:
         """Mantiene el buffer circular con las últimas muestras (para inferencia)."""
@@ -326,6 +366,26 @@ class AcquisitionPanel(QWidget):
         self.status.setText(
             f"{prefix}Conectado · {self._n_samples} muestras · ~{fs:.1f} Hz{rec}"
         )
+
+    def _update_quality(self) -> None:
+        """Refresca el indicador de calidad/ruido con la última ~1 s de señal."""
+        if self.source is None or self._roll is None or self._roll_filled < 32:
+            self.quality_label.setText("")
+            return
+        fs = int(self.source.sample_rate) or 128
+        n = min(self._roll_filled, max(fs, 64))
+        q = quality.assess(self._roll[:, -n:])
+        if q["n"] == 0:
+            self.quality_label.setText("")
+            return
+        if q["is_noise"]:
+            color, txt = "#e06c6c", f"⚠ Señal RUIDOSA — {q['n_ok']}/{q['n']} canales OK"
+        elif q["n_bad"]:
+            color, txt = "#d6a23e", f"● Señal aceptable — {q['n_ok']}/{q['n']} OK · {q['n_bad']} con ruido"
+        else:
+            color, txt = "#7fd1b9", f"● Señal buena — {q['n']}/{q['n']} canales OK"
+        self.quality_label.setText(txt)
+        self.quality_label.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     # --- Grabación --------------------------------------------------------
     def toggle_recording(self) -> None:
