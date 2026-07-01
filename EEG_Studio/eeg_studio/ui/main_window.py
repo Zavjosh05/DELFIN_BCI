@@ -34,7 +34,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..config import APP_NAME, EPOC_CHANNELS, FREQ_BANDS, IMPORTED_DIR, ORG_NAME, PROJECT_EXT
+from ..config import (
+    APP_NAME,
+    DATASETS_DIR,
+    EPOC_CHANNELS,
+    FREQ_BANDS,
+    IMPORTED_DIR,
+    ORG_NAME,
+    PROJECT_EXT,
+)
 from ..core import classification, dataset as dataset_mod, mat_loader, mne_loader
 from ..core.csv_loader import compress_csv, load_recording
 from ..core.processing import band_powers, extract_feature_vector, time_features
@@ -270,6 +278,14 @@ class MainWindow(QMainWindow):
         self.act_open_folder = QAction("Abrir carpeta del proyecto", self,
                                        triggered=self.open_project_folder)
         self.act_open_folder.setToolTip("Abre la carpeta .eegproj en el explorador de archivos.")
+        self.act_export_cfg = QAction("Exportar configuración/bundle…", self,
+                                      triggered=self.export_config)
+        self.act_export_cfg.setToolTip("Exporta preprocesamiento, dataset (.npz) y modelos "
+                                       "(.joblib) a un archivo .eegbundle autónomo.")
+        self.act_import_cfg = QAction("Importar configuración/bundle…", self,
+                                      triggered=self.import_config)
+        self.act_import_cfg.setToolTip("Carga un .eegbundle: aplica el pipeline y trae dataset "
+                                       "y modelos ya entrenados.")
         self.act_add = QAction("Añadir o importar señal…", self,
                                triggered=self.add_or_import_source)
         self.act_add.setToolTip("Añade CSV o importa datasets (.mat / .fif / .edf / .gdf…) "
@@ -299,6 +315,9 @@ class MainWindow(QMainWindow):
         m_proj.addAction(self.act_exclude_eog)
         m_proj.addAction(self.act_compress)
         m_proj.addAction(self.act_del_src)
+        m_proj.addSeparator()
+        m_proj.addAction(self.act_export_cfg)
+        m_proj.addAction(self.act_import_cfg)
         m_proj.addSeparator()
         m_proj.addAction(QAction("Salir", self, triggered=self.close))
 
@@ -370,6 +389,14 @@ class MainWindow(QMainWindow):
         self._push_recent(self.project.path)
         self.refresh_all()
         self.statusBar().showMessage(f"Proyecto creado: {self.project.path}")
+        # Ofrecer arrancar desde un bundle existente (pipeline + dataset + modelos).
+        if QMessageBox.question(
+                self, "Importar bundle",
+                "Proyecto creado. ¿Quieres importar un bundle existente (.eegbundle) "
+                "para traer pipeline, dataset y modelos ya entrenados?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self.import_config()
 
     def open_project(self) -> None:
         path = QFileDialog.getExistingDirectory(self, f"Abrir proyecto ({PROJECT_EXT})")
@@ -502,6 +529,199 @@ class MainWindow(QMainWindow):
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
             self.warn("No se pudo abrir", f"No se pudo abrir la carpeta:\n{path}")
+
+    def _ask_export_sections(self) -> set[str] | None:
+        """Diálogo con casillas para elegir qué exportar. Devuelve las secciones."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Exportar configuración")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Selecciona qué exportar a un archivo .eegcfg:"))
+        chk_pre = QCheckBox("Preprocesamiento (pipeline, canales excluidos, alias)")
+        chk_ds = QCheckBox("Dataset (características, segmentos etiquetados, recortes)")
+        chk_mdl = QCheckBox(f"Modelos de clasificación ({len(self.models)})")
+        n_src = len(self.project.sources) if self.project else 0
+        chk_src = QCheckBox(f"Señales de origen — CSV ({n_src})")
+        chk_pre.setChecked(True)
+        chk_ds.setChecked(True)
+        chk_mdl.setChecked(bool(self.models))
+        chk_mdl.setEnabled(bool(self.models))
+        chk_src.setEnabled(n_src > 0)                # opcional: aumenta el tamaño
+        for c in (chk_pre, chk_ds, chk_mdl, chk_src):
+            lay.addWidget(c)
+        hint = QLabel("El bundle NO incluye la caché (regenerable), por lo que suele "
+                      "pesar menos que la carpeta del proyecto aunque incluyas las señales.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+        lay.addWidget(hint)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        sections = set()
+        if chk_pre.isChecked():
+            sections.add("preprocessing")
+        if chk_ds.isChecked():
+            sections.add("dataset")
+        if chk_mdl.isChecked():
+            sections.add("models")
+        if chk_src.isChecked():
+            sections.add("sources")
+        return sections or None
+
+    def export_config(self) -> None:
+        """Exporta preprocesamiento/dataset(.npz)/modelos(.joblib) a un .eegbundle."""
+        if not self._require_project():
+            return
+        sections = self._ask_export_sections()
+        if not sections:
+            return
+        from ..core import config_export
+        # Si se pide el dataset y hay uno en memoria sin guardar, se guarda primero.
+        if "dataset" in sections and self.dataset is not None:
+            ds_dir = os.path.join(self.project.path, DATASETS_DIR)
+            has_npz = os.path.isdir(ds_dir) and any(f.endswith(".npz") for f in os.listdir(ds_dir))
+            if not has_npz:
+                dataset_mod.save_dataset(self.project, self.dataset, "dataset")
+        default = os.path.join(self.project.path,
+                               f"{self.project.name}{config_export.BUNDLE_EXT}")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar bundle", default,
+            f"Bundle EEG (*{config_export.BUNDLE_EXT})")
+        if not path:
+            return
+        self._busy("Exportando bundle…")
+        self.progress.setRange(0, 0)
+        self.progress.show()
+
+        proj_size = self._dir_size(self.project.path)
+
+        def task():
+            return config_export.export_bundle(self.project, self.models, sections, path)
+
+        def done(info):
+            self._idle()
+            mb = info["size"] / 1e6
+            cmp = (f"  ·  {mb:.1f} MB (proyecto: {proj_size / 1e6:.1f} MB)"
+                   if proj_size else f"  ·  {mb:.1f} MB")
+            self.statusBar().showMessage(
+                f"Bundle exportado: {info['models']} modelo(s), {info['datasets']} "
+                f"dataset(s), {info.get('sources', 0)} fuente(s){cmp}")
+            # Aviso si, pese a omitir la caché, el bundle pesa más que el proyecto.
+            if proj_size and info["size"] > proj_size:
+                extra = ("\n\nSugerencia: vuelve a exportar SIN marcar «Señales de "
+                         "origen» para un archivo más ligero."
+                         if "sources" in sections else "")
+                QMessageBox.information(
+                    self, "El bundle resultó grande",
+                    f"El bundle ({mb:.1f} MB) es MÁS grande que la carpeta del "
+                    f"proyecto ({proj_size / 1e6:.1f} MB).{extra}")
+
+        self._spawn(task, done)
+
+    @staticmethod
+    def _dir_size(path: str) -> int:
+        total = 0
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        return total
+
+    def import_config(self) -> None:
+        """Importa un .eegbundle: aplica pipeline y carga dataset(s) y modelos."""
+        if not self._require_project():
+            return
+        from ..core import config_export
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importar bundle/configuración", self.project.path,
+            f"Bundle EEG (*{config_export.BUNDLE_EXT});;Configuración EEG (*.eegcfg *.json)")
+        if not path:
+            return
+        try:
+            if path.lower().endswith(config_export.BUNDLE_EXT):
+                cfg, model_blobs, ds_blobs, src_blobs = config_export.read_bundle(path)
+            else:
+                cfg, model_blobs, ds_blobs, src_blobs = config_export.load_config(path), {}, {}, {}
+        except Exception as exc:  # noqa: BLE001
+            self.warn("No se pudo leer", f"{path}\n\n{exc}")
+            return
+        summary = self._apply_config(cfg, model_blobs, ds_blobs, src_blobs)
+        self._after_state_change()
+        self.statusBar().showMessage(f"Importado: {summary}")
+
+    def _apply_config(self, cfg: dict, model_blobs: dict, ds_blobs: dict,
+                      src_blobs: dict | None = None) -> str:
+        """Aplica una configuración/bundle al proyecto actual. Devuelve un resumen."""
+        parts: list[str] = []
+        # Fuentes primero (conservando su id) para que los segmentos sigan válidos.
+        srcs = cfg.get("sources")
+        if srcs and src_blobs:
+            imp = os.path.join(self.project.path, IMPORTED_DIR)
+            os.makedirs(imp, exist_ok=True)
+            n_src = 0
+            for meta in srcs:
+                arc = meta.get("file")
+                if not arc or arc not in src_blobs:
+                    continue
+                dest = os.path.join(imp, os.path.basename(arc))
+                with open(dest, "wb") as f:
+                    f.write(src_blobs[arc])
+                try:
+                    rec = load_recording(dest)
+                except Exception:  # noqa: BLE001
+                    rec = None
+                try:
+                    self.project.add_source(dest, alias=meta.get("alias"),
+                                            recording=rec, source_id=meta.get("id"))
+                    n_src += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            if n_src:
+                parts.append(f"{n_src} fuente(s)")
+        pre = cfg.get("preprocessing")
+        if pre:
+            self.project.edit("pipeline", pre.get("pipeline", []), "Importar pipeline")
+            self.project.edit("excluded_channels", pre.get("excluded_channels", []),
+                              "Importar canales excluidos")
+            if pre.get("channel_aliases"):
+                self.project.edit("channel_aliases", pre["channel_aliases"],
+                                  "Importar alias de canal")
+            parts.append("preprocesamiento")
+        ds = cfg.get("dataset")
+        if ds:
+            if ds.get("config"):
+                self.project.edit("dataset", ds["config"], "Importar config de dataset")
+            if ds.get("segments"):
+                self.project.edit("segments", ds["segments"], "Importar segmentos")
+            if ds.get("cuts"):
+                self.project.edit("cuts", ds["cuts"], "Importar recortes")
+            if ds_blobs:
+                out_dir = os.path.join(self.project.path, DATASETS_DIR)
+                os.makedirs(out_dir, exist_ok=True)
+                for fname, data in ds_blobs.items():
+                    with open(os.path.join(out_dir, fname), "wb") as f:
+                        f.write(data)
+                try:                                    # carga el primero en memoria
+                    self.dataset = dataset_mod.load_dataset(
+                        os.path.join(out_dir, sorted(ds_blobs)[0]))
+                except Exception:  # noqa: BLE001
+                    pass
+            parts.append(f"dataset ({len(ds_blobs)} archivo(s))")
+        if model_blobs:
+            for name, data in model_blobs.items():
+                try:
+                    res = classification.result_from_bytes(data)
+                    self._register_model(res, name=name, persist=True)
+                except Exception:  # noqa: BLE001
+                    pass
+            parts.append(f"{len(model_blobs)} modelo(s)")
+        self.clf_panel.refresh()
+        return ", ".join(parts) or "nada"
 
     def request_autosave(self) -> None:
         """Programa un guardado automático poco después del último cambio."""
@@ -1142,8 +1362,15 @@ class MainWindow(QMainWindow):
         label = classification.CLASSIFIER_LABELS.get(result.classifier_name, result.classifier_name)
         header = (f"{name}  ·  {label}\n{result.score_label}: "
                   f"{result.cv_mean * 100:.1f}%  (±{result.cv_std * 100:.1f})\n"
-                  f"Clases: {', '.join(result.classes)}\n" + "-" * 40 + "\n")
-        self._show_text_dialog(f"Métricas — {name}", header + classification.metrics_report(result))
+                  f"Clases: {', '.join(result.classes)}")
+        text = header + "\n" + "-" * 40 + "\n" + classification.metrics_report(result)
+        from . import metrics_view
+        # Vista con gráficos si hay métricas y matplotlib; si no, el texto de siempre.
+        if result.metrics and metrics_view.matplotlib_available():
+            metrics_view.show_metrics_dialog(self, f"Métricas — {name}", header,
+                                             result.metrics, text)
+        else:
+            self._show_text_dialog(f"Métricas — {name}", text)
 
     def _load_project_models(self) -> None:
         """Carga los modelos guardados (.joblib) de la carpeta models/."""
@@ -1377,8 +1604,8 @@ class MainWindow(QMainWindow):
 
     def _update_actions(self) -> None:
         has_proj = self.project is not None
-        for a in (self.act_save, self.act_open_folder, self.act_add, self.act_compress,
-                  self.act_del_src):
+        for a in (self.act_save, self.act_open_folder, self.act_export_cfg,
+                  self.act_import_cfg, self.act_add, self.act_compress, self.act_del_src):
             a.setEnabled(has_proj)
         self.act_undo.setEnabled(has_proj and self.project.changelog.can_undo())
         self.act_redo.setEnabled(has_proj and self.project.changelog.can_redo())

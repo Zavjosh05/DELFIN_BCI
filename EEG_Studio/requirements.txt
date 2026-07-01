@@ -34,3 +34,7 @@ pyserial>=3.5
 # Opcional: importar formatos profesionales (.fif, .edf, .gdf, BrainVision…)
 # mediante MNE-Python. La app funciona sin él (solo .mat y CSV).
 mne>=1.6
+
+# Opcional: gráficos de métricas (matriz de confusión, F1 por clase). Sin
+# matplotlib, las métricas se muestran en formato de texto.
+matplotlib>=3.7

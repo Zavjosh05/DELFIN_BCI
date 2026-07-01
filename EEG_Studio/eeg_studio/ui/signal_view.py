@@ -121,7 +121,8 @@ class SignalView(QWidget):
         controls.addStretch(1)
         self.sel_label = QLabel("Selección: —")
         controls.addWidget(self.sel_label)
-        self.add_seg_btn = QPushButton("Crear segmento de la selección")
+        self.add_seg_btn = QPushButton("Crear segmento")
+        self.add_seg_btn.setToolTip("Crea un segmento etiquetado a partir de la región seleccionada.")
         self.add_seg_btn.clicked.connect(self._emit_segment)
         self.add_seg_btn.setEnabled(False)
         controls.addWidget(self.add_seg_btn)
@@ -133,7 +134,7 @@ class SignalView(QWidget):
         self.del_seg_btn.setEnabled(False)
         controls.addWidget(self.del_seg_btn)
 
-        self.cut_btn = QPushButton("Recortar selección")
+        self.cut_btn = QPushButton("Recortar")
         self.cut_btn.setToolTip("Marca el tramo seleccionado como ELIMINADO (se excluye del "
                                 "dataset y se sombrea en gris). No borra el CSV; reversible con Ctrl+Z.")
         self.cut_btn.clicked.connect(self._emit_cut)

@@ -228,3 +228,14 @@ def save_dataset(project, dataset: Dataset, name: str = "dataset") -> str:
         segment_ids=np.array(dataset.segment_ids, dtype=object),
     )
     return out_path
+
+
+def load_dataset(path: str) -> Dataset:
+    """Carga un dataset ``.npz`` (p. ej. importado de un bundle)."""
+    with np.load(path, allow_pickle=True) as d:
+        return Dataset(
+            X=d["X"],
+            y=d["y"],
+            feature_names=list(d["feature_names"]),
+            segment_ids=list(d["segment_ids"]),
+        )

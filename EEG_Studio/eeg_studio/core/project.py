@@ -110,16 +110,19 @@ class Project:
     # Fuentes (CSV)
     # ------------------------------------------------------------------ #
     def add_source(self, csv_path: str, alias: str | None = None,
-                   recording: Recording | None = None) -> dict:
+                   recording: Recording | None = None,
+                   source_id: str | None = None) -> dict:
         """Añade una fuente CSV al proyecto.
 
         ``recording`` permite pasar la grabación **ya cargada** (p. ej. en un hilo
         de trabajo) para no bloquear con la lectura del CSV; si es ``None``, se
         carga aquí (valida el archivo y fija los alias de canal por defecto).
+        ``source_id`` permite conservar un id concreto (p. ej. al importar un
+        bundle, para que los segmentos sigan apuntando a la fuente correcta).
         """
         csv_path = os.path.abspath(csv_path)
         alias = alias or os.path.splitext(os.path.basename(csv_path))[0]
-        source = {"id": uuid.uuid4().hex[:8], "path": csv_path, "alias": alias}
+        source = {"id": source_id or uuid.uuid4().hex[:8], "path": csv_path, "alias": alias}
         new_sources = self.sources + [source]
         self._commit("sources", new_sources, f"Añadir fuente «{alias}»",
                      setter=lambda v: setattr(self, "sources", v))

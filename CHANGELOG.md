@@ -12,6 +12,19 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-01]
+
+### Añadido
+- Al **crear un proyecto nuevo**, se pregunta si quieres **importar un bundle
+  existente** (`.eegbundle`) para arrancar con pipeline + dataset + modelos.
+
+### Cambiado
+- Botones con texto largo **acortados** (con tooltip con la descripción completa)
+  para que **no se recorten** en pantallas/resoluciones pequeñas.
+- Se documenta y verifica que el **bundle nunca incluye imágenes/gráficos**: la
+  matriz de confusión y demás se **regeneran al importar** desde las métricas
+  numéricas del modelo, así que no aumentan el tamaño del archivo.
+
 ## [2026-06-29]
 
 Gran tanda de funcionalidades sobre la base del 27. Commits de git de esta fecha:
@@ -52,10 +65,29 @@ Gran tanda de funcionalidades sobre la base del 27. Commits de git de esta fecha
 - **Vaciar todos los segmentos** de una vez y **eliminar archivos del proyecto**
   (nunca de la carpeta de origen).
 - **Botón unificado** "Añadir o importar señal" (CSV + datasets en un solo paso).
+- **Métricas embellecidas**: la matriz de confusión se dibuja como **mapa de calor
+  con matplotlib** (conteos anotados + barra de color) junto a un gráfico de **F1 por
+  clase**, y los scores se muestran en una **tabla con color**. La figura se puede
+  **guardar como imagen** (PNG/PDF/SVG) y se conserva el informe de **texto** («Ver
+  texto…»). Sin matplotlib, se usa el texto de siempre.
 - **Edición de señal en el visor**: **recortar (eliminar) tramos seleccionados** (no
   destructivo, reversible con Ctrl+Z, sombreados en gris y excluidos del dataset) y
   **borrar los segmentos etiquetados de la selección** directamente desde el visor.
 - **Botón "Abrir carpeta del proyecto"** en el explorador de archivos del sistema.
+- **Exportar/importar bundle** `.eegbundle` (ZIP autónomo): un diálogo con casillas
+  permite elegir qué incluir (preprocesamiento / dataset / modelos). El bundle
+  guarda la **configuración** (pipeline, canales, segmentos, recortes), los
+  **datasets** (`.npz`) y los **modelos entrenados** (`.joblib`), de modo que en
+  otra máquina **Importar configuración/bundle…** reconstruye pipeline + dataset +
+  modelos de un solo archivo. Opcionalmente incluye las **señales de origen (CSV)**
+  conservando el id de cada fuente (los segmentos siguen válidos). El bundle **no
+  incluye la caché** (regenerable) y comprime los archivos, por lo que **suele pesar
+  bastante menos que la carpeta del proyecto** (el export informa del tamaño y
+  avisa si el archivo acabara siendo mayor que el proyecto, sugiriendo excluir las
+  señales de origen). El
+  explorador se abre por defecto en la carpeta del proyecto. También existe el export
+  ligero solo-configuración `.eegcfg` (JSON). Los hiperparámetros del clasificador
+  clásico se guardan ahora en el modelo.
 - **`CHANGELOG.md`** del repositorio (este archivo) + enlace desde el `README`.
 
 ### Cambiado

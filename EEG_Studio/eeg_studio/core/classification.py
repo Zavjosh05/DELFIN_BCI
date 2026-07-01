@@ -5,6 +5,7 @@ modelos se guardan con ``joblib`` dentro de ``<proyecto>/models``.
 """
 from __future__ import annotations
 
+import io
 import os
 from dataclasses import dataclass, field
 
@@ -165,6 +166,7 @@ class TrainingResult:
     input_kind: str = "features"       # "features" o "raw"
     nn_config: dict | None = None      # config de la red (si es NN)
     metrics: dict | None = None        # matriz de confusión + métricas por clase
+    clf_params: dict | None = None     # hiperparámetros del clasificador clásico
 
     @property
     def cv_mean(self) -> float:
@@ -220,6 +222,7 @@ def train(dataset, classifier_name: str = "random_forest", cv: int = 5,
         cv_scores=cv_scores,
         input_kind="features",
         metrics=metrics,
+        clf_params=dict(clf_params) if clf_params else None,
     )
 
 
@@ -354,6 +357,7 @@ def _result_blob(result: TrainingResult) -> dict:
         "input_kind": result.input_kind,
         "nn_config": result.nn_config,
         "metrics": result.metrics,
+        "clf_params": getattr(result, "clf_params", None),
     }
 
 
@@ -371,8 +375,7 @@ def save_model_to(result: TrainingResult, path: str) -> str:
     return path
 
 
-def load_model(path: str) -> TrainingResult:
-    blob = joblib.load(path)
+def _blob_to_result(blob: dict) -> TrainingResult:
     return TrainingResult(
         model=blob["model"],
         classifier_name=blob.get("classifier_name", "unknown"),
@@ -382,7 +385,23 @@ def load_model(path: str) -> TrainingResult:
         input_kind=blob.get("input_kind", "features"),
         nn_config=blob.get("nn_config"),
         metrics=blob.get("metrics"),
+        clf_params=blob.get("clf_params"),
     )
+
+
+def load_model(path: str) -> TrainingResult:
+    return _blob_to_result(joblib.load(path))
+
+
+def result_to_bytes(result: TrainingResult) -> bytes:
+    """Serializa un modelo a bytes (para incluirlo en un bundle .eegbundle)."""
+    buf = io.BytesIO()
+    joblib.dump(_result_blob(result), buf)
+    return buf.getvalue()
+
+
+def result_from_bytes(data: bytes) -> TrainingResult:
+    return _blob_to_result(joblib.load(io.BytesIO(data)))
 
 
 def metrics_report(result: TrainingResult) -> str:

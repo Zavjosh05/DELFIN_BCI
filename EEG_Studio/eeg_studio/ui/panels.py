@@ -86,8 +86,9 @@ class PreprocessingPanel(QWidget):
         channels_btn.clicked.connect(self.controller.select_channels)
         layout.addWidget(channels_btn)
 
-        cache_btn = QPushButton("Guardar señal procesada en el proyecto (.npz)")
-        cache_btn.setToolTip("Escribe el resultado en cache/ — nunca toca el CSV original")
+        cache_btn = QPushButton("Guardar señal procesada (.npz)")
+        cache_btn.setToolTip("Guarda la señal procesada en el proyecto (cache/) — "
+                             "nunca toca el CSV original.")
         cache_btn.clicked.connect(self.controller.cache_processed)
         layout.addWidget(cache_btn)
 
@@ -325,14 +326,15 @@ class DatasetPanel(QWidget):
         self.time_chk.stateChanged.connect(self._save_cfg)
         feat_layout.addWidget(self.bands_chk)
         feat_layout.addWidget(self.time_chk)
-        view_btn = QPushButton("Ver características de la selección…")
+        view_btn = QPushButton("Ver características…")
         view_btn.setToolTip("Calcula y muestra las potencias por banda y características "
                             "temporales de la región seleccionada en el visor.")
         view_btn.clicked.connect(self.controller.show_features)
         feat_layout.addWidget(view_btn)
         layout.addWidget(feat_box)
 
-        build_btn = QPushButton("Construir dataset (multiproceso)")
+        build_btn = QPushButton("Construir dataset")
+        build_btn.setToolTip("Construye el dataset (extracción de características en multiproceso).")
         build_btn.clicked.connect(self.controller.build_dataset)
         layout.addWidget(build_btn)
 
@@ -537,8 +539,9 @@ class ClassificationPanel(QWidget):
         mlay.addLayout(row2)
         layout.addWidget(models_box)
 
-        predict_btn = QPushButton("Clasificar selección actual (modelo activo)")
-        predict_btn.setToolTip("Extrae la región seleccionada y predice su clase")
+        predict_btn = QPushButton("Clasificar selección")
+        predict_btn.setToolTip("Extrae la región seleccionada en el visor y predice su "
+                               "clase con el modelo activo.")
         predict_btn.clicked.connect(self.controller.predict_selection)
         layout.addWidget(predict_btn)
 
