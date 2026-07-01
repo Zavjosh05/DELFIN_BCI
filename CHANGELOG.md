@@ -19,9 +19,12 @@ cambios se agrupan por fecha de trabajo.
   existente** (`.eegbundle`) para arrancar con pipeline + dataset + modelos.
 - **Métricas globales**: tabla resumen del modelo en general (exactitud, precisión/
   recall/F1 macro y F1 ponderado, muestras totales), además de las métricas por clase.
+- **Matriz de confusión normalizable**: casilla para verla en **porcentajes por fila**
+  (por defecto: conteos). El estado se refleja también en la imagen guardada.
 - La **imagen guardada de las métricas** ahora incluye **todo el informe**: matriz de
-  confusión + F1 por clase + tabla de scores por clase + tabla de métricas globales
-  (se captura el informe completo en un PNG).
+  confusión + F1 por clase + tabla de scores por clase + tabla de métricas globales.
+  Se compone con matplotlib para que **todas las filas** de las tablas se vean (sin
+  barras de desplazamiento); en la interfaz las tablas siguen igual.
 
 ### Cambiado
 - Botones con texto largo **acortados** (con tooltip con la descripción completa)
