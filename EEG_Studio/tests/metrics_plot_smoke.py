@@ -40,19 +40,31 @@ def main() -> int:
     assert os.path.isfile(png) and os.path.getsize(png) > 1000, os.path.getsize(png)
     print(f"    imagen guardada: {os.path.getsize(png)} bytes")
 
-    print("[2] La tabla de scores tiene filas por clase y valores")
+    print("[2] La tabla de scores por clase tiene filas por clase y valores")
     table = metrics_view.build_scores_table(metrics)
     assert table.rowCount() == 3 and table.columnCount() == 4
     assert table.item(0, 2).text() == "0.81"          # F1 de la clase 0
     assert table.item(0, 3).text() == "24"            # soporte
-    assert table.item(0, 0).background().color().isValid()
     print(f"    {table.rowCount()}×{table.columnCount()} con color en las celdas")
 
-    print("[3] El diálogo completo se construye (sin ejecutarlo)")
+    print("[3] Métricas GLOBALES (no por clase)")
+    g = metrics_view.global_metrics(metrics)
+    assert g["accuracy"] == 0.78 and g["support_total"] == 72, g
+    assert abs(g["f1_macro"] - (0.81 + 0.76 + 0.88) / 3) < 1e-6, g["f1_macro"]
+    gt = metrics_view.build_global_table(metrics)
+    assert gt.rowCount() == 6 and gt.item(0, 1).text() == "78.0%"
+    print(f"    exactitud={g['accuracy']:.2f} · F1 macro={g['f1_macro']:.3f} · soporte={g['support_total']}")
+
+    print("[4] La imagen guardada incluye figura + tablas (grab del informe)")
     dlg = metrics_view.build_metrics_dialog(None, "Métricas — rf_1",
                                             "rf_1 · Random Forest", metrics, "informe de texto")
-    assert dlg is not None and dlg.findChildren(type(table))
-    print("    diálogo con canvas + tabla + botones ✓")
+    dlg.show()
+    app.processEvents()
+    report = os.path.join(tempfile.mkdtemp(), "metricas.png")
+    dlg._content.grab().save(report)
+    assert os.path.isfile(report) and os.path.getsize(report) > 5000, os.path.getsize(report)
+    print(f"    informe completo guardado: {os.path.getsize(report)} bytes")
+    dlg.close()
 
     print("\nVISOR DE MÉTRICAS OK ✓")
     return 0

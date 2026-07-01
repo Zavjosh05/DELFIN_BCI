@@ -17,6 +17,11 @@ cambios se agrupan por fecha de trabajo.
 ### Añadido
 - Al **crear un proyecto nuevo**, se pregunta si quieres **importar un bundle
   existente** (`.eegbundle`) para arrancar con pipeline + dataset + modelos.
+- **Métricas globales**: tabla resumen del modelo en general (exactitud, precisión/
+  recall/F1 macro y F1 ponderado, muestras totales), además de las métricas por clase.
+- La **imagen guardada de las métricas** ahora incluye **todo el informe**: matriz de
+  confusión + F1 por clase + tabla de scores por clase + tabla de métricas globales
+  (se captura el informe completo en un PNG).
 
 ### Cambiado
 - Botones con texto largo **acortados** (con tooltip con la descripción completa)

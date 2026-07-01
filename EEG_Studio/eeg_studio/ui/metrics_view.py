@@ -19,9 +19,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 try:
@@ -130,12 +132,71 @@ def build_scores_table(metrics: dict) -> QTableWidget:
     return table
 
 
-def _save_figure(parent, fig) -> None:
-    path, _ = QFileDialog.getSaveFileName(parent, "Guardar imagen", "matriz_confusion.png",
-                                          "Imagen PNG (*.png);;PDF (*.pdf);;SVG (*.svg)")
+def global_metrics(metrics: dict) -> dict:
+    """Métricas GLOBALES del modelo (no por clase): exactitud + promedios.
+
+    * ``accuracy``  — exactitud global (aciertos / total).
+    * ``*_macro``   — media simple de la métrica entre clases (todas cuentan igual).
+    * ``*_weighted``— media ponderada por el soporte (nº de muestras de cada clase).
+    """
+    p = np.asarray(metrics.get("precision", []), dtype=float)
+    r = np.asarray(metrics.get("recall", []), dtype=float)
+    f = np.asarray(metrics.get("f1", []), dtype=float)
+    s = np.asarray(metrics.get("support", []), dtype=float)
+    total = float(s.sum()) if s.size else 0.0
+
+    def wavg(x):
+        return float((x * s).sum() / total) if total and x.size else 0.0
+
+    return {
+        "accuracy": float(metrics.get("accuracy", 0.0)),
+        "precision_macro": float(p.mean()) if p.size else 0.0,
+        "recall_macro": float(r.mean()) if r.size else 0.0,
+        "f1_macro": float(f.mean()) if f.size else 0.0,
+        "precision_weighted": wavg(p),
+        "recall_weighted": wavg(r),
+        "f1_weighted": wavg(f),
+        "support_total": int(total),
+    }
+
+
+def build_global_table(metrics: dict) -> QTableWidget:
+    """Tabla resumen del modelo en general (métricas globales, no por clase)."""
+    g = global_metrics(metrics)
+    rows = [
+        ("Exactitud (accuracy)", f"{g['accuracy'] * 100:.1f}%"),
+        ("Precisión (macro)", f"{g['precision_macro']:.2f}"),
+        ("Recall (macro)", f"{g['recall_macro']:.2f}"),
+        ("F1 (macro)", f"{g['f1_macro']:.2f}"),
+        ("F1 (ponderado)", f"{g['f1_weighted']:.2f}"),
+        ("Muestras evaluadas (soporte total)", str(g["support_total"])),
+    ]
+    table = QTableWidget(len(rows), 2)
+    table.setHorizontalHeaderLabels(["Métrica global", "Valor"])
+    table.verticalHeader().setVisible(False)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+    table.setMaximumHeight(38 + 30 * len(rows))
+    for i, (metric, value) in enumerate(rows):
+        table.setItem(i, 0, QTableWidgetItem(metric))
+        vi = QTableWidgetItem(value)
+        vi.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if i == 0:                                   # exactitud global, destacada
+            vi.setForeground(QBrush(QColor(_ACCENT)))
+            f = vi.font(); f.setBold(True); vi.setFont(f)
+        table.setItem(i, 1, vi)
+    return table
+
+
+def _save_report(parent, content: QWidget) -> None:
+    """Guarda como imagen TODO el informe (matriz + gráficos + tablas)."""
+    path, _ = QFileDialog.getSaveFileName(
+        parent, "Guardar imagen de métricas", "metricas.png",
+        "Imagen PNG (*.png);;JPEG (*.jpg)")
     if not path:
         return
-    fig.savefig(path, dpi=150, facecolor=fig.get_facecolor(), bbox_inches="tight")
+    content.grab().save(path)
 
 
 def _show_text(parent, title: str, text: str) -> None:
@@ -154,36 +215,58 @@ def _show_text(parent, title: str, text: str) -> None:
     dlg.exec()
 
 
+def _section(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"color: {_MUTED}; font-weight: 600; padding-top: 4px;")
+    return lbl
+
+
 def build_metrics_dialog(parent, title: str, header: str, metrics: dict,
                          text_report: str) -> QDialog:
-    """Construye el diálogo de métricas (sin ejecutarlo, para poder probarlo)."""
+    """Diálogo de métricas: matriz de confusión + F1 + tabla por clase + tabla global.
+
+    El botón «Guardar imagen» captura TODO el informe (figura + tablas) en un PNG.
+    """
     dlg = QDialog(parent)
     dlg.setWindowTitle(title)
-    dlg.resize(900, 660)
-    lay = QVBoxLayout(dlg)
+    dlg.resize(920, 780)
+    outer = QVBoxLayout(dlg)
+
+    # Todo el informe va en 'content' para poder guardarlo como una sola imagen.
+    content = QWidget()
+    content.setStyleSheet(f"background: {_BG};")
+    lay = QVBoxLayout(content)
 
     hdr = QLabel(header)
     hdr.setWordWrap(True)
     hdr.setStyleSheet(f"color: {_TITLE}; font-weight: 600;")
     lay.addWidget(hdr)
 
-    acc = metrics.get("accuracy")
-    if acc is not None:
-        a = QLabel(f"Exactitud global: {float(acc) * 100:.1f}%")
-        a.setStyleSheet(f"color: {_ACCENT}; font-weight: 700; font-size: 14px;")
-        lay.addWidget(a)
+    g = global_metrics(metrics)
+    acc = QLabel(f"Exactitud global del modelo: {g['accuracy'] * 100:.1f}%")
+    acc.setStyleSheet(f"color: {_ACCENT}; font-weight: 700; font-size: 15px;")
+    lay.addWidget(acc)
 
     fig = build_figure(metrics)
     canvas = FigureCanvas(fig)
-    canvas.setMinimumHeight(320)
-    lay.addWidget(canvas, 1)
+    canvas.setMinimumHeight(300)
+    canvas.draw()                                    # asegura el render para el grab
+    lay.addWidget(canvas)
 
-    lay.addWidget(QLabel("Scores por clase:"))
+    lay.addWidget(_section("Scores por clase:"))
     lay.addWidget(build_scores_table(metrics))
+    lay.addWidget(_section("Métricas globales (todo el modelo):"))
+    lay.addWidget(build_global_table(metrics))
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(content)
+    outer.addWidget(scroll, 1)
 
     row = QHBoxLayout()
     save_btn = QPushButton("Guardar imagen…")
-    save_btn.clicked.connect(lambda: _save_figure(dlg, fig))
+    save_btn.setToolTip("Guarda un PNG con la matriz de confusión, el F1 y las tablas.")
+    save_btn.clicked.connect(lambda: _save_report(dlg, content))
     text_btn = QPushButton("Ver texto…")
     text_btn.clicked.connect(lambda: _show_text(dlg, title, text_report))
     row.addWidget(save_btn)
@@ -192,8 +275,9 @@ def build_metrics_dialog(parent, title: str, header: str, metrics: dict,
     bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
     bb.rejected.connect(dlg.reject)
     row.addWidget(bb)
-    lay.addLayout(row)
+    outer.addLayout(row)
     dlg._figure = fig            # mantener viva la figura
+    dlg._content = content
     return dlg
 
 
