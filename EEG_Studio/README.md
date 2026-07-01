@@ -1,8 +1,10 @@
-i# DELFIN EEG Studio
+# DELFIN EEG Studio
 
 Interfaz de escritorio (PyQt6) para **visualizar, preprocesar, procesar y
 clasificar** señales EEG capturadas con el casco **Emotiv EPOC+** y exportadas a
 CSV desde **OpenViBE Designer**.
+
+> El historial de cambios del código está en [`CHANGELOG.md`](../CHANGELOG.md).
 
 Permite reunir varios CSV en un mismo proyecto, **aislar y agrupar** segmentos de
 señal para construir un **dataset etiquetado**, y entrenar un **modelo de
@@ -516,4 +518,5 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `features_view_smoke`, `missing_source_smoke`, `project_files_smoke`,
 `dataset_build_smoke`, `theme_smoke`, `train_progress_smoke`,
 `pipeline_toggle_smoke`, `emotiv_mode_smoke`, `quality_smoke`,
-`filter_design_smoke`, `e2e_smoke` (flujo completo de extremo a extremo).
+`filter_design_smoke`, `eog_exclude_smoke`, `signal_edit_smoke`,
+`preload_smoke`, `e2e_smoke` (flujo completo de extremo a extremo).

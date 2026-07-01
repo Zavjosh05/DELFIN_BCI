@@ -49,6 +49,7 @@ def _default_state() -> dict:
         "segments": [],          # lista de segmentos etiquetados
         "channel_aliases": {},   # nombre_original -> alias mostrado
         "excluded_channels": [], # nombres de canal excluidos
+        "cuts": {},              # source_id -> [[inicio, fin], ...] tramos eliminados
         "dataset": {"use_bands": True, "use_time": True},
     }
 
@@ -108,15 +109,24 @@ class Project:
     # ------------------------------------------------------------------ #
     # Fuentes (CSV)
     # ------------------------------------------------------------------ #
-    def add_source(self, csv_path: str, alias: str | None = None) -> dict:
+    def add_source(self, csv_path: str, alias: str | None = None,
+                   recording: Recording | None = None) -> dict:
+        """Añade una fuente CSV al proyecto.
+
+        ``recording`` permite pasar la grabación **ya cargada** (p. ej. en un hilo
+        de trabajo) para no bloquear con la lectura del CSV; si es ``None``, se
+        carga aquí (valida el archivo y fija los alias de canal por defecto).
+        """
         csv_path = os.path.abspath(csv_path)
         alias = alias or os.path.splitext(os.path.basename(csv_path))[0]
         source = {"id": uuid.uuid4().hex[:8], "path": csv_path, "alias": alias}
         new_sources = self.sources + [source]
         self._commit("sources", new_sources, f"Añadir fuente «{alias}»",
                      setter=lambda v: setattr(self, "sources", v))
-        # Carga inmediata para validar y para fijar alias de canales por defecto.
-        rec = self.get_recording(source["id"])
+        if recording is not None:                    # ya cargada fuera del hilo GUI
+            with self._lock:
+                self._recordings[source["id"]] = recording
+        rec = self.get_recording(source["id"])       # acierto de caché si venía precargada
         if not self.state["channel_aliases"]:
             self._set_default_channel_aliases(rec)
         return source
@@ -346,6 +356,58 @@ class Project:
             self._commit("segments", [], f"Eliminar todos los segmentos ({n})")
         return n
 
+    def remove_segments_in_range(self, source_id: str, start: int, stop: int) -> int:
+        """Elimina los segmentos de ``source_id`` que se solapen con ``[start, stop)``."""
+        a, b = sorted((int(start), int(stop)))
+        segs = self.state["segments"]
+        keep = [s for s in segs if not (s["source_id"] == source_id
+                                        and s["start"] < b and s["stop"] > a)]
+        n = len(segs) - len(keep)
+        if n:
+            self._commit("segments", keep, f"Eliminar {n} segmento(s) de la selección")
+        return n
+
+    # --- Recorte de tramos de señal (no destructivo, reversible) ----------
+    @staticmethod
+    def _merge_intervals(intervals: list) -> list:
+        ivs = sorted([sorted((int(a), int(b))) for a, b in intervals])
+        out: list = []
+        for a, b in ivs:
+            if b - a < 1:
+                continue
+            if out and a <= out[-1][1]:
+                out[-1][1] = max(out[-1][1], b)
+            else:
+                out.append([a, b])
+        return out
+
+    def cut_intervals(self, source_id: str) -> list[tuple[int, int]]:
+        """Tramos eliminados de una fuente, como lista de ``(inicio, fin)``."""
+        return [(int(a), int(b)) for a, b in self.state.get("cuts", {}).get(source_id, [])]
+
+    def add_cut(self, source_id: str, start: int, stop: int) -> None:
+        """Marca ``[start, stop)`` como eliminado (excluido del dataset).
+
+        No borra nada del CSV: guarda el tramo en el estado (reversible con undo).
+        Elimina además los segmentos etiquetados que se solapen con el recorte.
+        """
+        a, b = sorted((int(start), int(stop)))
+        if b - a < 1:
+            return
+        cuts = {k: [list(iv) for iv in v] for k, v in self.state.get("cuts", {}).items()}
+        cuts[source_id] = self._merge_intervals(cuts.get(source_id, []) + [[a, b]])
+        self.remove_segments_in_range(source_id, a, b)     # primero, mientras hay índices válidos
+        self._commit("cuts", cuts, f"Recortar señal [{a}, {b}]")
+
+    def clear_cuts(self, source_id: str) -> int:
+        """Restaura (des-recorta) todos los tramos eliminados de una fuente."""
+        cuts = {k: list(v) for k, v in self.state.get("cuts", {}).items()}
+        n = len(cuts.get(source_id, []))
+        if n:
+            cuts.pop(source_id, None)
+            self._commit("cuts", cuts, "Restaurar tramos recortados")
+        return n
+
     def relabel_segment(self, segment_id: str, label: str) -> None:
         new_segments = snapshot(self.state["segments"])
         for s in new_segments:
@@ -374,6 +436,7 @@ class Project:
         if not events:
             return []
         starts = [int(e["sample"]) for e in events]
+        cuts = self.cut_intervals(source_id)
         out: list[dict] = []
         for i, ev in enumerate(events):
             start = starts[i] + int(offset)
@@ -382,6 +445,8 @@ class Project:
             else:
                 stop = starts[i + 1] if i + 1 < len(starts) else rec.n_samples
             if stop - start < 2:
+                continue
+            if any(start < cb and stop > ca for ca, cb in cuts):   # no crear en tramos recortados
                 continue
             out.append({
                 "id": uuid.uuid4().hex[:8],

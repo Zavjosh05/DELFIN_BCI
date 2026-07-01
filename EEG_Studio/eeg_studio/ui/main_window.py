@@ -5,8 +5,8 @@ import os
 import time
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSettings, QSize, QTimer
-from PyQt6.QtGui import QAction, QColor, QKeySequence
+from PyQt6.QtCore import Qt, QSettings, QSize, QTimer, QUrl
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
 
 from ..config import APP_NAME, EPOC_CHANNELS, FREQ_BANDS, IMPORTED_DIR, ORG_NAME, PROJECT_EXT
 from ..core import classification, dataset as dataset_mod, mat_loader, mne_loader
-from ..core.csv_loader import compress_csv
+from ..core.csv_loader import compress_csv, load_recording
 from ..core.processing import band_powers, extract_feature_vector, time_features
 from ..core.project import Project
 from ..workers import run_async
@@ -76,6 +76,8 @@ class MainWindow(QMainWindow):
         # Centro: pila con (0) bienvenida y (1) pestañas Análisis / Tiempo real.
         self.signal_view = SignalView()
         self.signal_view.segment_requested.connect(self._on_segment_requested)
+        self.signal_view.cut_requested.connect(self._on_cut_requested)
+        self.signal_view.delete_segments_requested.connect(self._on_delete_segments_in_selection)
         self.signal_view.mode_changed.connect(self._update_signal_view)
         self.live_view = LiveSignalView()
         self.center_tabs = QTabWidget()
@@ -265,10 +267,23 @@ class MainWindow(QMainWindow):
         self.act_open = QAction("Abrir proyecto…", self, triggered=self.open_project)
         self.act_save = QAction("Guardar proyecto", self, triggered=self.save_project)
         self.act_save.setShortcut(QKeySequence.StandardKey.Save)
+        self.act_open_folder = QAction("Abrir carpeta del proyecto", self,
+                                       triggered=self.open_project_folder)
+        self.act_open_folder.setToolTip("Abre la carpeta .eegproj en el explorador de archivos.")
         self.act_add = QAction("Añadir o importar señal…", self,
                                triggered=self.add_or_import_source)
         self.act_add.setToolTip("Añade CSV o importa datasets (.mat / .fif / .edf / .gdf…) "
                                 "en un solo paso.")
+        # Opción: al importar .mat (BCI 2a), excluir los EOG por defecto (las
+        # etiquetas se conservan). Persistente entre sesiones.
+        self.act_exclude_eog = QAction("Excluir EOG al importar .mat", self, checkable=True)
+        self.act_exclude_eog.setChecked(
+            self._settings().value("exclude_eog_on_mat", True, type=bool))
+        self.act_exclude_eog.setToolTip("Recomendado: marca los canales EOG como "
+                                        "excluidos del análisis. No borra nada del CSV "
+                                        "y las etiquetas se mantienen.")
+        self.act_exclude_eog.toggled.connect(
+            lambda v: self._settings().setValue("exclude_eog_on_mat", bool(v)))
         self.act_compress = QAction("Comprimir fuentes a .csv.gz…", self,
                                     triggered=self.compress_sources)
         self.act_del_src = QAction("Quitar fuente del proyecto…", self,
@@ -278,8 +293,10 @@ class MainWindow(QMainWindow):
         self.recent_menu = m_proj.addMenu("Abrir reciente")
         self.recent_menu.aboutToShow.connect(self._build_recent_menu)
         m_proj.addAction(self.act_save)
+        m_proj.addAction(self.act_open_folder)
         m_proj.addSeparator()
         m_proj.addAction(self.act_add)
+        m_proj.addAction(self.act_exclude_eog)
         m_proj.addAction(self.act_compress)
         m_proj.addAction(self.act_del_src)
         m_proj.addSeparator()
@@ -301,6 +318,7 @@ class MainWindow(QMainWindow):
         self.act_new.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_FileIcon))
         self.act_open.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.act_save.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.act_open_folder.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_DirIcon))
         self.act_add.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
         self.act_undo.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
         self.act_redo.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
@@ -474,6 +492,17 @@ class MainWindow(QMainWindow):
         self._set_dirty(False)
         self.statusBar().showMessage("Proyecto guardado.")
 
+    def open_project_folder(self) -> None:
+        """Abre la carpeta del proyecto en el explorador de archivos del sistema."""
+        if not self._require_project():
+            return
+        path = self.project.path
+        if not os.path.isdir(path):
+            self.warn("Carpeta no encontrada", f"No existe la carpeta:\n{path}")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            self.warn("No se pudo abrir", f"No se pudo abrir la carpeta:\n{path}")
+
     def request_autosave(self) -> None:
         """Programa un guardado automático poco después del último cambio."""
         if self.project is not None:
@@ -495,6 +524,31 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self.statusBar().showMessage(f"No se pudo autoguardar: {exc}", 3000)
 
+    def _auto_exclude_eog(self) -> int:
+        """Marca como excluidos los canales EOG de todas las fuentes (no destructivo).
+
+        No borra nada del CSV ni toca los marcadores/etiquetas: solo añade los
+        nombres EOG a ``excluded_channels`` para que no entren en CAR, características
+        ni modelos. Devuelve cuántos canales nuevos se excluyeron.
+        """
+        if self.project is None:
+            return 0
+        excluded = set(self.project.excluded_channels())
+        found: set[str] = set()
+        for src in self.project.sources:
+            try:
+                rec = self.project.get_recording(src["id"])
+            except Exception:  # noqa: BLE001 — fuente no disponible
+                continue
+            for n in rec.channel_names:
+                if str(n).strip().upper().startswith("EOG"):
+                    found.add(n)
+        new_excl = found - excluded
+        if new_excl:
+            self.project.edit("excluded_channels", sorted(excluded | found),
+                              "Excluir canales EOG")
+        return len(new_excl)
+
     def add_or_import_source(self) -> None:
         """Añade fuentes CSV **o** importa datasets (.mat/.fif/.edf…) en un solo paso.
 
@@ -511,6 +565,7 @@ class MainWindow(QMainWindow):
             f"MNE / FIF / EDF / GDF ({mne_exts})")
         if not paths:
             return
+        has_mat = any(p.lower().endswith(".mat") for p in paths)
         self._busy("Añadiendo / convirtiendo señal…")
         self.progress.setRange(0, 0)
         self.progress.show()
@@ -524,30 +579,43 @@ class MainWindow(QMainWindow):
             for p in paths:
                 low = p.lower()
                 if low.endswith(".csv") or low.endswith(".csv.gz"):
-                    out.append(p)                       # CSV: se referencia directo
-                    continue
-                base = os.path.splitext(os.path.basename(p))[0]
-                gz = os.path.join(imported_dir, base + ".csv.gz")
-                if os.path.isfile(gz):                  # reutiliza si ya se importó
-                    out.append(gz)
-                elif os.path.splitext(p)[1].lower() == ".mat":
-                    out.append(mat_loader.convert_bnci_mat(p, gz))
+                    csv = p                             # CSV: se referencia directo
                 else:
-                    out.append(mne_loader.convert_with_mne(p, gz))
+                    base = os.path.splitext(os.path.basename(p))[0]
+                    gz = os.path.join(imported_dir, base + ".csv.gz")
+                    if os.path.isfile(gz):              # reutiliza si ya se importó
+                        csv = gz
+                    elif os.path.splitext(p)[1].lower() == ".mat":
+                        csv = mat_loader.convert_bnci_mat(p, gz)
+                    else:
+                        csv = mne_loader.convert_with_mne(p, gz)
+                # Carga la grabación AQUÍ (en el hilo) para no bloquear la GUI al añadir.
+                try:
+                    rec = load_recording(csv)
+                except Exception:  # noqa: BLE001 — se validará/reintentará en add_source
+                    rec = None
+                out.append((csv, rec))
             return out
 
-        def done(csvs):
+        def done(results):
             added = 0
-            for c in csvs:
+            for c, rec in results:
                 try:
-                    self.project.add_source(c)
+                    self.project.add_source(c, recording=rec)
                     added += 1
                 except Exception as exc:  # noqa: BLE001
                     QMessageBox.warning(self, "No se pudo añadir", f"{c}\n\n{exc}")
+            msg = f"{added} fuente(s) añadida(s) al proyecto."
+            # Al importar .mat (BCI 2a): excluir EOG por defecto, conservando etiquetas.
+            if has_mat and self.act_exclude_eog.isChecked():
+                n_eog = self._auto_exclude_eog()
+                if n_eog:
+                    msg += f" {n_eog} canal(es) EOG excluido(s) (las etiquetas se conservan)."
             self._idle()
             self.refresh_all()
+            self._update_signal_view()
             self.request_autosave()
-            self.statusBar().showMessage(f"{added} fuente(s) añadida(s) al proyecto.")
+            self.statusBar().showMessage(msg)
 
         self._spawn(task, done)
 
@@ -651,8 +719,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("La fuente seleccionada no se encuentra en disco.")
             return
         names = self.project.kept_display_names(rec)   # solo canales activos
-        # Marcadores (Event Id) como ayuda visual para etiquetar manualmente.
-        self.signal_view.set_markers([(e["sample"], e["id"]) for e in rec.events])
+        cuts = self.project.cut_intervals(self.current_source_id)
+        # Tramos eliminados (sombreados en gris, excluidos del dataset).
+        self.signal_view.set_cuts(cuts)
+        # Marcadores (Event Id); se ocultan los que caen en tramos recortados.
+        self.signal_view.set_markers([
+            (e["sample"], e["id"]) for e in rec.events
+            if not any(ca <= e["sample"] < cb for ca, cb in cuts)
+        ])
         # Segmentos ya etiquetados de esta fuente, sombreados por clase.
         self.signal_view.set_segments([
             (s["start"], s["stop"], s["label"])
@@ -796,6 +870,37 @@ class MainWindow(QMainWindow):
             return
         self.project.add_segment(self.current_source_id, start, stop, label.strip())
         self._after_state_change()
+
+    def _on_cut_requested(self, start: int, stop: int) -> None:
+        """Recorta (marca como eliminado) el tramo seleccionado de la señal."""
+        if not self._require_project() or self.current_source_id is None:
+            return
+        if stop - start < 1:
+            return
+        n_seg = sum(1 for s in self.project.state["segments"]
+                    if s["source_id"] == self.current_source_id
+                    and s["start"] < stop and s["stop"] > start)
+        if n_seg and QMessageBox.question(
+                self, "Recortar señal",
+                f"El tramo seleccionado solapa {n_seg} segmento(s) etiquetado(s), "
+                "que se eliminarán.\n¿Continuar? (Ctrl+Z para deshacer)"
+                ) != QMessageBox.StandardButton.Yes:
+            return
+        self.project.add_cut(self.current_source_id, start, stop)
+        self._after_state_change()
+        self.statusBar().showMessage(
+            "Tramo recortado (excluido del dataset). Ctrl+Z para deshacer.")
+
+    def _on_delete_segments_in_selection(self, start: int, stop: int) -> None:
+        """Borra los segmentos etiquetados que caen en la selección."""
+        if not self._require_project() or self.current_source_id is None:
+            return
+        n = self.project.remove_segments_in_range(self.current_source_id, start, stop)
+        if n == 0:
+            self.info("Sin segmentos", "No hay segmentos etiquetados en la selección.")
+            return
+        self._after_state_change()
+        self.statusBar().showMessage(f"{n} segmento(s) eliminado(s) de la selección.")
 
     def show_features(self) -> None:
         """Muestra las características extraídas de la región seleccionada."""
@@ -1272,7 +1377,8 @@ class MainWindow(QMainWindow):
 
     def _update_actions(self) -> None:
         has_proj = self.project is not None
-        for a in (self.act_save, self.act_add, self.act_compress, self.act_del_src):
+        for a in (self.act_save, self.act_open_folder, self.act_add, self.act_compress,
+                  self.act_del_src):
             a.setEnabled(has_proj)
         self.act_undo.setEnabled(has_proj and self.project.changelog.can_undo())
         self.act_redo.setEnabled(has_proj and self.project.changelog.can_redo())

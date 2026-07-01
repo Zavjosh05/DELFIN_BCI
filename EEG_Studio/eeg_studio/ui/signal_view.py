@@ -44,6 +44,8 @@ def segment_color(label: str) -> str:
 
 class SignalView(QWidget):
     segment_requested = pyqtSignal(int, int)  # (start_sample, stop_sample)
+    cut_requested = pyqtSignal(int, int)      # recortar (eliminar) el tramo seleccionado
+    delete_segments_requested = pyqtSignal(int, int)  # borrar segmentos de la selección
     mode_changed = pyqtSignal()               # cambió Cruda/Procesada
 
     def __init__(self, parent=None) -> None:
@@ -54,8 +56,10 @@ class SignalView(QWidget):
         self._spacing: float = 0.0
         self._markers: list[tuple[int, str]] = []   # (muestra, etiqueta) — ayuda visual
         self._segments: list[tuple[int, int, str]] = []  # (inicio, fin, etiqueta)
+        self._cuts: list[tuple[int, int]] = []      # tramos eliminados (inicio, fin)
         self._marker_items: list = []               # ítems del overlay (se reciclan)
         self._segment_items: list = []
+        self._cut_items: list = []
         self._n = 0                                  # nº de muestras
         self._seg_top_y = 0.0                        # y para las etiquetas de segmento
         self._drawing = False                        # evita recursión al fijar el rango
@@ -121,6 +125,20 @@ class SignalView(QWidget):
         self.add_seg_btn.clicked.connect(self._emit_segment)
         self.add_seg_btn.setEnabled(False)
         controls.addWidget(self.add_seg_btn)
+
+        # Edición de la señal sobre la selección.
+        self.del_seg_btn = QPushButton("Borrar segmentos")
+        self.del_seg_btn.setToolTip("Elimina los segmentos etiquetados que caen en la selección.")
+        self.del_seg_btn.clicked.connect(self._emit_delete_segments)
+        self.del_seg_btn.setEnabled(False)
+        controls.addWidget(self.del_seg_btn)
+
+        self.cut_btn = QPushButton("Recortar selección")
+        self.cut_btn.setToolTip("Marca el tramo seleccionado como ELIMINADO (se excluye del "
+                                "dataset y se sombrea en gris). No borra el CSV; reversible con Ctrl+Z.")
+        self.cut_btn.clicked.connect(self._emit_cut)
+        self.cut_btn.setEnabled(False)
+        controls.addWidget(self.cut_btn)
         layout.addLayout(controls)
 
         self.plot = pg.PlotWidget()
@@ -163,11 +181,19 @@ class SignalView(QWidget):
         """Segmentos ``(inicio, fin, etiqueta)`` a sombrear sobre la señal."""
         self._segments = list(segments)
 
+    def set_cuts(self, cuts: list[tuple[int, int]]) -> None:
+        """Tramos eliminados ``(inicio, fin)`` a sombrear en gris (excluidos)."""
+        self._cuts = [(int(a), int(b)) for a, b in cuts]
+
     def clear(self) -> None:
         self._data = None
         self.plot.clear()
-        self.add_seg_btn.setEnabled(False)
+        self._set_edit_buttons(False)
         self.sel_label.setText("Selección: —")
+
+    def _set_edit_buttons(self, on: bool) -> None:
+        for b in (self.add_seg_btn, self.del_seg_btn, self.cut_btn):
+            b.setEnabled(on)
 
     def _gain(self) -> float:
         return float(self.gain_box.currentText().replace("x", ""))
@@ -177,8 +203,9 @@ class SignalView(QWidget):
         self.plot.clear()
         self._marker_items = []
         self._segment_items = []
+        self._cut_items = []
         if self._data is None or self._data.size == 0:
-            self.add_seg_btn.setEnabled(False)
+            self._set_edit_buttons(False)
             self._drawing = False
             return
 
@@ -225,7 +252,7 @@ class SignalView(QWidget):
             self.region.setRegion((x0, x0 + min(4.0, (x1 - x0) * 0.5)))
             self.region.show()
             self.plot.setXRange(x0, x1, padding=0.0)
-        self.add_seg_btn.setEnabled(True)
+        self._set_edit_buttons(True)
         self._drawing = False
         self._redraw_overlay()
         self._on_region_changed()
@@ -243,15 +270,40 @@ class SignalView(QWidget):
 
     def _redraw_overlay(self, *_) -> None:
         """Redibuja SOLO los marcadores/segmentos visibles en el rango actual."""
-        for it in self._marker_items + self._segment_items:
+        for it in self._marker_items + self._segment_items + self._cut_items:
             self.plot.removeItem(it)
         self._marker_items = []
         self._segment_items = []
+        self._cut_items = []
         if self._data is None:
             return
         x0, x1 = self._visible_x()
         self._draw_segments(x0, x1)
+        self._draw_cuts(x0, x1)
         self._draw_markers(x0, x1)
+
+    def _draw_cuts(self, x0: float, x1: float) -> None:
+        """Sombrea en gris los tramos eliminados (excluidos del dataset)."""
+        if not self._cuts:
+            return
+        fs, n = self._fs, self._n
+        for a, b in self._cuts:
+            t0 = max(0, a) / fs
+            t1 = min(b, n) / fs
+            if t1 <= t0 or t0 > x1 or t1 < x0:
+                continue
+            band = pg.LinearRegionItem(values=(t0, t1),
+                                       brush=pg.mkBrush(120, 124, 132, 120),
+                                       pen=pg.mkPen(170, 174, 182, 200), movable=False)
+            band.setZValue(20)                       # por encima de la señal
+            band.setToolTip(f"Tramo eliminado: {t0:.2f}–{t1:.2f} s (excluido del dataset)")
+            self.plot.addItem(band)
+            self._cut_items.append(band)
+            txt = pg.TextItem("eliminado", color="#dfe3ea", anchor=(0, 0))
+            txt.setPos(t0, self._seg_top_y)
+            txt.setZValue(21)
+            self.plot.addItem(txt)
+            self._cut_items.append(txt)
 
     def _draw_segments(self, x0: float, x1: float) -> None:
         """Sombrea los segmentos visibles, con color por clase."""
@@ -338,3 +390,17 @@ class SignalView(QWidget):
         if s1 - s0 < 2:
             return
         self.segment_requested.emit(s0, s1)
+
+    def _emit_cut(self) -> None:
+        if self._data is None:
+            return
+        s0, s1 = self.selection_samples()
+        if s1 - s0 < 1:
+            return
+        self.cut_requested.emit(s0, s1)
+
+    def _emit_delete_segments(self) -> None:
+        if self._data is None:
+            return
+        s0, s1 = self.selection_samples()
+        self.delete_segments_requested.emit(s0, s1)
