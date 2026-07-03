@@ -14,11 +14,14 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QSpinBox,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -36,10 +39,38 @@ class PreprocessingPanel(QWidget):
         self.controller = controller
         self._param_widgets: dict[str, QWidget] = {}
         self._pending_row: int | None = None   # fila a seleccionar tras refrescar
+        self._syncing_pipelines = False        # evita recursión al repoblar la barra
         self._build_ui()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+
+        # Varios pipelines por proyecto, como pestañas de navegador.
+        pl_row = QHBoxLayout()
+        pl_row.addWidget(QLabel("Pipelines:"))
+        self.pipeline_bar = QTabBar()
+        self.pipeline_bar.setExpanding(False)
+        self.pipeline_bar.setDrawBase(False)
+        self.pipeline_bar.setTabsClosable(True)
+        self.pipeline_bar.setUsesScrollButtons(True)
+        self.pipeline_bar.setElideMode(Qt.TextElideMode.ElideRight)
+        self.pipeline_bar.setToolTip("Cada pestaña es un pipeline de preprocesamiento "
+                                     "independiente. Doble clic para renombrar.")
+        self.pipeline_bar.currentChanged.connect(self._on_pipeline_changed)
+        self.pipeline_bar.tabCloseRequested.connect(self._on_pipeline_close)
+        self.pipeline_bar.tabBarDoubleClicked.connect(self._on_pipeline_rename)
+        add_pl_btn = QPushButton("＋")
+        add_pl_btn.setFixedWidth(30)
+        add_pl_btn.setToolTip("Añadir un pipeline nuevo.")
+        add_pl_btn.clicked.connect(lambda: self.controller.add_pipeline())
+        del_pl_btn = QPushButton("🗑")
+        del_pl_btn.setFixedWidth(30)
+        del_pl_btn.setToolTip("Eliminar el pipeline activo (reversible con Ctrl+Z).")
+        del_pl_btn.clicked.connect(self._delete_current_pipeline)
+        pl_row.addWidget(self.pipeline_bar, 1)
+        pl_row.addWidget(add_pl_btn)
+        pl_row.addWidget(del_pl_btn)
+        layout.addLayout(pl_row)
 
         add_box = QHBoxLayout()
         self.step_combo = QComboBox()
@@ -92,6 +123,54 @@ class PreprocessingPanel(QWidget):
         cache_btn.clicked.connect(self.controller.cache_processed)
         layout.addWidget(cache_btn)
 
+    # --- Pipelines (pestañas) ---------------------------------------------
+    def _on_pipeline_changed(self, index: int) -> None:
+        if self._syncing_pipelines or index < 0:
+            return
+        self.controller.set_active_pipeline(index)
+
+    def _on_pipeline_close(self, index: int) -> None:
+        if not self._syncing_pipelines:
+            self.controller.remove_pipeline(index)
+
+    def _delete_current_pipeline(self) -> None:
+        proj = self.controller.project
+        if proj is None:
+            return
+        i = proj.active_pipeline_index()
+        pls = proj.pipelines()
+        if len(pls) <= 1:
+            self.controller.remove_pipeline(i)      # el controlador avisa de que debe quedar 1
+            return
+        name = pls[i]["name"]
+        if QMessageBox.question(
+                self, "Eliminar pipeline",
+                f"¿Eliminar el pipeline «{name}»?\n(reversible con Ctrl+Z)"
+        ) == QMessageBox.StandardButton.Yes:
+            self.controller.remove_pipeline(i)
+
+    def _on_pipeline_rename(self, index: int) -> None:
+        proj = self.controller.project
+        if proj is None or not (0 <= index < len(proj.pipelines())):
+            return
+        current = proj.pipelines()[index]["name"]
+        name, ok = QInputDialog.getText(self, "Renombrar pipeline", "Nombre:", text=current)
+        if ok and name.strip():
+            self.controller.rename_pipeline(index, name.strip())
+
+    def _refresh_pipeline_bar(self, proj) -> None:
+        self._syncing_pipelines = True
+        bar = self.pipeline_bar
+        while bar.count():
+            bar.removeTab(0)
+        if proj is not None:
+            pls = proj.pipelines()
+            for pl in pls:
+                bar.addTab(pl["name"])
+            bar.setTabsClosable(len(pls) > 1)   # nunca cerrar el último
+            bar.setCurrentIndex(proj.active_pipeline_index())
+        self._syncing_pipelines = False
+
     # --- Acciones ---------------------------------------------------------
     def _add_step(self) -> None:
         key = self.step_combo.currentData()
@@ -126,6 +205,7 @@ class PreprocessingPanel(QWidget):
 
     def refresh(self) -> None:
         proj = self.controller.project
+        self._refresh_pipeline_bar(proj)
         # Reubicar la selección en el paso modificado, o conservar la actual.
         target = self._pending_row if self._pending_row is not None else self.steps_list.currentRow()
         self._pending_row = None
@@ -257,6 +337,12 @@ class DatasetPanel(QWidget):
         self.segments_list = QListWidget()
         layout.addWidget(self.segments_list, 1)
 
+        # Resumen: total de muestras y nº por clase.
+        self.class_summary = QLabel("Sin segmentos.")
+        self.class_summary.setWordWrap(True)
+        self.class_summary.setStyleSheet("color: #9be7c4; font-weight: 600;")
+        layout.addWidget(self.class_summary)
+
         seg_btns = QHBoxLayout()
         relabel_btn = QPushButton("Reetiquetar")
         relabel_btn.clicked.connect(self._relabel)
@@ -385,6 +471,17 @@ class DatasetPanel(QWidget):
         cfg = proj.state.get("dataset", {})
         self.bands_chk.setChecked(cfg.get("use_bands", True))
         self.time_chk.setChecked(cfg.get("use_time", True))
+
+        # Total de muestras (segmentos) y desglose por clase.
+        segs = proj.state["segments"]
+        if segs:
+            from collections import Counter
+            counts = Counter(s["label"] for s in segs)
+            por_clase = " · ".join(f"{lab}: {n}" for lab, n in sorted(counts.items()))
+            self.class_summary.setText(
+                f"Total: {len(segs)} muestras · {len(counts)} clases  ⟶  {por_clase}")
+        else:
+            self.class_summary.setText("Sin segmentos.")
 
     def set_info(self, text: str) -> None:
         self.info_label.setText(text)
@@ -524,6 +621,7 @@ class ClassificationPanel(QWidget):
         row1 = QHBoxLayout()
         for text, slot in (("Activar", self._activate_selected),
                            ("Métricas…", self._metrics_selected),
+                           ("Configuración…", self._configure_selected),
                            ("Eliminar", self._remove_selected)):
             b = QPushButton(text)
             b.clicked.connect(slot)
@@ -638,6 +736,7 @@ class ClassificationPanel(QWidget):
             star = "★ " if name == active else "   "
             item = QListWidgetItem(f"{star}{name}   ({cv})")
             item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setToolTip(result.split_report())
             if name == active:
                 f = item.font(); f.setBold(True); item.setFont(f)
             self.models_list.addItem(item)
@@ -663,7 +762,8 @@ class ClassificationPanel(QWidget):
         label = classification.CLASSIFIER_LABELS.get(r.classifier_name, r.classifier_name)
         cv = (f"{r.score_label}: {r.cv_mean * 100:.1f}% (±{r.cv_std * 100:.1f})"
               if r.cv_scores.size else "Sin validación (pocos datos)")
-        self.result_label.setText(f"{name} — {label}\n{cv}\nClases: {', '.join(r.classes)}")
+        self.result_label.setText(
+            f"{name} — {label}\n{cv}\nClases: {', '.join(r.classes)}\n{r.split_report()}")
 
     def _activate_selected(self):
         name = self._selected_name()
@@ -674,6 +774,11 @@ class ClassificationPanel(QWidget):
         name = self._selected_name()
         if name:
             self.controller.show_model_metrics(name)
+
+    def _configure_selected(self):
+        name = self._selected_name()
+        if name:
+            self.controller.configure_model(name)
 
     def _remove_selected(self):
         name = self._selected_name()

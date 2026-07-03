@@ -56,6 +56,13 @@ class SignalWindow(QMainWindow):
             self.statusBar().showMessage("Señal cruda.", 1500)
             return
 
+        # Si ya está en caché, dibujar al instante (sin hilo).
+        cached = proj.processed_if_cached(self.source_id)
+        if cached is not None:
+            self.view.set_data(cached, rec.sample_rate, names)
+            self.statusBar().showMessage("Procesada.", 1500)
+            return
+
         # Procesamiento en segundo plano (hilo propio de esta ventana).
         self.statusBar().showMessage("Aplicando preprocesamiento…")
         sid = self.source_id

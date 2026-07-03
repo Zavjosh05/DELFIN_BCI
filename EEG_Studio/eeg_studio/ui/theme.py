@@ -55,14 +55,23 @@ QDockWidget::title {{
     border-bottom: 1px solid {BORDER};
 }}
 
-/* Pestañas */
-QTabWidget::pane {{ border: 1px solid {BORDER}; background: {BG}; }}
+/* Pestañas (estilo navegador) */
+QTabWidget::pane {{ border: 1px solid {BORDER}; background: {BG}; top: -1px; }}
+QTabBar {{ qproperty-drawBase: 0; }}
 QTabBar::tab {{
     background: {BG}; color: {MUTED};
-    padding: 6px 12px; border: 1px solid transparent; border-bottom: none;
+    padding: 6px 14px; margin-right: 2px;
+    border: 1px solid transparent; border-bottom: none;
+    border-top-left-radius: 6px; border-top-right-radius: 6px;
 }}
-QTabBar::tab:selected {{ background: {SURFACE}; color: {TEXT}; border-color: {BORDER}; }}
-QTabBar::tab:hover {{ color: {TEXT}; }}
+QTabBar::tab:hover {{ color: {TEXT}; background: {SURFACE}; }}
+QTabBar::tab:selected {{
+    background: {SURFACE}; color: {TEXT};
+    border-color: {BORDER}; border-top: 2px solid {ACCENT};
+}}
+QTabBar::tab:!selected {{ margin-top: 2px; }}
+QTabBar::close-button:hover {{ background: {ACCENT}; border-radius: 3px; }}
+QTabBar::scroller {{ width: 22px; }}
 
 /* Botones */
 QPushButton {{

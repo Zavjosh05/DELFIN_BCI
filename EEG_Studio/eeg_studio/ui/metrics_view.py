@@ -129,11 +129,12 @@ def _mpl_table(ax, col_labels, cell_text, cell_colors=None, title=None):
     """Dibuja una tabla en ``ax`` con el estilo oscuro de la app."""
     ax.axis("off")
     if title:
-        ax.text(0.0, 1.0, title, transform=ax.transAxes, ha="left", va="bottom",
+        # Título DENTRO del eje (va="top") para poder juntar las secciones sin solapes.
+        ax.text(0.0, 1.0, title, transform=ax.transAxes, ha="left", va="top",
                 color=_TITLE, fontsize=11, fontweight="bold")
-    # bbox deja un margen arriba para el título (evita solapes).
+    # bbox deja un margen arriba (dentro del eje) para el título.
     tbl = ax.table(cellText=cell_text, colLabels=col_labels, cellLoc="center",
-                   bbox=[0, 0, 1, 0.88])
+                   bbox=[0, 0, 1, 0.82])
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(9)
     for (r, c), cell in tbl.get_celld().items():
@@ -151,27 +152,8 @@ def _mpl_table(ax, col_labels, cell_text, cell_colors=None, title=None):
     return tbl
 
 
-def build_report_figure(metrics: dict, header: str, normalize: bool = False):
-    """Informe COMPLETO para guardar: matriz + F1 + tabla por clase + tabla global.
-
-    Se compone con matplotlib para que **todas** las filas de las tablas se vean
-    (sin barras de desplazamiento) en la imagen.
-    """
-    labels = [str(x) for x in metrics["labels"]]
-    fig = Figure(figsize=(9.5, 9.6), facecolor=_SURF)
-    gs = fig.add_gridspec(3, 2, height_ratios=[2.8, 1.3 + 0.28 * len(labels), 1.7],
-                          hspace=1.15, wspace=0.28, top=0.93, bottom=0.05,
-                          left=0.11, right=0.95)
-    ax_cm = fig.add_subplot(gs[0, 0])
-    ax_f1 = fig.add_subplot(gs[0, 1])
-    im = _draw_cm(ax_cm, metrics, normalize)
-    cbar = fig.colorbar(im, ax=ax_cm, fraction=0.046, pad=0.04)
-    cbar.ax.tick_params(colors=_MUTED)
-    cbar.outline.set_edgecolor(_BORDER)
-    _draw_f1(ax_f1, metrics)
-    _style_axes(ax_cm, ax_f1)
-
-    # Tabla por clase (con color en precisión/recall/F1).
+def _per_class_rows(metrics: dict, labels: list[str]):
+    """Texto y colores de la tabla por clase (precisión/recall/F1/soporte)."""
     prec = metrics.get("precision", [])
     rec = metrics.get("recall", [])
     f1 = metrics.get("f1", [])
@@ -183,13 +165,12 @@ def build_report_figure(metrics: dict, header: str, normalize: bool = False):
         pc_text.append([lab] + [f"{v:.2f}" for v in vals]
                        + [str(int(sup[i]) if i < len(sup) else 0)])
         pc_colors.append([None] + [_heat_hex(v) for v in vals] + [None])
-    ax_pc = fig.add_subplot(gs[1, :])
-    _mpl_table(ax_pc, ["Clase", "Precisión", "Recall", "F1", "Soporte"], pc_text,
-               pc_colors, title="Scores por clase")
+    return pc_text, pc_colors
 
-    # Tabla global (todas las métricas del modelo).
+
+def _global_rows(metrics: dict):
     g = global_metrics(metrics)
-    g_text = [
+    return [
         ["Exactitud (accuracy)", f"{g['accuracy'] * 100:.1f}%"],
         ["Precisión (macro)", f"{g['precision_macro']:.2f}"],
         ["Recall (macro)", f"{g['recall_macro']:.2f}"],
@@ -197,10 +178,90 @@ def build_report_figure(metrics: dict, header: str, normalize: bool = False):
         ["F1 (ponderado)", f"{g['f1_weighted']:.2f}"],
         ["Muestras evaluadas (soporte total)", str(g["support_total"])],
     ]
-    ax_g = fig.add_subplot(gs[2, :])
-    _mpl_table(ax_g, ["Métrica global", "Valor"], g_text, title="Métricas globales")
 
-    fig.suptitle(header.replace("\n", "  ·  "), color=_TITLE, fontsize=11, y=0.995)
+
+# Secciones disponibles al guardar (orden y etiqueta para el diálogo).
+REPORT_SECTIONS = (
+    ("confusion", "Matriz de confusión"),
+    ("f1", "F1 por clase"),
+    ("per_class", "Tabla de scores por clase"),
+    ("global", "Tabla de métricas globales"),
+)
+
+
+def build_report_figure(metrics: dict, header: str, normalize: bool = False,
+                        data_note: str = "", sections: dict | None = None):
+    """Informe para guardar: solo las secciones pedidas, lo más juntas posible.
+
+    ``sections`` selecciona qué incluir (claves de :data:`REPORT_SECTIONS`); por
+    defecto, todas. La figura se dimensiona a las secciones elegidas y se compone
+    con matplotlib para que **todas** las filas de las tablas se vean.
+    """
+    labels = [str(x) for x in metrics["labels"]]
+    if sections is None:
+        sections = {k: True for k, _ in REPORT_SECTIONS}
+    show_cm = bool(sections.get("confusion"))
+    show_f1 = bool(sections.get("f1"))
+    show_pc = bool(sections.get("per_class"))
+    show_g = bool(sections.get("global"))
+    if not (show_cm or show_f1 or show_pc or show_g):
+        show_g = True                               # algo hay que mostrar
+
+    groups: list[str] = []
+    if show_cm or show_f1:
+        groups.append("top")
+    if show_pc:
+        groups.append("per_class")
+    if show_g:
+        groups.append("global")
+
+    heights = {
+        "top": 3.6,
+        "per_class": 0.55 + 0.30 * max(1, len(labels)),
+        "global": 0.55 + 0.30 * 6,
+    }
+    hlist = [heights[g] for g in groups]
+    fig_h = sum(hlist) + 1.05                        # margen para título + nota
+    fig = Figure(figsize=(9.5, fig_h), facecolor=_SURF)
+    gs = fig.add_gridspec(len(groups), 2, height_ratios=hlist,
+                          hspace=0.35, wspace=0.28,
+                          top=1 - 0.55 / fig_h, bottom=0.42 / fig_h,
+                          left=0.11, right=0.95)
+
+    styled = []
+    for gi, kind in enumerate(groups):
+        if kind == "top":
+            if show_cm and show_f1:
+                ax_cm, ax_f1 = fig.add_subplot(gs[gi, 0]), fig.add_subplot(gs[gi, 1])
+            elif show_cm:
+                ax_cm, ax_f1 = fig.add_subplot(gs[gi, :]), None
+            else:
+                ax_cm, ax_f1 = None, fig.add_subplot(gs[gi, :])
+            if ax_cm is not None:
+                im = _draw_cm(ax_cm, metrics, normalize)
+                cbar = fig.colorbar(im, ax=ax_cm, fraction=0.046, pad=0.04)
+                cbar.ax.tick_params(colors=_MUTED)
+                cbar.outline.set_edgecolor(_BORDER)
+                styled.append(ax_cm)
+            if ax_f1 is not None:
+                _draw_f1(ax_f1, metrics)
+                styled.append(ax_f1)
+        elif kind == "per_class":
+            pc_text, pc_colors = _per_class_rows(metrics, labels)
+            _mpl_table(fig.add_subplot(gs[gi, :]),
+                       ["Clase", "Precisión", "Recall", "F1", "Soporte"],
+                       pc_text, pc_colors, title="Scores por clase")
+        elif kind == "global":
+            _mpl_table(fig.add_subplot(gs[gi, :]), ["Métrica global", "Valor"],
+                       _global_rows(metrics), title="Métricas globales")
+    if styled:
+        _style_axes(*styled)
+
+    fig.suptitle(header.replace("\n", "  ·  "), color=_TITLE, fontsize=11,
+                 y=1 - 0.1 / fig_h)
+    if data_note:
+        fig.text(0.5, 0.010, data_note, ha="center", va="bottom", color=_MUTED,
+                 fontsize=8.5, wrap=True)
     return fig
 
 
@@ -297,14 +358,54 @@ def build_global_table(metrics: dict) -> QTableWidget:
     return table
 
 
-def _save_report(parent, metrics: dict, header: str, normalize: bool) -> None:
-    """Guarda el informe COMPLETO (matriz + F1 + tablas) como imagen."""
+def _ask_report_sections(parent, normalize: bool):
+    """Pregunta qué métricas incluir en la imagen. Devuelve (sections, normalize) o None."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("¿Qué incluir en la imagen?")
+    lay = QVBoxLayout(dlg)
+    lay.addWidget(QLabel("Elige qué métricas incluir en la imagen guardada:"))
+    checks: dict[str, QCheckBox] = {}
+    for key, label in REPORT_SECTIONS:
+        c = QCheckBox(label)
+        c.setChecked(True)
+        lay.addWidget(c)
+        checks[key] = c
+    norm_c = QCheckBox("Matriz de confusión normalizada (%)")
+    norm_c.setChecked(normalize)
+    lay.addWidget(norm_c)
+
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                          | QDialogButtonBox.StandardButton.Cancel)
+    ok_btn = bb.button(QDialogButtonBox.StandardButton.Ok)
+    bb.accepted.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    lay.addWidget(bb)
+
+    def _validate():
+        ok_btn.setEnabled(any(c.isChecked() for c in checks.values()))
+    for c in checks.values():
+        c.stateChanged.connect(_validate)
+    _validate()
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return None
+    sections = {k: c.isChecked() for k, c in checks.items()}
+    return sections, norm_c.isChecked()
+
+
+def _save_report(parent, metrics: dict, header: str, normalize: bool,
+                 data_note: str = "") -> None:
+    """Pregunta qué métricas incluir y guarda el informe como imagen."""
+    choice = _ask_report_sections(parent, normalize)
+    if choice is None:
+        return
+    sections, normalize = choice
     path, _ = QFileDialog.getSaveFileName(
         parent, "Guardar imagen de métricas", "metricas.png",
         "Imagen PNG (*.png);;PDF (*.pdf);;SVG (*.svg)")
     if not path:
         return
-    fig = build_report_figure(metrics, header, normalize)
+    fig = build_report_figure(metrics, header, normalize, data_note, sections)
     fig.savefig(path, dpi=150, facecolor=fig.get_facecolor(), bbox_inches="tight")
 
 
@@ -331,14 +432,15 @@ def _section(text: str) -> QLabel:
 
 
 def build_metrics_dialog(parent, title: str, header: str, metrics: dict,
-                         text_report: str) -> QDialog:
+                         text_report: str, data_note: str = "") -> QDialog:
     """Diálogo de métricas: matriz de confusión + F1 + tabla por clase + tabla global.
 
-    El botón «Guardar imagen» captura TODO el informe (figura + tablas) en un PNG.
+    ``data_note`` describe con cuántos datos se entrenó/evaluó. El botón «Guardar
+    imagen» captura TODO el informe (figura + tablas) en un PNG.
     """
     dlg = QDialog(parent)
     dlg.setWindowTitle(title)
-    dlg.resize(920, 780)
+    dlg.resize(920, 800)
     outer = QVBoxLayout(dlg)
 
     # Todo el informe va en 'content' para poder guardarlo como una sola imagen.
@@ -355,6 +457,12 @@ def build_metrics_dialog(parent, title: str, header: str, metrics: dict,
     acc = QLabel(f"Exactitud global del modelo: {g['accuracy'] * 100:.1f}%")
     acc.setStyleSheet(f"color: {_ACCENT}; font-weight: 700; font-size: 15px;")
     lay.addWidget(acc)
+
+    if data_note:
+        note = QLabel(data_note)
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {_TEXT}; font-size: 12px;")
+        lay.addWidget(note)
 
     # Botón para normalizar la matriz de confusión (por defecto: conteos).
     norm_chk = QCheckBox("Matriz de confusión normalizada (%)")
@@ -389,7 +497,8 @@ def build_metrics_dialog(parent, title: str, header: str, metrics: dict,
     save_btn = QPushButton("Guardar imagen…")
     save_btn.setToolTip("Guarda un PNG con la matriz de confusión, el F1 y las tablas "
                         "completas (respeta la normalización).")
-    save_btn.clicked.connect(lambda: _save_report(dlg, metrics, header, norm_chk.isChecked()))
+    save_btn.clicked.connect(
+        lambda: _save_report(dlg, metrics, header, norm_chk.isChecked(), data_note))
     text_btn = QPushButton("Ver texto…")
     text_btn.clicked.connect(lambda: _show_text(dlg, title, text_report))
     row.addWidget(save_btn)
@@ -405,5 +514,5 @@ def build_metrics_dialog(parent, title: str, header: str, metrics: dict,
 
 
 def show_metrics_dialog(parent, title: str, header: str, metrics: dict,
-                        text_report: str) -> None:
-    build_metrics_dialog(parent, title, header, metrics, text_report).exec()
+                        text_report: str, data_note: str = "") -> None:
+    build_metrics_dialog(parent, title, header, metrics, text_report, data_note).exec()

@@ -95,6 +95,14 @@ class SignalView(QWidget):
         controls.addWidget(QLabel("Ganancia:"))
         controls.addWidget(self.gain_box)
 
+        # Aislar un canal: muestra solo ese y sus medidas (rango de variación).
+        self.channel_box = QComboBox()
+        self.channel_box.addItem("Todos")
+        self.channel_box.setToolTip("Aísla un canal para verlo solo y ver sus medidas.")
+        self.channel_box.currentIndexChanged.connect(self._redraw)
+        controls.addWidget(QLabel("Canal:"))
+        controls.addWidget(self.channel_box)
+
         self.norm_chk = QCheckBox("Normalizar vista")
         self.norm_chk.setChecked(True)
         self.norm_chk.stateChanged.connect(self._redraw)
@@ -142,6 +150,12 @@ class SignalView(QWidget):
         controls.addWidget(self.cut_btn)
         layout.addLayout(controls)
 
+        # Fila de medidas del canal aislado (rango de variación de la señal).
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet("color: #9be7c4; font-size: 11px;")
+        self.stats_label.setVisible(False)
+        layout.addWidget(self.stats_label)
+
         self.plot = pg.PlotWidget()
         self.plot.setLabel("bottom", "Tiempo", units="s")
         self.plot.setMenuEnabled(False)
@@ -169,7 +183,24 @@ class SignalView(QWidget):
         self._data = data
         self._fs = fs
         self._channel_names = channel_names
+        self._sync_channel_box(channel_names)
         self._redraw()
+
+    def _sync_channel_box(self, names: list[str]) -> None:
+        """Rellena el combo de canales conservando la selección si sigue existiendo."""
+        current = self.channel_box.currentText()
+        self.channel_box.blockSignals(True)
+        self.channel_box.clear()
+        self.channel_box.addItem("Todos")
+        self.channel_box.addItems(list(names))
+        idx = self.channel_box.findText(current)
+        self.channel_box.setCurrentIndex(idx if idx >= 0 else 0)
+        self.channel_box.blockSignals(False)
+
+    def _isolated_index(self) -> int | None:
+        """Índice del canal aislado, o None si está en «Todos»."""
+        i = self.channel_box.currentIndex()
+        return (i - 1) if i > 0 else None
 
     def set_markers(self, markers: list[tuple[int, str]]) -> None:
         """Marcadores ``(muestra, etiqueta)`` a dibujar sobre la señal.
@@ -191,6 +222,7 @@ class SignalView(QWidget):
         self.plot.clear()
         self._set_edit_buttons(False)
         self.sel_label.setText("Selección: —")
+        self.stats_label.setVisible(False)
 
     def _set_edit_buttons(self, on: bool) -> None:
         for b in (self.add_seg_btn, self.del_seg_btn, self.cut_btn):
@@ -214,6 +246,17 @@ class SignalView(QWidget):
         n_ch, n = data.shape
         self._n = n
         t = np.arange(n) / self._fs
+
+        # Canal aislado: solo ese canal, a escala real, con sus medidas.
+        iso = self._isolated_index()
+        if iso is not None and iso < n_ch:
+            self._draw_isolated(iso, np.asarray(data[iso], dtype=np.float64), t, n)
+            self._set_edit_buttons(True)
+            self._drawing = False
+            self._redraw_overlay()
+            self._on_region_changed()
+            return
+        self.stats_label.setVisible(False)
 
         # Normalización por canal solo para la visualización (no altera datos).
         disp = data.astype(np.float64)
@@ -240,10 +283,17 @@ class SignalView(QWidget):
         self.plot.setLabel("left", "Canal")
         self._seg_top_y = (n_ch - 0.4) * self._spacing
 
+        self._setup_region(float(t[-1]) if n > 1 else 1.0)
+        self._set_edit_buttons(True)
+        self._drawing = False
+        self._redraw_overlay()
+        self._on_region_changed()
+
+    def _setup_region(self, total: float) -> None:
+        """Coloca la región de selección y una ventana inicial legible."""
         self.plot.addItem(self.region)
-        total = float(t[-1]) if n > 1 else 1.0
-        # Ventana inicial legible: si la grabación es larga y hay muchos marcadores,
-        # se muestra un tramo en torno al primer marcador (no los ~45 min de golpe).
+        # Si la grabación es larga y hay muchos marcadores, se muestra un tramo
+        # en torno al primer marcador (no los ~45 min de golpe).
         if not self.region.isVisible():
             if total > 60 and len(self._markers) > 30:
                 start = max(0.0, min(s for s, _ in self._markers) / self._fs - 2.0)
@@ -253,10 +303,32 @@ class SignalView(QWidget):
             self.region.setRegion((x0, x0 + min(4.0, (x1 - x0) * 0.5)))
             self.region.show()
             self.plot.setXRange(x0, x1, padding=0.0)
-        self._set_edit_buttons(True)
-        self._drawing = False
-        self._redraw_overlay()
-        self._on_region_changed()
+
+    def _draw_isolated(self, idx: int, ch: np.ndarray, t: np.ndarray, n: int) -> None:
+        """Dibuja un único canal a escala real y muestra sus medidas."""
+        gain = self._gain()
+        disp = ch
+        normalized = self.norm_chk.isChecked()
+        if normalized:
+            s = float(ch.std()) or 1.0
+            disp = (ch - ch.mean()) / s
+        color = _CURVE_COLORS[idx % len(_CURVE_COLORS)]
+        self.plot.plot(t, disp * gain, pen=pg.mkPen(color, width=1))
+        name = self._channel_names[idx] if idx < len(self._channel_names) else f"ch{idx}"
+        self.plot.getAxis("left").setTicks(None)   # ticks numéricos automáticos
+        self.plot.setLabel("left", name, units=None if normalized else "µV")
+
+        # Medidas sobre los datos reales (rango de variación de la señal).
+        mn, mx, mean, std = float(ch.min()), float(ch.max()), float(ch.mean()), float(ch.std())
+        self.stats_label.setText(
+            f"{name}   ·   mín {mn:.1f}   ·   máx {mx:.1f}   ·   media {mean:.1f}"
+            f"   ·   σ {std:.1f}   ·   rango pico-a-pico {mx - mn:.1f} µV")
+        self.stats_label.setVisible(True)
+
+        top = float((disp * gain).max()) if disp.size else 1.0
+        rng = float((disp * gain).max() - (disp * gain).min()) if disp.size else 1.0
+        self._seg_top_y = top + rng * 0.02
+        self._setup_region(float(t[-1]) if n > 1 else 1.0)
 
     def _on_xrange_changed(self, *_):
         if not self._drawing and self._data is not None:

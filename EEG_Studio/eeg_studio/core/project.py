@@ -45,7 +45,11 @@ from .recording import Recording
 
 def _default_state() -> dict:
     return {
-        "pipeline": [],          # lista de pasos de preprocesamiento
+        # Varios pipelines por proyecto (pestañas). `pipeline` es un ESPEJO de los
+        # pasos del pipeline activo, para que todo el código que lo lee siga igual.
+        "pipelines": [{"name": "Pipeline 1", "steps": []}],
+        "active_pipeline": 0,
+        "pipeline": [],          # espejo del pipeline activo (no editar directamente)
         "segments": [],          # lista de segmentos etiquetados
         "channel_aliases": {},   # nombre_original -> alias mostrado
         "excluded_channels": [], # nombres de canal excluidos
@@ -59,6 +63,7 @@ class Project:
         self.path = os.path.abspath(path)        # carpeta .eegproj
         self.name = name
         self.state: dict = _default_state()
+        self._sync_pipeline_mirror()
         self.sources: list[dict] = []            # {id, path, alias}
         self.changelog = ChangeLog()
         self._recordings: dict[str, Recording] = {}      # id -> Recording (lazy)
@@ -84,7 +89,9 @@ class Project:
         with open(manifest_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         proj = cls(path, data.get("name", os.path.basename(path)))
-        proj.state = {**_default_state(), **data.get("state", {})}
+        loaded = data.get("state", {})
+        proj.state = {**_default_state(), **loaded}
+        proj._migrate_pipelines(has_pipelines="pipelines" in loaded)
         proj.sources = data.get("sources", [])
         log_path = os.path.join(path, CHANGELOG_FILE)
         if os.path.isfile(log_path):
@@ -227,6 +234,18 @@ class Project:
         raw = json.dumps([self.state["pipeline"], sorted(self.state.get("excluded_channels", []))],
                          sort_keys=True)
         return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+    def processed_if_cached(self, source_id: str) -> np.ndarray | None:
+        """Señal procesada SOLO si ya está en la caché en memoria (no recalcula).
+
+        Permite a la interfaz redibujar al instante (sin lanzar un hilo ni mostrar
+        «ocupado») cuando el resultado del pipeline ya está calculado."""
+        sig = self._pipeline_signature()
+        with self._lock:
+            cached = self._processed.get(source_id)
+            if cached and cached[0] == sig:
+                return cached[1]
+        return None
 
     def get_processed(self, source_id: str, progress=None) -> np.ndarray:
         """Señal de los **canales activos** con el pipeline aplicado (en caché).
@@ -503,19 +522,123 @@ class Project:
         return len(new)
 
     # ------------------------------------------------------------------ #
-    # Preprocesamiento: edición del pipeline
+    # Varios pipelines por proyecto (pestañas)
+    # ------------------------------------------------------------------ #
+    def _sync_pipeline_mirror(self) -> None:
+        """Deja ``state['pipeline']`` apuntando a los pasos del pipeline activo."""
+        pls = self.state.get("pipelines") or [{"name": "Pipeline 1", "steps": []}]
+        self.state["pipelines"] = pls
+        i = self.state.get("active_pipeline", 0)
+        if not (0 <= i < len(pls)):
+            i = 0
+            self.state["active_pipeline"] = 0
+        self.state["pipeline"] = pls[i]["steps"]
+
+    def _migrate_pipelines(self, has_pipelines: bool) -> None:
+        """Proyectos antiguos (un solo ``pipeline``) → estructura de varios pipelines."""
+        if not has_pipelines:
+            steps = self.state.get("pipeline", [])
+            self.state["pipelines"] = [{"name": "Pipeline 1", "steps": snapshot(steps)}]
+            self.state["active_pipeline"] = 0
+        self._sync_pipeline_mirror()
+
+    def pipelines(self) -> list[dict]:
+        return self.state.get("pipelines", [])
+
+    def pipelines_snapshot(self) -> list[dict]:
+        """Copia de todos los pipelines, con el activo reconciliado desde el espejo.
+
+        Robustez: si alguien fijó ``state['pipeline']`` directamente, el activo
+        refleja ese valor (así el export/persistencia no lo pierde)."""
+        pls = snapshot(self.state.get("pipelines", []))
+        i = self.active_pipeline_index()
+        if 0 <= i < len(pls):
+            pls[i]["steps"] = snapshot(self.state.get("pipeline", []))
+        return pls
+
+    def active_pipeline_index(self) -> int:
+        return int(self.state.get("active_pipeline", 0))
+
+    def active_pipeline_name(self) -> str:
+        pls = self.pipelines()
+        i = self.active_pipeline_index()
+        return pls[i]["name"] if 0 <= i < len(pls) else "Pipeline 1"
+
+    def _commit_active_steps(self, new_steps: list, description: str) -> None:
+        """Reemplaza los pasos del pipeline activo y lo registra (undo/redo)."""
+        pls = snapshot(self.state["pipelines"])
+        i = self.active_pipeline_index()
+        if not (0 <= i < len(pls)):
+            return
+        pls[i]["steps"] = new_steps
+        self._commit("pipelines", pls, description)
+        self.invalidate_processed()
+
+    def add_pipeline(self, name: str | None = None) -> int:
+        pls = snapshot(self.state["pipelines"])
+        name = (name or "").strip() or f"Pipeline {len(pls) + 1}"
+        pls.append({"name": name, "steps": []})
+        self._commit("pipelines", pls, f"Añadir pipeline «{name}»")
+        self.set_active_pipeline(len(pls) - 1)
+        return len(pls) - 1
+
+    def remove_pipeline(self, index: int) -> bool:
+        pls = snapshot(self.state["pipelines"])
+        if len(pls) <= 1 or not (0 <= index < len(pls)):
+            return False                     # siempre queda al menos un pipeline
+        name = pls[index]["name"]
+        del pls[index]
+        active = self.active_pipeline_index()
+        self._commit("pipelines", pls, f"Eliminar pipeline «{name}»")
+        if active >= len(pls):
+            active = len(pls) - 1
+        self._commit("active_pipeline", active, f"Pipeline activo: «{pls[active]['name']}»")
+        self.invalidate_processed()
+        return True
+
+    def rename_pipeline(self, index: int, name: str) -> None:
+        pls = snapshot(self.state["pipelines"])
+        if not (0 <= index < len(pls)):
+            return
+        name = (name or "").strip()
+        if not name or name == pls[index]["name"]:
+            return
+        old = pls[index]["name"]
+        pls[index]["name"] = name
+        self._commit("pipelines", pls, f"Renombrar pipeline «{old}» → «{name}»")
+
+    def set_active_pipeline(self, index: int) -> None:
+        pls = self.state["pipelines"]
+        if not (0 <= index < len(pls)) or index == self.active_pipeline_index():
+            return
+        self._commit("active_pipeline", index, f"Cambiar a pipeline «{pls[index]['name']}»")
+        self.invalidate_processed()
+
+    def set_active_pipeline_steps(self, steps: list, description: str = "Actualizar pipeline") -> None:
+        """Sustituye por completo los pasos del pipeline activo (p. ej. al importar)."""
+        self._commit_active_steps(snapshot(steps), description)
+
+    def set_pipelines(self, pipelines: list, active: int = 0,
+                      description: str = "Importar pipelines") -> None:
+        """Reemplaza TODOS los pipelines y el activo (p. ej. al importar un bundle)."""
+        pls = snapshot(pipelines) or [{"name": "Pipeline 1", "steps": []}]
+        self._commit("pipelines", pls, description)
+        a = int(active) if 0 <= int(active) < len(pls) else 0
+        self._commit("active_pipeline", a, f"Pipeline activo: «{pls[a]['name']}»")
+        self.invalidate_processed()
+
+    # ------------------------------------------------------------------ #
+    # Preprocesamiento: edición del pipeline (activo)
     # ------------------------------------------------------------------ #
     def add_pipeline_step(self, step_type: str, params: dict | None = None) -> None:
         params = params if params is not None else dict(preprocessing.STEP_DEFAULTS.get(step_type, {}))
         new_pipeline = self.state["pipeline"] + [{"type": step_type, "params": params}]
         label = preprocessing.STEP_LABELS.get(step_type, step_type)
-        self._commit("pipeline", new_pipeline, f"Añadir paso: {label}")
-        self.invalidate_processed()
+        self._commit_active_steps(new_pipeline, f"Añadir paso: {label}")
 
     def remove_pipeline_step(self, index: int) -> None:
         new_pipeline = [s for i, s in enumerate(self.state["pipeline"]) if i != index]
-        self._commit("pipeline", new_pipeline, "Eliminar paso de preprocesamiento")
-        self.invalidate_processed()
+        self._commit_active_steps(new_pipeline, "Eliminar paso de preprocesamiento")
 
     def set_step_enabled(self, index: int, enabled: bool) -> None:
         """Activa/desactiva un paso sin borrarlo (queda en el pipeline)."""
@@ -527,22 +650,19 @@ class Project:
         new_pipeline[index]["enabled"] = bool(enabled)
         label = preprocessing.STEP_LABELS.get(new_pipeline[index]["type"], "paso")
         verb = "Activar" if enabled else "Desactivar"
-        self._commit("pipeline", new_pipeline, f"{verb}: {label}")
-        self.invalidate_processed()
+        self._commit_active_steps(new_pipeline, f"{verb}: {label}")
 
     def update_pipeline_step(self, index: int, params: dict) -> None:
         new_pipeline = snapshot(self.state["pipeline"])
         new_pipeline[index]["params"] = params
-        self._commit("pipeline", new_pipeline, "Modificar parámetros de paso")
-        self.invalidate_processed()
+        self._commit_active_steps(new_pipeline, "Modificar parámetros de paso")
 
     def move_pipeline_step(self, index: int, delta: int) -> None:
         new_pipeline = snapshot(self.state["pipeline"])
         j = index + delta
         if 0 <= j < len(new_pipeline):
             new_pipeline[index], new_pipeline[j] = new_pipeline[j], new_pipeline[index]
-            self._commit("pipeline", new_pipeline, "Reordenar pipeline")
-            self.invalidate_processed()
+            self._commit_active_steps(new_pipeline, "Reordenar pipeline")
 
     # ------------------------------------------------------------------ #
     # Control de cambios genérico
@@ -556,7 +676,7 @@ class Project:
         self.changelog.push(cmd)
 
     # Cambios en estas secciones invalidan la señal procesada en caché.
-    _REPROCESS_SECTIONS = ("pipeline", "excluded_channels")
+    _REPROCESS_SECTIONS = ("pipelines", "active_pipeline", "excluded_channels")
 
     def edit(self, section: str, new_value, description: str) -> None:
         """API pública para editar una sección arbitraria del estado."""
@@ -571,6 +691,9 @@ class Project:
             self.sources = value
         else:
             self.state[section] = value
+        # El pipeline activo (o su lista) cambió: reactualiza el espejo `pipeline`.
+        if section in ("pipelines", "active_pipeline"):
+            self._sync_pipeline_mirror()
 
     def undo(self) -> bool:
         cmd = self.changelog.undo()
@@ -591,7 +714,7 @@ class Project:
         return True
 
     def goto_history(self, target_applied: int) -> None:
-        """Navega en el historial hasta dejar ``target_applied`` comandos aplicados."""
+        """Navega en la RAMA actual hasta dejar ``target_applied`` comandos aplicados."""
         guard = 0
         while self.changelog.applied_count() > target_applied and guard < 10000:
             if not self.undo():
@@ -601,3 +724,16 @@ class Project:
             if not self.redo():
                 break
             guard += 1
+
+    def goto_node(self, node_id: int) -> None:
+        """Navega a un nodo cualquiera del árbol (puede saltar entre ramas)."""
+        steps = self.changelog.steps_to(int(node_id))
+        reprocess = False
+        for direction, cmd in steps:
+            value = cmd.before if direction == "undo" else cmd.after
+            self._apply_section(cmd.section, snapshot(value))
+            if cmd.section in self._REPROCESS_SECTIONS:
+                reprocess = True
+        self.changelog.set_current(int(node_id))
+        if reprocess:
+            self.invalidate_processed()

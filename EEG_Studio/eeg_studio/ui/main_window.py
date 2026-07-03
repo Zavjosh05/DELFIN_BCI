@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -82,14 +83,23 @@ class MainWindow(QMainWindow):
         self.resize(1360, 860)
 
         # Centro: pila con (0) bienvenida y (1) pestañas Análisis / Tiempo real.
-        self.signal_view = SignalView()
-        self.signal_view.segment_requested.connect(self._on_segment_requested)
-        self.signal_view.cut_requested.connect(self._on_cut_requested)
-        self.signal_view.delete_segments_requested.connect(self._on_delete_segments_in_selection)
-        self.signal_view.mode_changed.connect(self._update_signal_view)
+        # La pestaña "Análisis (CSV)" es a su vez un cuaderno de pestañas: una por
+        # fuente abierta (como pestañas de navegador). `signal_view` (propiedad)
+        # apunta siempre a la pestaña activa.
+        self._source_views: dict[str, SignalView] = {}
+        self._stale_views: set[str] = set()     # fuentes cuya pestaña hay que redibujar
+        self._empty_view = SignalView()         # respaldo cuando no hay ninguna abierta
+        self._signal_tabs = QTabWidget()
+        self._signal_tabs.setTabsClosable(True)
+        self._signal_tabs.setMovable(True)
+        self._signal_tabs.setDocumentMode(True)
+        self._signal_tabs.setUsesScrollButtons(True)
+        self._signal_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self._signal_tabs.tabCloseRequested.connect(self._close_source_tab)
+        self._signal_tabs.currentChanged.connect(self._on_signal_tab_changed)
         self.live_view = LiveSignalView()
         self.center_tabs = QTabWidget()
-        self.center_tabs.addTab(self.signal_view, "Análisis (CSV)")
+        self.center_tabs.addTab(self._signal_tabs, "Análisis (CSV)")
         self.center_tabs.addTab(self.live_view, "Tiempo real")
         self.welcome = self._build_welcome()
         self.center_stack = QStackedWidget()
@@ -206,13 +216,18 @@ class MainWindow(QMainWindow):
 
         Sin proyecto se ocultan los paneles laterales para una bienvenida limpia.
         """
-        has_proj = self.project is not None
-        for dock in (self.src_dock, self.right_dock, self.log_dock):
-            dock.setVisible(has_proj)
-        if not has_proj:
+        docks = (self.src_dock, self.right_dock, self.log_dock)
+        if self.project is None:
+            for dock in docks:
+                dock.setVisible(False)
             self._refresh_welcome_recents()
             self.center_stack.setCurrentWidget(self.welcome)
         else:
+            # Solo al venir de la bienvenida se muestran los paneles; después el
+            # usuario controla su visibilidad desde el menú «Ver» sin que se fuerce.
+            if self.center_stack.currentWidget() is self.welcome:
+                for dock in docks:
+                    dock.setVisible(True)
             self.center_stack.setCurrentWidget(self.center_tabs)
 
     def _build_docks(self) -> None:
@@ -250,7 +265,7 @@ class MainWindow(QMainWindow):
         hist_container = QWidget()
         hist_layout = QVBoxLayout(hist_container)
         hist_layout.setContentsMargins(6, 4, 6, 6)
-        hint = QLabel("Línea de tiempo · haz clic en un punto para navegar")
+        hint = QLabel("Árbol de cambios · clic para navegar · las ramas conservan lo hecho")
         hint.setStyleSheet("color: #8a929b; font-size: 11px;")
         hist_layout.addWidget(hint)
         self.changelog_list = QListWidget()
@@ -266,6 +281,15 @@ class MainWindow(QMainWindow):
         self.log_dock = QDockWidget("Historial", self)
         self.log_dock.setWidget(hist_container)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
+
+    def _restore_docks(self) -> None:
+        """Vuelve a mostrar y recolocar todos los paneles (Ver → Restaurar paneles)."""
+        for dock, area in ((self.src_dock, Qt.DockWidgetArea.LeftDockWidgetArea),
+                           (self.right_dock, Qt.DockWidgetArea.RightDockWidgetArea),
+                           (self.log_dock, Qt.DockWidgetArea.BottomDockWidgetArea)):
+            dock.setFloating(False)
+            self.addDockWidget(area, dock)
+            dock.show()
 
     def _build_menu(self) -> None:
         bar = self.menuBar()
@@ -329,6 +353,18 @@ class MainWindow(QMainWindow):
         m_edit.addAction(self.act_undo)
         m_edit.addAction(self.act_redo)
 
+        # Menú Ver: reabrir/ocultar los paneles (soluciona que no se pudieran reabrir).
+        m_view = bar.addMenu("&Ver")
+        for dock, label in ((self.src_dock, "Fuentes (CSV)"),
+                            (self.right_dock, "Herramientas"),
+                            (self.log_dock, "Historial")):
+            act = dock.toggleViewAction()
+            act.setText(label)
+            m_view.addAction(act)
+        m_view.addSeparator()
+        m_view.addAction(QAction("Restaurar paneles", self,
+                                 triggered=self._restore_docks))
+
         m_help = bar.addMenu("A&yuda")
         m_help.addAction(QAction("Acerca de", self, triggered=self._about))
 
@@ -383,6 +419,7 @@ class MainWindow(QMainWindow):
             return
         self.project = Project.create(folder, name.strip())
         self.current_source_id = None
+        self._reset_source_tabs()
         self.dataset = None
         self._dirty = False
         self._load_project_models()
@@ -416,6 +453,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error al abrir", str(exc))
             return
         self.current_source_id = None
+        self._reset_source_tabs()
         self.dataset = None
         self._dirty = False
         self._load_project_models()
@@ -530,13 +568,17 @@ class MainWindow(QMainWindow):
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
             self.warn("No se pudo abrir", f"No se pudo abrir la carpeta:\n{path}")
 
-    def _ask_export_sections(self) -> set[str] | None:
-        """Diálogo con casillas para elegir qué exportar. Devuelve las secciones."""
+    def _ask_export_sections(self):
+        """Diálogo con casillas para elegir qué exportar (incl. qué pipelines).
+
+        Devuelve ``(sections, pipeline_indices)`` o ``None``. ``pipeline_indices``
+        es la lista de pipelines elegidos (o ``None`` si no se exporta el
+        preprocesamiento)."""
         dlg = QDialog(self)
         dlg.setWindowTitle("Exportar configuración")
         lay = QVBoxLayout(dlg)
-        lay.addWidget(QLabel("Selecciona qué exportar a un archivo .eegcfg:"))
-        chk_pre = QCheckBox("Preprocesamiento (pipeline, canales excluidos, alias)")
+        lay.addWidget(QLabel("Selecciona qué exportar al bundle:"))
+        chk_pre = QCheckBox("Preprocesamiento (pipelines, canales excluidos, alias)")
         chk_ds = QCheckBox("Dataset (características, segmentos etiquetados, recortes)")
         chk_mdl = QCheckBox(f"Modelos de clasificación ({len(self.models)})")
         n_src = len(self.project.sources) if self.project else 0
@@ -546,7 +588,47 @@ class MainWindow(QMainWindow):
         chk_mdl.setChecked(bool(self.models))
         chk_mdl.setEnabled(bool(self.models))
         chk_src.setEnabled(n_src > 0)                # opcional: aumenta el tamaño
-        for c in (chk_pre, chk_ds, chk_mdl, chk_src):
+        lay.addWidget(chk_pre)
+
+        # Selección de qué PIPELINES incluir (con un selector global «Todas»).
+        pls = self.project.pipelines() if self.project else []
+        pl_box = QGroupBox("Pipelines a incluir")
+        pl_lay = QVBoxLayout(pl_box)
+        chk_all = QCheckBox("Todas las pipelines")
+        chk_all.setTristate(True)
+        chk_all.setCheckState(Qt.CheckState.Checked)
+        pl_lay.addWidget(chk_all)
+        pipe_checks: list[QCheckBox] = []
+        active_i = self.project.active_pipeline_index() if self.project else 0
+        for i, pl in enumerate(pls):
+            star = "  ★ (activo)" if i == active_i else ""
+            c = QCheckBox(f"{pl['name']}{star}")
+            c.setChecked(True)
+            pl_lay.addWidget(c)
+            pipe_checks.append(c)
+
+        def _apply_all():                            # «Todas» → marca/desmarca todas
+            checked = chk_all.checkState() != Qt.CheckState.Unchecked
+            for c in pipe_checks:
+                c.blockSignals(True)
+                c.setChecked(checked)
+                c.blockSignals(False)
+
+        def _sync_all():                             # refleja el estado global (tri-estado)
+            n = sum(c.isChecked() for c in pipe_checks)
+            chk_all.blockSignals(True)
+            chk_all.setCheckState(Qt.CheckState.Checked if n == len(pipe_checks)
+                                  else Qt.CheckState.Unchecked if n == 0
+                                  else Qt.CheckState.PartiallyChecked)
+            chk_all.blockSignals(False)
+
+        chk_all.clicked.connect(lambda *_: (_apply_all(), _sync_all()))
+        for c in pipe_checks:
+            c.stateChanged.connect(lambda *_: _sync_all())
+        chk_pre.toggled.connect(pl_box.setEnabled)
+        lay.addWidget(pl_box)
+
+        for c in (chk_ds, chk_mdl, chk_src):
             lay.addWidget(c)
         hint = QLabel("El bundle NO incluye la caché (regenerable), por lo que suele "
                       "pesar menos que la carpeta del proyecto aunque incluyas las señales.")
@@ -561,23 +643,28 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return None
         sections = set()
+        pipeline_indices = None
         if chk_pre.isChecked():
             sections.add("preprocessing")
+            pipeline_indices = [i for i, c in enumerate(pipe_checks) if c.isChecked()]
         if chk_ds.isChecked():
             sections.add("dataset")
         if chk_mdl.isChecked():
             sections.add("models")
         if chk_src.isChecked():
             sections.add("sources")
-        return sections or None
+        if not sections:
+            return None
+        return sections, pipeline_indices
 
     def export_config(self) -> None:
         """Exporta preprocesamiento/dataset(.npz)/modelos(.joblib) a un .eegbundle."""
         if not self._require_project():
             return
-        sections = self._ask_export_sections()
-        if not sections:
+        choice = self._ask_export_sections()
+        if not choice:
             return
+        sections, pipeline_indices = choice
         from ..core import config_export
         # Si se pide el dataset y hay uno en memoria sin guardar, se guarda primero.
         if "dataset" in sections and self.dataset is not None:
@@ -599,7 +686,8 @@ class MainWindow(QMainWindow):
         proj_size = self._dir_size(self.project.path)
 
         def task():
-            return config_export.export_bundle(self.project, self.models, sections, path)
+            return config_export.export_bundle(self.project, self.models, sections, path,
+                                               pipeline_indices)
 
         def done(info):
             self._idle()
@@ -685,7 +773,11 @@ class MainWindow(QMainWindow):
                 parts.append(f"{n_src} fuente(s)")
         pre = cfg.get("preprocessing")
         if pre:
-            self.project.edit("pipeline", pre.get("pipeline", []), "Importar pipeline")
+            if pre.get("pipelines"):     # bundles nuevos: todos los pipelines
+                self.project.set_pipelines(pre["pipelines"], pre.get("active_pipeline", 0),
+                                           "Importar pipelines")
+            else:                        # bundles antiguos: un solo pipeline
+                self.project.set_active_pipeline_steps(pre.get("pipeline", []), "Importar pipeline")
             self.project.edit("excluded_channels", pre.get("excluded_channels", []),
                               "Importar canales excluidos")
             if pre.get("channel_aliases"):
@@ -898,19 +990,126 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Fuentes / visor
     # ------------------------------------------------------------------ #
+    @property
+    def signal_view(self) -> SignalView:
+        """Visor de la fuente en la pestaña activa (o un respaldo vacío)."""
+        w = self._signal_tabs.currentWidget()
+        return w if isinstance(w, SignalView) else self._empty_view
+
+    def _sid_for_view(self, view) -> str | None:
+        for sid, v in self._source_views.items():
+            if v is view:
+                return sid
+        return None
+
     def _on_source_selected(self, row: int) -> None:
         if self.project is None or row < 0 or row >= len(self.project.sources):
             return
-        self.current_source_id = self.project.sources[row]["id"]
-        src = self.project.get_source(self.current_source_id)
+        sid = self.project.sources[row]["id"]
+        self.current_source_id = sid
+        src = self.project.get_source(sid)
         if src and not os.path.isfile(src["path"]):
-            self._handle_missing_source(self.current_source_id, src)
+            self._handle_missing_source(sid, src)
             return
+        self._open_source_tab(sid)
+
+    # --- Pestañas de fuentes (centro multi-fuente, estilo navegador) -----
+    def _ensure_source_tab(self, sid: str) -> SignalView:
+        """Devuelve la pestaña (SignalView) de ``sid``, creándola si no existe."""
+        view = self._source_views.get(sid)
+        if view is None:
+            view = SignalView()
+            view.segment_requested.connect(self._on_segment_requested)
+            view.cut_requested.connect(self._on_cut_requested)
+            view.delete_segments_requested.connect(self._on_delete_segments_in_selection)
+            view.mode_changed.connect(self._update_signal_view)
+            self._source_views[sid] = view
+            src = self.project.get_source(sid) if self.project else None
+            alias = src["alias"] if src else sid
+            idx = self._signal_tabs.addTab(view, alias)
+            self._signal_tabs.setTabToolTip(idx, alias)
+        return view
+
+    def _open_source_tab(self, sid: str) -> SignalView:
+        """Abre (o enfoca) la pestaña de una fuente y la dibuja."""
+        view = self._ensure_source_tab(sid)
+        self._stale_views.discard(sid)
+        self._signal_tabs.setCurrentWidget(view)      # dispara _on_signal_tab_changed
+        self._render_view(sid, view)
+        return view
+
+    def _on_signal_tab_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        view = self._signal_tabs.widget(index)
+        sid = self._sid_for_view(view)
+        if sid is None:
+            return
+        self.current_source_id = sid
+        self._sync_sources_selection(sid)
+        if sid in self._stale_views:                  # redibujado perezoso
+            self._stale_views.discard(sid)
+            self._render_view(sid, view)
+
+    def _close_source_tab(self, index: int) -> None:
+        sid = self._sid_for_view(self._signal_tabs.widget(index))
+        if sid is not None:
+            self._remove_source_tab(sid)
+
+    def _remove_source_tab(self, sid: str) -> None:
+        view = self._source_views.pop(sid, None)
+        self._stale_views.discard(sid)
+        if view is not None:
+            idx = self._signal_tabs.indexOf(view)
+            if idx >= 0:
+                self._signal_tabs.removeTab(idx)
+            view.deleteLater()
+
+    def _reset_source_tabs(self) -> None:
+        """Cierra todas las pestañas de fuentes (al cambiar de proyecto)."""
+        self._signal_tabs.blockSignals(True)
+        for sid in list(self._source_views):
+            view = self._source_views.pop(sid)
+            idx = self._signal_tabs.indexOf(view)
+            if idx >= 0:
+                self._signal_tabs.removeTab(idx)
+            view.deleteLater()
+        self._stale_views.clear()
+        self._signal_tabs.blockSignals(False)
+
+    def _sync_source_tabs(self) -> None:
+        """Quita pestañas de fuentes borradas y refresca los títulos (alias)."""
+        valid = {s["id"] for s in self.project.sources} if self.project else set()
+        for sid in list(self._source_views):
+            if sid not in valid:
+                self._remove_source_tab(sid)
+        if self.project:
+            for sid, view in self._source_views.items():
+                idx = self._signal_tabs.indexOf(view)
+                src = self.project.get_source(sid)
+                if idx >= 0 and src:
+                    self._signal_tabs.setTabText(idx, src["alias"])
+
+    def _sync_sources_selection(self, sid: str) -> None:
+        """Marca en la lista de fuentes la que corresponde a la pestaña activa."""
+        if not self.project:
+            return
+        ids = [s["id"] for s in self.project.sources]
+        if sid in ids:
+            self.sources_list.blockSignals(True)
+            self.sources_list.setCurrentRow(ids.index(sid))
+            self.sources_list.blockSignals(False)
+
+    def _refresh_source_tabs(self) -> None:
+        """Tras un cambio de estado: marca todas las pestañas para redibujar y
+        redibuja la activa (las demás se redibujan al activarlas)."""
+        self._sync_source_tabs()
+        self._stale_views = set(self._source_views)
         self._update_signal_view()
 
     def _handle_missing_source(self, source_id: str, src: dict) -> None:
         """Una fuente cuyo archivo ya no existe: ofrecer reubicarla o quitarla."""
-        self.signal_view.clear()
+        self._remove_source_tab(source_id)
         res = QMessageBox.question(
             self, "Archivo de la fuente no encontrado",
             f"No se encuentra el archivo de «{src['alias']}»:\n{src['path']}\n\n"
@@ -928,49 +1127,74 @@ class MainWindow(QMainWindow):
             self.current_source_id = None
             self._after_state_change()
 
-    def _update_signal_view(self) -> None:
-        if self.project is None or self.current_source_id is None:
-            self.signal_view.clear()
+    def _render_view(self, sid: str, view: SignalView) -> None:
+        """Rellena una pestaña concreta con la señal (cruda o procesada) de ``sid``."""
+        if self.project is None or sid is None:
+            view.clear()
             return
         try:
-            rec = self.project.get_recording(self.current_source_id)
+            rec = self.project.get_recording(sid)
         except FileNotFoundError:
-            self.signal_view.clear()
+            view.clear()
             self.statusBar().showMessage("La fuente seleccionada no se encuentra en disco.")
             return
         names = self.project.kept_display_names(rec)   # solo canales activos
-        cuts = self.project.cut_intervals(self.current_source_id)
+        cuts = self.project.cut_intervals(sid)
         # Tramos eliminados (sombreados en gris, excluidos del dataset).
-        self.signal_view.set_cuts(cuts)
+        view.set_cuts(cuts)
         # Marcadores (Event Id); se ocultan los que caen en tramos recortados.
-        self.signal_view.set_markers([
+        view.set_markers([
             (e["sample"], e["id"]) for e in rec.events
             if not any(ca <= e["sample"] < cb for ca, cb in cuts)
         ])
         # Segmentos ya etiquetados de esta fuente, sombreados por clase.
-        self.signal_view.set_segments([
+        view.set_segments([
             (s["start"], s["stop"], s["label"])
             for s in self.project.state["segments"]
-            if s["source_id"] == self.current_source_id
+            if s["source_id"] == sid
         ])
 
-        if self.signal_view.mode == "raw" or not self.project.state["pipeline"]:
+        if view.mode == "raw" or not self.project.state["pipeline"]:
             raw = rec.data[self.project.kept_indices(rec)]
-            self.signal_view.set_data(raw, rec.sample_rate, names)
+            view.set_data(raw, rec.sample_rate, names)
             return
 
-        # Procesamiento en segundo plano para no bloquear la interfaz.
-        sid = self.current_source_id
+        # Si el resultado del pipeline ya está en caché, dibujar al instante
+        # (sin hilo ni «ocupado»): evita el parpadeo al editar segmentos, etc.
+        cached = self.project.processed_if_cached(sid)
+        if cached is not None:
+            view.set_data(cached, rec.sample_rate, names)
+            return
+
+        # Primera vez / tras invalidar: procesamiento en segundo plano.
         self._busy("Aplicando preprocesamiento…")
         self.progress.setRange(0, 0)        # indeterminado hasta el 1er paso
         self.progress.show()
 
         def done(data):
             self._idle()
-            self.signal_view.set_data(data, rec.sample_rate, names)
+            # La pestaña pudo cerrarse (o reemplazarse) mientras se procesaba:
+            # no escribir sobre un visor ya destruido.
+            if self._source_views.get(sid) is view:
+                view.set_data(data, rec.sample_rate, names)
 
         self._spawn(lambda progress=None: self.project.get_processed(sid, progress=progress),
                     done, on_progress=self._on_filter_progress)
+
+    def _update_signal_view(self) -> None:
+        """Redibuja la pestaña de la fuente activa (creándola si hace falta)."""
+        sid = self.current_source_id
+        if sid is None:
+            return
+        view = self._source_views.get(sid)
+        if view is None:
+            if self.project and self.project.get_source(sid):
+                view = self._ensure_source_tab(sid)
+                self._signal_tabs.setCurrentWidget(view)
+            else:
+                return
+        self._stale_views.discard(sid)
+        self._render_view(sid, view)
 
     def _on_filter_progress(self, done_n: int, total: int) -> None:
         """Barra determinada con el paso de filtrado en curso."""
@@ -1007,6 +1231,34 @@ class MainWindow(QMainWindow):
         if not self._require_project():
             return
         self.project.set_step_enabled(index, enabled)
+        self._after_state_change()
+
+    # --- Varios pipelines por proyecto ------------------------------------
+    def add_pipeline(self) -> None:
+        if not self._require_project():
+            return
+        self.project.add_pipeline()
+        self._after_state_change()
+
+    def remove_pipeline(self, index: int) -> None:
+        if not self._require_project():
+            return
+        if not self.project.remove_pipeline(index):
+            QMessageBox.information(self, "Pipelines",
+                                    "Debe quedar al menos un pipeline en el proyecto.")
+            return
+        self._after_state_change()
+
+    def rename_pipeline(self, index: int, name: str) -> None:
+        if not self._require_project():
+            return
+        self.project.rename_pipeline(index, name)
+        self._after_state_change()
+
+    def set_active_pipeline(self, index: int) -> None:
+        if not self._require_project():
+            return
+        self.project.set_active_pipeline(index)
         self._after_state_change()
 
     def cache_processed(self) -> None:
@@ -1210,9 +1462,12 @@ class MainWindow(QMainWindow):
             self.dataset = ds
             skipped = (f"\n⚠ {ds.skipped} segmento(s) omitido(s): su fuente no está "
                        "disponible (reubícala o quítala)." if ds.skipped else "")
+            import numpy as _np
+            vals, cnts = _np.unique(ds.y, return_counts=True)
+            por_clase = " · ".join(f"{v}: {c}" for v, c in zip(vals, cnts))
             self.dataset_panel.set_info(
-                f"Dataset: {ds.n_samples} segmentos × {ds.n_features} características.\n"
-                f"Clases: {', '.join(ds.classes)}{skipped}"
+                f"Dataset: {ds.n_samples} muestras × {ds.n_features} características.\n"
+                f"Por clase ⟶ {por_clase}{skipped}"
             )
             self.clf_panel.refresh()   # actualiza la capa de entrada (nº exacto)
             self.statusBar().showMessage(
@@ -1253,7 +1508,8 @@ class MainWindow(QMainWindow):
             else:  # Riemann / CSP
                 window = self.clf_panel.raw_window_value()
                 task = lambda progress=None: classification.train_riemann(
-                    dataset_mod.build_raw_dataset(self.project, window), key
+                    dataset_mod.build_raw_dataset(self.project, window), key,
+                    raw_window=window
                 )
         else:
             if self.dataset is None:
@@ -1363,14 +1619,69 @@ class MainWindow(QMainWindow):
         header = (f"{name}  ·  {label}\n{result.score_label}: "
                   f"{result.cv_mean * 100:.1f}%  (±{result.cv_std * 100:.1f})\n"
                   f"Clases: {', '.join(result.classes)}")
-        text = header + "\n" + "-" * 40 + "\n" + classification.metrics_report(result)
+        data_note = result.split_report()          # con cuántos datos se entrenó/evaluó
+        text = (header + "\n" + data_note + "\n" + "-" * 40 + "\n"
+                + classification.metrics_report(result))
         from . import metrics_view
         # Vista con gráficos si hay métricas y matplotlib; si no, el texto de siempre.
         if result.metrics and metrics_view.matplotlib_available():
             metrics_view.show_metrics_dialog(self, f"Métricas — {name}", header,
-                                             result.metrics, text)
+                                             result.metrics, text, data_note=data_note)
         else:
             self._show_text_dialog(f"Métricas — {name}", text)
+
+    def configure_model(self, name: str) -> None:
+        """Muestra la configuración de un modelo y permite editarla y reentrenar."""
+        if name not in self.models:
+            return
+        result = self.models[name]
+        key = result.classifier_name
+
+        # ¿Hay datos para reentrenar con la nueva configuración?
+        if classification.requires_raw(key):
+            retrainable = bool(self.project and self.project.state.get("segments"))
+            reason = "crea segmentos etiquetados primero."
+        else:
+            retrainable = self.dataset is not None
+            reason = "construye el dataset primero."
+
+        from . import model_config
+        choice = model_config.edit_model_config(self, name, result, retrainable, reason)
+        if choice is None:
+            return
+        kind, payload = choice
+
+        if kind == "classic":
+            task = lambda progress=None: classification.train(
+                self.dataset, key, clf_params=payload)
+        elif kind == "nn":
+            if classification.requires_raw(key):
+                window = int(payload.get("window_samples", 512))
+                task = lambda progress=None: classification.train_raw(
+                    dataset_mod.build_raw_dataset(self.project, window), key, payload,
+                    progress=progress)
+            else:
+                task = lambda progress=None: classification.train(
+                    self.dataset, key, nn_config=payload, progress=progress)
+        elif kind == "riemann":
+            window = int(payload)
+            task = lambda progress=None: classification.train_riemann(
+                dataset_mod.build_raw_dataset(self.project, window), key, raw_window=window)
+        else:
+            return
+
+        self._busy(f"Reentrenando «{name}»…")
+        self.progress.setRange(0, 0)
+        self.progress.show()
+
+        def done(new_result):
+            self._idle()
+            self._register_model(new_result, name=name)   # sustituye con el mismo nombre
+            cv = new_result.cv_scores
+            acc = f"  ·  exactitud≈{float(cv.mean()):.0%}" if getattr(cv, "size", 0) else ""
+            self.statusBar().showMessage(f"Modelo «{name}» reentrenado.{acc}")
+
+        self._spawn(task, done, on_progress=self._on_train_progress)
 
     def _load_project_models(self) -> None:
         """Carga los modelos guardados (.joblib) de la carpeta models/."""
@@ -1462,7 +1773,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _after_state_change(self) -> None:
         self.refresh_all()
-        self._update_signal_view()
+        self._refresh_source_tabs()
         self._refresh_signal_windows()
         self.request_autosave()
 
@@ -1549,7 +1860,8 @@ class MainWindow(QMainWindow):
 
     # Iconos por sección, para identificar de un vistazo el tipo de cambio.
     _HISTORY_ICONS = {
-        "pipeline": "🎛", "segments": "✂", "sources": "📁",
+        "pipeline": "🎛", "pipelines": "🎛", "active_pipeline": "🔀",
+        "segments": "✂", "sources": "📁",
         "dataset": "📊", "channel_aliases": "🏷", "excluded_channels": "🚫",
     }
 
@@ -1569,27 +1881,30 @@ class MainWindow(QMainWindow):
         self.changelog_list.addItem(item)
 
     def _refresh_history(self) -> None:
+        """Pinta el historial como ÁRBOL: cada rama con su sangría.
+
+        La rama actual va resaltada; las ramas/estados no aplicados, atenuados.
+        Un clic navega a ese nodo (aunque esté en otra rama).
+        """
         self.changelog_list.clear()
         if not self.project:
             return
         cl = self.project.changelog
-        applied = cl.applied_count()
-
-        # Punto de partida (antes de cualquier cambio).
-        self._add_history_item(
-            ("▶  " if applied == 0 else "      ") + "⏮  Estado inicial",
-            target=0, current=(applied == 0), applied=True,
-        )
         current_item = None
-        for idx, entry in enumerate(cl.timeline()):
-            target = idx + 1
-            icon = self._HISTORY_ICONS.get(entry["section"], "•")
-            ts = time.strftime("%H:%M:%S", time.localtime(entry["timestamp"]))
-            is_current = entry["applied"] and target == applied
-            prefix = "▶  " if is_current else ("↪  " if not entry["applied"] else "      ")
-            text = f"{prefix}{icon}  {entry['description']}    ·  {ts}"
-            self._add_history_item(text, target, current=is_current, applied=entry["applied"])
-            if is_current:
+        for node in cl.nodes():
+            indent = "    " * node["depth"]
+            if node["is_root"]:
+                icon, desc, ts = "⏮", "Estado inicial", ""
+            else:
+                icon = self._HISTORY_ICONS.get(node["section"], "•")
+                desc = node["description"]
+                ts = "    ·  " + time.strftime("%H:%M:%S", time.localtime(node["timestamp"]))
+            branch = "  ⑂" if node["n_children"] > 1 else ""   # punto de bifurcación
+            marker = "▶  " if node["is_current"] else ("   " if node["on_path"] else "↳  ")
+            text = f"{indent}{marker}{icon}  {desc}{branch}{ts}"
+            self._add_history_item(text, node["id"], current=node["is_current"],
+                                   applied=node["on_path"])
+            if node["is_current"]:
                 current_item = self.changelog_list.item(self.changelog_list.count() - 1)
         if current_item is not None:
             self.changelog_list.scrollToItem(current_item)
@@ -1598,8 +1913,8 @@ class MainWindow(QMainWindow):
         target = item.data(Qt.ItemDataRole.UserRole)
         if self.project is None or target is None:
             return
-        if target != self.project.changelog.applied_count():
-            self.project.goto_history(int(target))
+        if int(target) != self.project.changelog.current_id:
+            self.project.goto_node(int(target))
             self._after_state_change()
 
     def _update_actions(self) -> None:

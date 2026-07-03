@@ -46,8 +46,13 @@ def _model_entry(name: str, res) -> dict:
     }
 
 
-def build_config(project, models: dict, sections) -> dict:
-    """Ensambla el dict de configuración con las secciones pedidas."""
+def build_config(project, models: dict, sections, pipeline_indices=None) -> dict:
+    """Ensambla el dict de configuración con las secciones pedidas.
+
+    ``pipeline_indices`` (opcional) limita qué **pipelines** se exportan; ``None``
+    exporta todos. Si el pipeline activo no está en la selección, se toma el
+    primero elegido como activo del bundle.
+    """
     sections = set(sections)
     cfg: dict = {
         "app": APP_NAME,
@@ -57,8 +62,23 @@ def build_config(project, models: dict, sections) -> dict:
         "sections": sorted(s for s in SECTIONS if s in sections),
     }
     if "preprocessing" in sections:
+        all_pls = project.pipelines_snapshot()
+        if pipeline_indices is None:
+            sel = list(range(len(all_pls)))
+        else:
+            sel = [i for i in pipeline_indices if 0 <= i < len(all_pls)]
+        if not sel:                                  # siempre al menos uno
+            sel = [project.active_pipeline_index() if 0 <= project.active_pipeline_index()
+                   < len(all_pls) else 0]
+        chosen = [copy.deepcopy(all_pls[i]) for i in sel]
+        active = project.active_pipeline_index()
+        new_active = sel.index(active) if active in sel else 0
         cfg["preprocessing"] = {
-            "pipeline": copy.deepcopy(project.state.get("pipeline", [])),
+            # `pipeline` (el activo) se mantiene por compatibilidad con bundles
+            # antiguos; `pipelines` lleva los pipelines elegidos.
+            "pipeline": copy.deepcopy(chosen[new_active]["steps"]) if chosen else [],
+            "pipelines": chosen,
+            "active_pipeline": new_active,
             "excluded_channels": list(project.state.get("excluded_channels", [])),
             "channel_aliases": dict(project.state.get("channel_aliases", {})),
         }
@@ -89,17 +109,19 @@ def load_config(path: str) -> dict:
 
 
 # --- Bundle autónomo (.eegbundle = ZIP) ------------------------------------
-def export_bundle(project, models: dict, sections, out_path: str) -> dict:
+def export_bundle(project, models: dict, sections, out_path: str,
+                  pipeline_indices=None) -> dict:
     """Escribe un ``.eegbundle`` (ZIP) con la configuración + **binarios**.
 
     Incluye, según las secciones elegidas: ``bundle.json`` (config), los modelos
     entrenados (``models/<nombre>.joblib``) y los datasets guardados del proyecto
-    (``datasets/*.npz``). Devuelve un resumen ``{"models": n, "datasets": n}``.
+    (``datasets/*.npz``). ``pipeline_indices`` limita qué pipelines exportar
+    (``None`` = todos). Devuelve un resumen ``{"models": n, "datasets": n}``.
     """
     from . import classification
 
     sections = set(sections)
-    cfg = build_config(project, models, sections)
+    cfg = build_config(project, models, sections, pipeline_indices)
     n_models = 0
     ds_files: list[str] = []
     n_sources = 0

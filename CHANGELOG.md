@@ -15,6 +15,44 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-01]
 
 ### Añadido
+- **Varios pipelines por proyecto**, como **pestañas de navegador** en el panel
+  de Preprocesamiento: se pueden **crear** (`＋`), **renombrar** (doble clic),
+  **cambiar** y **eliminar** pipelines independientes. Para eliminar hay un botón
+  dedicado **🗑** (con confirmación, reversible con Ctrl+Z) además del cierre de
+  la propia pestaña; siempre queda al menos un pipeline. El pipeline **activo** es
+  el que se aplica a la señal, al dataset y a los modelos. Con **undo/redo** y
+  **persistencia**; los proyectos antiguos (un solo pipeline) **migran** solos.
+- Al **exportar el bundle** se puede elegir **qué pipelines incluir**, con una
+  casilla por pipeline y un selector global **«Todas las pipelines»**. El bundle
+  reconstruye el pipeline activo dentro de la selección exportada.
+- **Centro multi-fuente con pestañas**: al abrir varias fuentes se ven como
+  **pestañas** (estilo navegador) en una sola vista; se cambia de señal con la
+  pestaña, se pueden **cerrar y reabrir**, y se mantiene **"Abrir en ventana
+  nueva"** para desacoplar una fuente en su propia ventana.
+- **Historial en árbol**: el historial deja de ser una línea. Si vuelves a un
+  estado anterior y haces un cambio, se crea una **rama nueva** en lugar de
+  borrar lo que habías hecho después — nada se pierde. El dock *Historial*
+  muestra el árbol con sangría (marcando bifurcaciones y la rama actual) y un
+  clic salta a cualquier nodo, aunque esté en otra rama. Retrocompatible: los
+  `changelog.json` lineales antiguos se leen y migran a árbol.
+- **Aislar un canal** en el visor, tanto al revisar un CSV como en tiempo real:
+  un selector "Canal" muestra **solo ese canal a escala real** y una fila con
+  sus **medidas** (mín, máx, media, σ y rango pico-a-pico en µV) para saber
+  entre qué valores varía la señal.
+- **Configuración de un modelo**: botón "Configuración…" para **ver los
+  hiperparámetros** con los que se entrenó y **editarlos**; al aceptar, el
+  modelo **se reentrena** conservando su nombre. Cubre clásicos (Random Forest,
+  SVM), los escalares de las redes (épocas, batch, learning rate, ventana…) y la
+  ventana de muestras de Riemann/CSP (que ahora se guarda en el modelo).
+- **Menú "Ver"** con casillas para mostrar/ocultar los paneles (Fuentes,
+  Herramientas, Historial) y "Restaurar paneles": **arregla** que, al cerrar un
+  panel acoplado, no hubiera forma de volver a abrirlo.
+- **Dataset**: el panel muestra el **total de muestras** y el **desglose por clase**
+  (segmentos etiquetados y, al construir, muestras del dataset por clase).
+- **Modelos**: se indica **con cuántos datos se entrenó y se evaluó**, adaptado al
+  método y con porcentajes — clásicos/Riemann: validación cruzada de *k* pliegues
+  (≈(k-1)/k entrena, ≈1/k evalúa por pliegue); redes: holdout 75/25. Aparece en el
+  diálogo de métricas, en la imagen guardada y en el tooltip de la lista de modelos.
 - Al **crear un proyecto nuevo**, se pregunta si quieres **importar un bundle
   existente** (`.eegbundle`) para arrancar con pipeline + dataset + modelos.
 - **Métricas globales**: tabla resumen del modelo en general (exactitud, precisión/
@@ -27,6 +65,13 @@ cambios se agrupan por fecha de trabajo.
   barras de desplazamiento); en la interfaz las tablas siguen igual.
 
 ### Cambiado
+- **Estilo**: pestañas con aspecto de navegador (esquinas redondeadas y acento en
+  la activa); las barras de pestañas (fuentes y pipelines) **eliden** el texto y
+  usan **botones de desplazamiento** para no desbordar en pantallas 1080p.
+- **Imagen de las métricas más compacta**: las secciones (matriz de confusión,
+  F1, tablas) salen **lo más juntas posible** y la figura se dimensiona a las
+  secciones elegidas. Al **guardar**, un diálogo pregunta **qué métricas
+  incluir** (matriz / F1 / tabla por clase / tabla global) y si normalizar.
 - Botones con texto largo **acortados** (con tooltip con la descripción completa)
   para que **no se recorten** en pantallas/resoluciones pequeñas.
 - Se documenta y verifica que el **bundle nunca incluye imágenes/gráficos**: la

@@ -167,10 +167,36 @@ class TrainingResult:
     nn_config: dict | None = None      # config de la red (si es NN)
     metrics: dict | None = None        # matriz de confusión + métricas por clase
     clf_params: dict | None = None     # hiperparámetros del clasificador clásico
+    raw_window: int = 0                 # ventana (muestras) usada por Riemann/CSP (0 = n/a)
+    n_samples: int = 0                 # muestras totales del dataset
+    n_train: int = 0                   # muestras de entrenamiento (holdout, o por pliegue en CV)
+    n_eval: int = 0                    # muestras de evaluación (holdout, o por pliegue en CV)
+    eval_method: str = ""              # "holdout" | "cross_val" | ""
+    cv_folds: int = 0                  # nº de pliegues (si es validación cruzada)
 
     @property
     def cv_mean(self) -> float:
         return float(self.cv_scores.mean()) if self.cv_scores.size else float("nan")
+
+    def split_report(self) -> str:
+        """Texto de con cuántos datos se entrenó y evaluó (adaptado al método)."""
+        n = self.n_samples
+        if not n:
+            return "Datos de entrenamiento/evaluación: no disponible."
+        if self.eval_method == "holdout":
+            tr, ev = self.n_train, self.n_eval
+            return (f"Entrenamiento (holdout): {tr} muestras ({100 * tr / n:.0f}%)  ·  "
+                    f"Evaluación: {ev} muestras ({100 * ev / n:.0f}%). "
+                    f"El modelo final se reentrena con las {n} muestras (100%).")
+        if self.eval_method == "cross_val" and self.cv_folds >= 2:
+            k = self.cv_folds
+            ev = n // k
+            tr = n - ev
+            return (f"Validación cruzada de {k} pliegues sobre {n} muestras: por pliegue "
+                    f"~{tr} entrenan ({100 * tr / n:.0f}%) y ~{ev} evalúan ({100 * ev / n:.0f}%); "
+                    f"cada muestra se evalúa 1 vez ({n} en total). "
+                    f"El modelo final usa las {n} muestras (100%).")
+        return f"Entrenado con {n} muestras (sin validación: datos insuficientes)."
 
     @property
     def cv_std(self) -> float:
@@ -209,8 +235,9 @@ def train(dataset, classifier_name: str = "random_forest", cv: int = 5,
 
     classes, counts = np.unique(y, return_counts=True)
     labels = sorted(classes.tolist())
-    cv_scores, metrics = _classic_cv(lambda: build_pipeline(classifier_name, clf_params),
-                                     X, y, labels, counts.min(), cv)
+    cv_scores, metrics, folds = _classic_cv(
+        lambda: build_pipeline(classifier_name, clf_params),
+        X, y, labels, counts.min(), cv)
 
     pipe = build_pipeline(classifier_name, clf_params)
     pipe.fit(X, y)
@@ -223,17 +250,23 @@ def train(dataset, classifier_name: str = "random_forest", cv: int = 5,
         input_kind="features",
         metrics=metrics,
         clf_params=dict(clf_params) if clf_params else None,
+        n_samples=int(X.shape[0]),
+        eval_method="cross_val" if folds >= 2 else "",
+        cv_folds=folds,
     )
 
 
 def _classic_cv(make_estimator, X, y, labels, min_count, cv):
-    """Validación cruzada + métricas para modelos clásicos/Riemann (si procede)."""
+    """Validación cruzada + métricas para modelos clásicos/Riemann (si procede).
+
+    Devuelve ``(scores, metrics, folds)``; ``folds=0`` si no se pudo validar.
+    """
     if len(labels) >= 2 and min_count >= 2:
         folds = int(min(cv, min_count))
         if folds >= 2:
             scores, y_pred = _cv_eval(make_estimator, X, y, folds)
-            return scores, _metrics_dict(y, y_pred, labels)
-    return np.array([]), None
+            return scores, _metrics_dict(y, y_pred, labels), folds
+    return np.array([]), None, 0
 
 
 def train_raw(raw_dataset, classifier_name: str, nn_config: dict | None = None,
@@ -261,6 +294,8 @@ def _train_nn(X, y, classifier_name: str, input_kind: str,
     metrics = None
     labels = sorted(classes.tolist())
     counts = np.array([np.sum(y == c) for c in classes])
+    n_train = n_eval = 0
+    eval_method = ""
     if len(classes) >= 2 and counts.min() >= 2 and X.shape[0] >= 4:
         try:
             X_tr, X_te, y_tr, y_te = train_test_split(
@@ -271,6 +306,7 @@ def _train_nn(X, y, classifier_name: str, input_kind: str,
             y_pred = holdout.predict(X_te)
             cv_scores = np.array([accuracy_score(y_te, y_pred)])
             metrics = _metrics_dict(y_te, y_pred, labels)
+            n_train, n_eval, eval_method = len(X_tr), len(X_te), "holdout"
         except Exception:  # noqa: BLE001
             cv_scores = np.array([])
 
@@ -285,6 +321,10 @@ def _train_nn(X, y, classifier_name: str, input_kind: str,
         input_kind=input_kind,
         nn_config=config,
         metrics=metrics,
+        n_samples=int(X.shape[0]),
+        n_train=n_train,
+        n_eval=n_eval,
+        eval_method=eval_method,
     )
 
 
@@ -308,7 +348,8 @@ def build_riemann_pipeline(name: str) -> Pipeline:
     raise ValueError(f"Modelo de Riemann desconocido: {name}")
 
 
-def train_riemann(raw_dataset, classifier_name: str, cv: int = 5) -> TrainingResult:
+def train_riemann(raw_dataset, classifier_name: str, cv: int = 5,
+                  raw_window: int = 0) -> TrainingResult:
     """Entrena un modelo de Riemann/CSP con el dataset de señal cruda."""
     X, y = raw_dataset.X, raw_dataset.y
     if X.shape[0] < 2:
@@ -316,10 +357,10 @@ def train_riemann(raw_dataset, classifier_name: str, cv: int = 5) -> TrainingRes
     classes, counts = np.unique(y, return_counts=True)
     labels = sorted(classes.tolist())
     try:
-        cv_scores, metrics = _classic_cv(
+        cv_scores, metrics, folds = _classic_cv(
             lambda: build_riemann_pipeline(classifier_name), X, y, labels, counts.min(), cv)
     except Exception:  # noqa: BLE001
-        cv_scores, metrics = np.array([]), None
+        cv_scores, metrics, folds = np.array([]), None, 0
 
     pipe = build_riemann_pipeline(classifier_name)
     pipe.fit(X, y)
@@ -331,6 +372,10 @@ def train_riemann(raw_dataset, classifier_name: str, cv: int = 5) -> TrainingRes
         cv_scores=cv_scores,
         input_kind="raw",
         metrics=metrics,
+        raw_window=int(raw_window),
+        n_samples=int(X.shape[0]),
+        eval_method="cross_val" if folds >= 2 else "",
+        cv_folds=folds,
     )
 
 
@@ -358,6 +403,12 @@ def _result_blob(result: TrainingResult) -> dict:
         "nn_config": result.nn_config,
         "metrics": result.metrics,
         "clf_params": getattr(result, "clf_params", None),
+        "raw_window": getattr(result, "raw_window", 0),
+        "n_samples": getattr(result, "n_samples", 0),
+        "n_train": getattr(result, "n_train", 0),
+        "n_eval": getattr(result, "n_eval", 0),
+        "eval_method": getattr(result, "eval_method", ""),
+        "cv_folds": getattr(result, "cv_folds", 0),
     }
 
 
@@ -386,6 +437,12 @@ def _blob_to_result(blob: dict) -> TrainingResult:
         nn_config=blob.get("nn_config"),
         metrics=blob.get("metrics"),
         clf_params=blob.get("clf_params"),
+        raw_window=blob.get("raw_window", 0),
+        n_samples=blob.get("n_samples", 0),
+        n_train=blob.get("n_train", 0),
+        n_eval=blob.get("n_eval", 0),
+        eval_method=blob.get("eval_method", ""),
+        cv_folds=blob.get("cv_folds", 0),
     )
 
 
