@@ -522,5 +522,6 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `preload_smoke`, `config_export_smoke`, `config_import_smoke`,
 `metrics_plot_smoke`, `split_report_smoke`, `channel_isolate_smoke`,
 `model_config_smoke`, `history_tree_smoke`, `signal_tabs_smoke`,
-`multi_pipeline_smoke`, `pipeline_ui_smoke`,
+`multi_pipeline_smoke`, `pipeline_ui_smoke`, `live_scale_smoke`,
+`live_segment_smoke`,
 `e2e_smoke` (flujo completo de extremo a extremo).

@@ -2,8 +2,16 @@
 
 Mantiene un buffer circular ``(n_canales, ventana)`` y actualiza curvas
 persistentes (sin recrearlas) en cada refresco, para que sea fluido a ~30 fps.
-Permite **aislar un canal** para verlo solo, a escala real, con sus medidas
-(mín/máx/media/σ/rango pico-a-pico) actualizadas en vivo.
+
+Dos modos de **escala** (seleccionables):
+
+* **Fija (µV)** — escala constante en microvoltios (estilo OpenViBE): la señal se
+  dibuja a µV reales (quitando su offset DC) y las amplitudes son comparables y
+  **no cambian solas**. Ajustable con «µV/canal».
+* **Auto (normalizada)** — cada canal se normaliza por su desviación en la ventana
+  (amplitud uniforme); cómodo pero la escala "respira".
+
+Además permite **aislar un canal** para verlo solo, con sus medidas en vivo.
 """
 from __future__ import annotations
 
@@ -12,6 +20,9 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from .signal_view import _CURVE_COLORS
+
+# Opciones de µV por canal para la escala fija.
+_UV_OPTIONS = ("20", "50", "100", "200", "500", "1000", "2000")
 
 
 class LiveSignalView(QWidget):
@@ -22,19 +33,38 @@ class LiveSignalView(QWidget):
         self._win = 640
         self._channels: list[str] = []
         self._curves: list[pg.PlotDataItem] = []
-        self._spacing = 4.0
+        self._spacing = 4.0                     # separación (unidades z) en modo auto
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Fila de control: aislar un canal.
         controls = QHBoxLayout()
+        # Aislar un canal.
         controls.addWidget(QLabel("Canal:"))
         self.channel_box = QComboBox()
         self.channel_box.addItem("Todos")
         self.channel_box.setToolTip("Aísla un canal para verlo solo y ver sus medidas en vivo.")
         self.channel_box.currentIndexChanged.connect(self._on_channel_changed)
         controls.addWidget(self.channel_box)
+
+        # Escala: fija (µV) o auto (normalizada).
+        controls.addSpacing(12)
+        controls.addWidget(QLabel("Escala:"))
+        self.scale_box = QComboBox()
+        self.scale_box.addItems(["Fija (µV)", "Auto (normalizada)"])
+        self.scale_box.setToolTip(
+            "Fija: escala en µV constante (estilo OpenViBE), no cambia sola.\n"
+            "Auto: cada canal se normaliza por su desviación (amplitud uniforme).")
+        self.scale_box.currentIndexChanged.connect(self._on_scale_changed)
+        controls.addWidget(self.scale_box)
+
+        self.uv_box = QComboBox()
+        self.uv_box.addItems(_UV_OPTIONS)
+        self.uv_box.setCurrentText("200")
+        self.uv_box.setToolTip("Microvoltios por canal en modo de escala fija.")
+        self.uv_box.currentIndexChanged.connect(self._on_scale_changed)
+        controls.addWidget(QLabel("µV/canal:"))
+        controls.addWidget(self.uv_box)
         controls.addStretch(1)
         layout.addLayout(controls)
 
@@ -50,6 +80,7 @@ class LiveSignalView(QWidget):
         self.stats_label.setVisible(False)
         layout.addWidget(self.stats_label)
 
+    # --- Configuración -----------------------------------------------------
     def configure(self, channel_names: list[str], fs: float, window_seconds: float = 5.0) -> None:
         self._fs = float(fs)
         self._channels = list(channel_names)
@@ -59,16 +90,11 @@ class LiveSignalView(QWidget):
 
         self.plot.clear()
         self._curves = []
-        ticks = []
         x = np.linspace(-window_seconds, 0.0, self._win)
         for i in range(n):
-            offset = (n - 1 - i) * self._spacing
             color = _CURVE_COLORS[i % len(_CURVE_COLORS)]
-            curve = self.plot.plot(x, np.full(self._win, offset), pen=pg.mkPen(color, width=1))
+            curve = self.plot.plot(x, np.zeros(self._win), pen=pg.mkPen(color, width=1))
             self._curves.append(curve)
-            ticks.append((offset, channel_names[i]))
-        self.plot.getAxis("left").setTicks([ticks])
-        self.plot.setLabel("left", "Canal")
         self.plot.setXRange(-window_seconds, 0.0, padding=0.01)
 
         # Repuebla el selector de canales conservando la selección si sigue existiendo.
@@ -82,31 +108,70 @@ class LiveSignalView(QWidget):
         self.channel_box.blockSignals(False)
         self._on_channel_changed()
 
+    # --- Estado de los selectores -----------------------------------------
     def _isolated_index(self) -> int | None:
         i = self.channel_box.currentIndex()
         return (i - 1) if i > 0 else None
 
+    def _scale_fixed(self) -> bool:
+        return self.scale_box.currentIndex() == 0
+
+    def _spacing_uv(self) -> float:
+        try:
+            return float(self.uv_box.currentText())
+        except ValueError:
+            return 200.0
+
+    def _on_scale_changed(self, *_) -> None:
+        self.uv_box.setEnabled(self._scale_fixed())
+        self._apply_view_scale()
+        if self._buffer is not None:
+            self._redraw()
+
     def _on_channel_changed(self, *_) -> None:
-        """Alterna entre vista multicanal apilada y un solo canal a escala real."""
+        """Alterna entre vista multicanal apilada y un solo canal."""
         n = len(self._channels)
         iso = self._isolated_index()
         if iso is None or iso >= n:
-            ticks = [((n - 1 - i) * self._spacing, self._channels[i]) for i in range(n)]
-            self.plot.getAxis("left").setTicks([ticks])
-            self.plot.setLabel("left", "Canal")
             for c in self._curves:
                 c.show()
             self.stats_label.setVisible(False)
         else:
             for i, c in enumerate(self._curves):
                 c.setVisible(i == iso)
-            self.plot.getAxis("left").setTicks(None)   # ticks numéricos automáticos
-            self.plot.setLabel("left", self._channels[iso], units="µV")
             self.stats_label.setVisible(True)
-        self.plot.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        self._apply_view_scale()
         if self._buffer is not None:
             self._redraw()
 
+    def _apply_view_scale(self) -> None:
+        """Fija ejes, etiquetas y rango Y según (aislado?, escala fija/auto)."""
+        n = len(self._channels)
+        vb = self.plot.getViewBox()
+        iso = self._isolated_index()
+
+        if iso is not None and iso < n:                       # un solo canal
+            self.plot.getAxis("left").setTicks(None)          # eje µV numérico
+            self.plot.setLabel("left", self._channels[iso], units="µV")
+            # Fija: rango de altura constante (se recoloca en _redraw); Auto: autorango.
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=not self._scale_fixed())
+            return
+
+        # Multicanal apilado.
+        fixed = self._scale_fixed()
+        spacing = self._spacing_uv() if fixed else self._spacing
+        ticks = [((n - 1 - i) * spacing, self._channels[i]) for i in range(n)]
+        self.plot.getAxis("left").setTicks([ticks])
+        if fixed:
+            uv = self._spacing_uv()
+            self.plot.setLabel("left", f"Canal  ·  {uv:g} µV entre canales")
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+            self.plot.setYRange(-0.75 * uv, (n - 1) * uv + 0.75 * uv, padding=0.0)
+        else:
+            self.plot.setLabel("left", "Canal (auto)")
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+
+    # --- Datos -------------------------------------------------------------
     def append(self, chunk: np.ndarray) -> None:
         if self._buffer is None or chunk is None or chunk.size == 0:
             return
@@ -122,9 +187,10 @@ class LiveSignalView(QWidget):
         buf = self._buffer
         n = buf.shape[0]
         x = np.linspace(-self._win / self._fs, 0.0, self._win)
+        fixed = self._scale_fixed()
 
         iso = self._isolated_index()
-        if iso is not None and iso < n:
+        if iso is not None and iso < n:                       # un solo canal, a µV reales
             ch = buf[iso]
             self._curves[iso].setData(x, ch)
             mn, mx = float(ch.min()), float(ch.max())
@@ -132,14 +198,23 @@ class LiveSignalView(QWidget):
                 f"{self._channels[iso]}   ·   mín {mn:.1f}   ·   máx {mx:.1f}   ·   "
                 f"media {float(ch.mean()):.1f}   ·   σ {float(ch.std()):.1f}   ·   "
                 f"rango pico-a-pico {mx - mn:.1f} µV")
+            if fixed:                                         # ventana de altura fija
+                uv = self._spacing_uv()
+                c = float(ch.mean())
+                self.plot.setYRange(c - uv, c + uv, padding=0.0)
             return
 
         mean = buf.mean(axis=1, keepdims=True)
-        std = buf.std(axis=1, keepdims=True)
-        std[std == 0] = 1.0
-        disp = (buf - mean) / std
+        if fixed:                                             # µV reales, sin renormalizar
+            spacing = self._spacing_uv()
+            disp = buf - mean                                 # quita el offset DC
+        else:                                                 # z-score por canal (auto)
+            std = buf.std(axis=1, keepdims=True)
+            std[std == 0] = 1.0
+            disp = (buf - mean) / std
+            spacing = self._spacing
         for i in range(n):
-            offset = (n - 1 - i) * self._spacing
+            offset = (n - 1 - i) * spacing
             self._curves[i].setData(x, disp[i] + offset)
 
     def clear(self) -> None:

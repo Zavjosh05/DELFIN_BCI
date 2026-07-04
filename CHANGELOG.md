@@ -15,6 +15,17 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-01]
 
 ### Añadido
+- **Nombrar la grabación**: campo «Nombre» en el panel de adquisición. Se usa como
+  nombre del CSV (saneado y con sufijo `_2`, `_3`… si ya existe) y como **alias**
+  de la fuente al añadirla. Si se deja vacío, se usa la fecha/hora
+  (`rec_AAAAMMDD_HHMMSS.csv`). La grabación en vivo se guarda como **`.csv`** (sin
+  comprimir) en la carpeta `recordings/` del proyecto.
+- **Segmentos en vivo (inicio/fin) durante la grabación**: además de la marca de
+  **instante**, un botón/atajo marca el **inicio** de un segmento y otro clic el
+  **fin** (con la etiqueta indicada). Al añadir la grabación como fuente, esos
+  tramos se crean como **segmentos etiquetados** del proyecto (listos para el
+  dataset). Atajos: **F3** = marca instantánea, **F4** = iniciar/terminar
+  segmento. Un segmento que quede abierto se cierra al detener la grabación.
 - **Varios pipelines por proyecto**, como **pestañas de navegador** en el panel
   de Preprocesamiento: se pueden **crear** (`＋`), **renombrar** (doble clic),
   **cambiar** y **eliminar** pipelines independientes. Para eliminar hay un botón
@@ -65,6 +76,11 @@ cambios se agrupan por fecha de trabajo.
   barras de desplazamiento); en la interfaz las tablas siguen igual.
 
 ### Cambiado
+- **Visor en vivo — escala seleccionable**: nuevo modo **«Fija (µV)»** (por
+  defecto, estilo OpenViBE) con escala en microvoltios **constante y ajustable**
+  (selector «µV/canal»), para que la escala **no cambie sola** y las amplitudes
+  sean comparables. Se conserva el modo **«Auto (normalizada)»** (cada canal por
+  su desviación) como opción.
 - **Estilo**: pestañas con aspecto de navegador (esquinas redondeadas y acento en
   la activa); las barras de pestañas (fuentes y pipelines) **eliden** el texto y
   usan **botones de desplazamiento** para no desbordar en pantallas 1080p.
