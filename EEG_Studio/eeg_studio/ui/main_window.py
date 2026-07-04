@@ -1952,16 +1952,24 @@ class MainWindow(QMainWindow):
         )
         return res == QMessageBox.StandardButton.Yes
 
-    def add_recording_as_source(self, path: str) -> None:
+    def add_recording_as_source(self, path: str, segments=None, alias: str | None = None) -> None:
         if not self._require_project():
             return
         try:
-            self.project.add_source(path)
+            src = self.project.add_source(path, alias=alias or None)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "No se pudo añadir", f"{path}\n\n{exc}")
             return
+        # Segmentos marcados en vivo (start, stop, etiqueta) → segmentos del proyecto.
+        n_seg = 0
+        if segments and isinstance(src, dict) and src.get("id"):
+            sid = src["id"]
+            for start, stop, label in segments:
+                self.project.add_segment(sid, int(start), int(stop), str(label))
+                n_seg += 1
         self.refresh_all()
-        self.statusBar().showMessage("Grabación añadida como fuente.")
+        extra = f" con {n_seg} segmento(s)" if n_seg else ""
+        self.statusBar().showMessage(f"Grabación añadida como fuente{extra}.")
 
     def closeEvent(self, event) -> None:  # noqa: N802 (API de Qt)
         try:
