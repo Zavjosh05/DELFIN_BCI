@@ -59,6 +59,17 @@ def main() -> int:
     labels = [live.scale_box.itemText(i) for i in range(live.scale_box.count())]
     assert "Fija (µV)" in labels and "Auto (normalizada)" in labels, labels
 
+    print("[6] El eje de tiempo AVANZA con la señal (no se queda estático)")
+    live.configure(names, 128.0, window_seconds=3.0)
+    (_, x1_ini), _ = live.plot.getViewBox().viewRange()
+    live.append(np.zeros((n, 256)))            # 2 s a 128 Hz
+    (_, x1_a), _ = live.plot.getViewBox().viewRange()
+    live.append(np.zeros((n, 128)))            # +1 s
+    (_, x1_b), _ = live.plot.getViewBox().viewRange()
+    assert x1_a > x1_ini + 1.5, (x1_ini, x1_a)     # avanzó ~2 s
+    assert x1_b > x1_a + 0.5, (x1_a, x1_b)         # sigue avanzando
+    print(f"    borde derecho del eje: {x1_ini:.1f}s → {x1_a:.1f}s → {x1_b:.1f}s")
+
     print("\nESCALA DEL VISOR EN VIVO OK ✓")
     return 0
 

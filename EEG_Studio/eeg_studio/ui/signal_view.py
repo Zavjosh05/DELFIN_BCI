@@ -258,12 +258,15 @@ class SignalView(QWidget):
             return
         self.stats_label.setVisible(False)
 
-        # Normalización por canal solo para la visualización (no altera datos).
+        # Se resta la media por canal SOLO para visualizar (quita el offset DC —
+        # p. ej. ~4200 µV del EPOC+): así la escala refleja la amplitud real y cada
+        # canal se centra en su etiqueta. No altera los datos.
         disp = data.astype(np.float64)
+        disp = disp - disp.mean(axis=1, keepdims=True)
         if self.norm_chk.isChecked():
             std = disp.std(axis=1, keepdims=True)
             std[std == 0] = 1.0
-            disp = (disp - disp.mean(axis=1, keepdims=True)) / std
+            disp = disp / std
             self._spacing = 4.0
         else:
             self._spacing = np.nanmax(np.abs(disp)) * 1.2 + 1e-6
@@ -307,11 +310,11 @@ class SignalView(QWidget):
     def _draw_isolated(self, idx: int, ch: np.ndarray, t: np.ndarray, n: int) -> None:
         """Dibuja un único canal a escala real y muestra sus medidas."""
         gain = self._gain()
-        disp = ch
         normalized = self.norm_chk.isChecked()
+        disp = ch - ch.mean()          # centrar (quita el offset DC) para visualizar
         if normalized:
             s = float(ch.std()) or 1.0
-            disp = (ch - ch.mean()) / s
+            disp = disp / s
         color = _CURVE_COLORS[idx % len(_CURVE_COLORS)]
         self.plot.plot(t, disp * gain, pen=pg.mkPen(color, width=1))
         name = self._channel_names[idx] if idx < len(self._channel_names) else f"ch{idx}"

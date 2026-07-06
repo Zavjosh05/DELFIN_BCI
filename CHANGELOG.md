@@ -75,6 +75,16 @@ cambios se agrupan por fecha de trabajo.
   Se compone con matplotlib para que **todas las filas** de las tablas se vean (sin
   barras de desplazamiento); en la interfaz las tablas siguen igual.
 
+### Corregido
+- **Visor en vivo**: el **eje de tiempo ahora avanza** con la señal (muestra el
+  tiempo transcurrido real, `[t−ventana, t]`), en vez de quedarse fijo en
+  `[−ventana, 0]`.
+- **Visor de CSV**: se **resta el offset DC por canal solo para visualizar** (p.
+  ej. la línea base ~4200 µV del EPOC+). Antes las señales salían aplastadas y
+  descolocadas respecto a su etiqueta (la escala «empezaba en cero»); ahora cada
+  canal se **centra** y la escala refleja la **amplitud real**. No altera los
+  datos; las medidas del canal aislado siguen mostrando los valores reales.
+
 ### Cambiado
 - **Visor en vivo — escala seleccionable**: nuevo modo **«Fija (µV)»** (por
   defecto, estilo OpenViBE) con escala en microvoltios **constante y ajustable**

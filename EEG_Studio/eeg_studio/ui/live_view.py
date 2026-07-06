@@ -33,6 +33,8 @@ class LiveSignalView(QWidget):
         self._win = 640
         self._channels: list[str] = []
         self._curves: list[pg.PlotDataItem] = []
+        self._x: np.ndarray = np.zeros(0)       # eje base [-ventana, 0] (relativo, cacheado)
+        self._elapsed = 0                        # nº total de muestras recibidas (para el reloj)
         self._spacing = 4.0                     # separación (unidades z) en modo auto
 
         layout = QVBoxLayout(self)
@@ -85,17 +87,19 @@ class LiveSignalView(QWidget):
         self._fs = float(fs)
         self._channels = list(channel_names)
         self._win = max(64, int(window_seconds * self._fs))
+        self._elapsed = 0                        # reinicia el reloj del eje de tiempo
         n = len(channel_names)
         self._buffer = np.zeros((n, self._win), dtype=np.float64)
 
         self.plot.clear()
         self._curves = []
-        x = np.linspace(-window_seconds, 0.0, self._win)
+        # Eje de tiempo cacheado: es constante, no hace falta recrearlo cada frame.
+        self._x = np.linspace(-self._win / self._fs, 0.0, self._win)
         for i in range(n):
             color = _CURVE_COLORS[i % len(_CURVE_COLORS)]
-            curve = self.plot.plot(x, np.zeros(self._win), pen=pg.mkPen(color, width=1))
+            curve = self.plot.plot(self._x, np.zeros(self._win), pen=pg.mkPen(color, width=1))
             self._curves.append(curve)
-        self.plot.setXRange(-window_seconds, 0.0, padding=0.01)
+        self.plot.setXRange(self._x[0], 0.0, padding=0.01)
 
         # Repuebla el selector de canales conservando la selección si sigue existiendo.
         current = self.channel_box.currentText()
@@ -181,12 +185,19 @@ class LiveSignalView(QWidget):
         else:
             self._buffer = np.roll(self._buffer, -k, axis=1)
             self._buffer[:, -k:] = chunk
+        self._elapsed += k                       # avanza el reloj del eje de tiempo
         self._redraw()
 
     def _redraw(self) -> None:
         buf = self._buffer
         n = buf.shape[0]
-        x = np.linspace(-self._win / self._fs, 0.0, self._win)
+        base = self._x                          # eje base [-ventana, 0] (cacheado)
+        if base.shape[0] != buf.shape[1]:       # salvaguarda si aún no se configuró
+            base = np.linspace(-buf.shape[1] / self._fs, 0.0, buf.shape[1])
+        # El eje avanza con el tiempo transcurrido: muestra [t_ahora-ventana, t_ahora].
+        t_now = self._elapsed / self._fs
+        x = base + t_now
+        self.plot.setXRange(x[0], x[-1], padding=0.0)
         fixed = self._scale_fixed()
 
         iso = self._isolated_index()
