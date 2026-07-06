@@ -89,8 +89,30 @@ def main() -> int:
     assert panel.marker_btn is not None and panel.segment_btn is not None
     assert panel.name_edit is not None       # campo de nombre presente
 
+    print("[6] Marca de DURACIÓN FIJA: crea un segmento de N s desde ahora")
+    from eeg_studio.acquisition.simulated import SimulatedSource
+    panel.source = SimulatedSource()         # solo para leer sample_rate (128 Hz)
+    panel.recorder = CSVRecorder(os.path.join(tmp, "r2.csv"), 14, 128.0)
+    panel._rec_segments = []
+    panel.recorder.write(np.zeros((14, 100)))    # 100 muestras grabadas
+    panel.marker_edit.setText("ojos_cerrados")
+    panel.duration_spin.setValue(5)              # 5 s → 640 muestras
+    panel._add_timed_marker()
+    assert panel._rec_segments == [(100, 100 + 640, "ojos_cerrados")], panel._rec_segments
+    print(f"    {panel._rec_segments}")
+
+    print("[7] Si la grabación termina antes, el segmento se recorta (no queda al aire)")
+    panel.recorder.write(np.zeros((14, 200)))    # total 300 (< 740)
+    final = panel.recorder.n_samples
+    seg = [(s, min(e, final), lbl) for (s, e, lbl) in panel._rec_segments
+           if s < final and min(e, final) - s >= 1]
+    assert seg == [(100, 300, "ojos_cerrados")], seg
+    panel.recorder.close()
+    panel.recorder = None
+    print(f"    recortado a {seg}")
+
     win.acq_panel.shutdown()
-    print("\nSEGMENTOS EN VIVO (INICIO/FIN) OK ✓")
+    print("\nSEGMENTOS EN VIVO (INICIO/FIN + DURACIÓN FIJA) OK ✓")
     return 0
 
 

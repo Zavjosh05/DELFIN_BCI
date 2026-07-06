@@ -134,13 +134,31 @@ class AcquisitionPanel(QWidget):
         self.segment_btn.setToolTip(
             "Marca un SEGMENTO (no un instante): el 1er clic marca el inicio y el 2º el "
             "fin, con la etiqueta de arriba. Se crea como segmento de la clase al añadir "
-            "la grabación. Atajo: F4 (o mantén pulsado con el modo mantener).")
+            "la grabación. Atajo: F4.")
         self.segment_btn.clicked.connect(self._toggle_segment)
         rec_layout.addWidget(self.segment_btn)
 
+        # Marca de DURACIÓN FIJA: crea un segmento de N segundos desde ahora.
+        timed_row = QHBoxLayout()
+        timed_row.addWidget(QLabel("Duración:"))
+        self.duration_spin = QSpinBox()
+        self.duration_spin.setRange(1, 600)
+        self.duration_spin.setValue(5)
+        self.duration_spin.setSuffix(" s")
+        self.duration_spin.setToolTip("Duración de la marca de duración fija.")
+        timed_row.addWidget(self.duration_spin)
+        self.timed_btn = QPushButton("Marca de duración fija")
+        self.timed_btn.setToolTip(
+            "Crea un segmento de la duración indicada a partir de AHORA (p. ej. 5 s "
+            "de una clase), con la etiqueta de arriba. Atajo: F5.")
+        self.timed_btn.clicked.connect(self._add_timed_marker)
+        timed_row.addWidget(self.timed_btn, 1)
+        rec_layout.addLayout(timed_row)
+
         mk_hint = QLabel("• Marca = un instante (para «Segmentos desde marcadores»).\n"
-                         "• Segmento = un tramo con inicio y fin (se etiqueta como clase "
-                         "directamente). Atajos: F3 marca instante, F4 inicia/termina segmento.")
+                         "• Segmento = un tramo con inicio y fin (se etiqueta como clase).\n"
+                         "• Marca de duración fija = un segmento de N s desde ahora.\n"
+                         "Atajos: F3 instante · F4 inicia/termina segmento · F5 duración fija.")
         mk_hint.setWordWrap(True)
         mk_hint.setStyleSheet("color: #8a929b; font-size: 11px;")
         rec_layout.addWidget(mk_hint)
@@ -153,6 +171,9 @@ class AcquisitionPanel(QWidget):
         self._sc_segment = QShortcut(QKeySequence("F4"), self)
         self._sc_segment.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self._sc_segment.activated.connect(self._toggle_segment)
+        self._sc_timed = QShortcut(QKeySequence("F5"), self)
+        self._sc_timed.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._sc_timed.activated.connect(self._add_timed_marker)
 
         self.status = QLabel("Desconectado.")
         self.status.setWordWrap(True)
@@ -480,7 +501,11 @@ class AcquisitionPanel(QWidget):
                 self._rec_segments.append((self._seg_start, stop, self._seg_label))
             self._seg_active = False
             self.segment_btn.setText("▶ Marcar inicio de segmento")
-        segments = list(self._rec_segments)
+        # Recorta segmentos cuyo fin caiga más allá de lo grabado (marcas de
+        # duración fija que no llegaron a completarse); descarta los vacíos.
+        final = self.recorder.n_samples
+        segments = [(s, min(e, final), lbl) for (s, e, lbl) in self._rec_segments
+                    if s < final and min(e, final) - s >= 1]
         self.recorder.close()
         path = self._rec_path
         alias = getattr(self, "_rec_alias", None)
@@ -498,6 +523,22 @@ class AcquisitionPanel(QWidget):
         label = self.marker_edit.text().strip() or "marca"
         self.recorder.add_marker(label)
         self.status.setText(f"Marcador insertado: «{label}»")
+
+    def _add_timed_marker(self) -> None:
+        """Crea un segmento de DURACIÓN FIJA (N s) a partir del instante actual."""
+        if self.recorder is None:
+            self.controller.info("Sin grabación", "Las marcas se guardan durante la "
+                                 "grabación. Inicia una grabación primero.")
+            return
+        secs = self.duration_spin.value()
+        fs = self.source.sample_rate if self.source else 128.0
+        start = self.recorder.n_samples
+        stop = start + max(1, int(round(secs * fs)))     # se completará al grabar N s
+        label = self.marker_edit.text().strip() or "marca"
+        self._rec_segments.append((start, stop, label))
+        self.status.setText(
+            f"Marca «{label}» de {secs}s añadida (se completa al grabar {secs}s)  "
+            f"· {len(self._rec_segments)} segmentos.")
 
     def _toggle_segment(self) -> None:
         """1er clic: marca el inicio del segmento; 2º clic: marca el fin y lo crea."""
@@ -534,6 +575,7 @@ class AcquisitionPanel(QWidget):
         self.record_btn.setEnabled(connected)
         self.marker_btn.setEnabled(connected)
         self.segment_btn.setEnabled(connected)
+        self.timed_btn.setEnabled(connected)
 
     def shutdown(self) -> None:
         """Cierre limpio al salir de la aplicación."""

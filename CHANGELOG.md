@@ -26,6 +26,10 @@ cambios se agrupan por fecha de trabajo.
   tramos se crean como **segmentos etiquetados** del proyecto (listos para el
   dataset). Atajos: **F3** = marca instantánea, **F4** = iniciar/terminar
   segmento. Un segmento que quede abierto se cierra al detener la grabación.
+- **Marca de duración fija**: selector de **Duración** (s) + botón/atajo (**F5**)
+  que crea un segmento de esa duración **desde el instante actual** (p. ej. 5 s de
+  una clase). Si la grabación termina antes de completarse, el segmento se
+  **recorta** a lo grabado.
 - **Varios pipelines por proyecto**, como **pestañas de navegador** en el panel
   de Preprocesamiento: se pueden **crear** (`＋`), **renombrar** (doble clic),
   **cambiar** y **eliminar** pipelines independientes. Para eliminar hay un botón
@@ -76,6 +80,12 @@ cambios se agrupan por fecha de trabajo.
   barras de desplazamiento); en la interfaz las tablas siguen igual.
 
 ### Corregido
+- **Proyecto portátil**: las rutas de las fuentes **internas** (dentro de la
+  carpeta `.eegproj`: `recordings/`, `imported/`…) se guardan **relativas al
+  proyecto** en `project.json` y en `changelog.json`, y se **resuelven contra la
+  ubicación actual** al abrir. Así, **mover, copiar o renombrar** la carpeta del
+  proyecto (u otra máquina/disco) ya no rompe los enlaces. Las fuentes externas
+  siguen guardándose con ruta absoluta.
 - **Visor en vivo**: el **eje de tiempo ahora avanza** con la señal (muestra el
   tiempo transcurrido real, `[t−ventana, t]`), en vez de quedarse fijo en
   `[−ventana, 0]`.

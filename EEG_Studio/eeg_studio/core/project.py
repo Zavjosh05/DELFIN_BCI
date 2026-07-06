@@ -92,26 +92,36 @@ class Project:
         loaded = data.get("state", {})
         proj.state = {**_default_state(), **loaded}
         proj._migrate_pipelines(has_pipelines="pipelines" in loaded)
+        # Resuelve las rutas (relativas) de las fuentes contra la ubicación ACTUAL
+        # del proyecto: así abrir la carpeta movida/renombrada sigue encontrándolas.
         proj.sources = data.get("sources", [])
+        for s in proj.sources:
+            if s.get("path"):
+                s["path"] = proj._resolve_path(s["path"])
         log_path = os.path.join(path, CHANGELOG_FILE)
         if os.path.isfile(log_path):
             with open(log_path, "r", encoding="utf-8") as fh:
                 proj.changelog = ChangeLog.from_dict(json.load(fh))
+            proj._resolve_changelog_paths()
         return proj
 
     def save(self) -> None:
         for sub in (CACHE_DIR, DATASETS_DIR, MODELS_DIR, RECORDINGS_DIR, IMPORTED_DIR):
             os.makedirs(os.path.join(self.path, sub), exist_ok=True)
+        # Las rutas de las fuentes internas se guardan RELATIVAS al proyecto para
+        # que la carpeta sea portátil (mover/copiar/renombrar sin romper enlaces).
+        sources_persist = [{**s, "path": self._persist_path(s.get("path", ""))}
+                           for s in self.sources]
         manifest = {
             "name": self.name,
             "version": APP_VERSION,
-            "sources": self.sources,
+            "sources": sources_persist,
             "state": self.state,
         }
         with open(os.path.join(self.path, PROJECT_MANIFEST), "w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=2, ensure_ascii=False)
         with open(os.path.join(self.path, CHANGELOG_FILE), "w", encoding="utf-8") as fh:
-            json.dump(self.changelog.to_dict(), fh, indent=2, ensure_ascii=False)
+            json.dump(self._persisted_changelog(), fh, indent=2, ensure_ascii=False)
 
     # ------------------------------------------------------------------ #
     # Fuentes (CSV)
@@ -165,6 +175,60 @@ class Project:
         except ValueError:                       # distinto volumen (Windows)
             return False
 
+    def _persist_path(self, path: str) -> str:
+        """Ruta a GUARDAR en el manifiesto: relativa a la carpeta del proyecto si
+        el archivo está dentro (portátil al mover/renombrar el proyecto); absoluta
+        si es externo."""
+        if not path:
+            return path
+        ap = os.path.abspath(path)
+        if self.is_internal_path(ap):
+            return os.path.relpath(ap, self.path).replace(os.sep, "/")
+        return ap
+
+    def _resolve_path(self, path: str) -> str:
+        """Ruta ABSOLUTA a partir de la guardada (resuelve las relativas contra la
+        ubicación actual del proyecto)."""
+        if not path:
+            return path
+        if os.path.isabs(path):
+            return path
+        return os.path.normpath(os.path.join(self.path, path))
+
+    def _persisted_changelog(self) -> dict:
+        """``to_dict()`` del historial con las rutas de fuentes en forma relativa.
+
+        No hace un *deep copy* de todo el historial (costoso en autosave): solo
+        reescribe las listas de fuentes de los comandos «sources», sin mutar el
+        historial en memoria (los ``cmd`` de ``to_dict`` ya son dicts nuevos)."""
+        d = self.changelog.to_dict()
+        for node in d.get("nodes", {}).values():
+            cmd = node.get("cmd")
+            if not (cmd and cmd.get("section") == "sources"):
+                continue
+            for field in ("before", "after"):
+                val = cmd.get(field)
+                if isinstance(val, list):
+                    cmd[field] = [
+                        {**s, "path": self._persist_path(s["path"])}
+                        if isinstance(s, dict) and s.get("path") else s
+                        for s in val
+                    ]
+        return d
+
+    def _resolve_changelog_paths(self) -> None:
+        """Resuelve a absoluto las rutas de fuentes del historial recién cargado."""
+        for node in self.changelog._nodes.values():
+            cmd = node.get("cmd")
+            if cmd is None or cmd.section != "sources":
+                continue
+            for field in ("before", "after"):
+                val = getattr(cmd, field)
+                if isinstance(val, list):
+                    for s in val:
+                        if isinstance(s, dict) and s.get("path"):
+                            s["path"] = self._resolve_path(s["path"])
+
     def set_source_path(self, source_id: str, new_path: str,
                         description: str = "Cambiar ruta de fuente") -> None:
         """Actualiza la ruta de una fuente (p. ej. tras comprimirla a .csv.gz)."""
@@ -185,7 +249,7 @@ class Project:
         src = self.get_source(source_id)
         if src is None:
             raise KeyError(f"Fuente inexistente: {source_id}")
-        rec = load_recording(src["path"])           # E/S pesada fuera del lock
+        rec = load_recording(self._resolve_path(src["path"]))   # E/S pesada fuera del lock
         with self._lock:
             self._recordings[source_id] = rec
         return rec
