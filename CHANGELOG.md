@@ -12,6 +12,24 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-08]
+
+### Añadido
+- **Control del brazo robótico MaxArm** (Hiwonder + ESP32) desde la pestaña
+  **Control**. Sección de **prueba manual** con botones para los 6 comandos del
+  proyecto Delfin (**Arriba, Abajo, Izquierda, Derecha, Agarre, Soltar**), además de
+  **HOME** y **Probar conexión**. Envía peticiones **HTTP** al firmware (punto de
+  acceso `MaxArm_IPN`, `http://192.168.4.1`): `/cmd?id=&v=` mueve los servos
+  (1=Hombro → arriba/abajo, 4=rotación de pinza → izquierda/derecha) mediante
+  **pulsos** de velocidad continua, y `/pump?on=` activa la succión (agarre/soltar).
+  Nueva **salida «Brazo MaxArm (HTTP)»** en el modo en tiempo real, para que el
+  **clasificador mueva el brazo** con las clases detectadas («controlar con la
+  mente»). El envío es **no bloqueante** (cada comando en su propio hilo) y el mapeo
+  clase→acción vive en `inference/arm.py` (editable). Cliente HTTP nuevo
+  (`ArmClient`) + salida (`ArmHttpSink`), con `make_sink("arm", …)`.
+
+---
+
 ## [2026-07-01]
 
 ### Añadido
@@ -36,6 +54,11 @@ cambios se agrupan por fecha de trabajo.
   «Ver datos (tabla numérica)…» abre una **tabla eficiente** (virtualizada, apta
   para grabaciones grandes) con los valores: nº de muestra, tiempo, cada canal y
   el `Event Id`. El visor incluye un botón para exportar y un «ir a muestra».
+- **Generar segmentos periódicos** (clic derecho sobre un segmento → «Repetir
+  periódicamente…»): marcas el **primero** y la app crea los demás hacia adelante a
+  un **intervalo regular** (p. ej. 5 s de tarea cada 15 s), con la misma duración y
+  etiqueta, hasta un total o hasta el final de la señal. Ideal para protocolos
+  repetitivos (tarea/reposo). En **un solo paso deshacible**.
 - **Editar segmentos desde el visor de la señal (clic derecho)**: sobre un
   segmento etiquetado, un menú permite **Reetiquetar** (cambiar su clase, con la
   lista de clases existentes) o **Eliminar** el segmento. Si hay segmentos

@@ -525,5 +525,6 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `multi_pipeline_smoke`, `pipeline_ui_smoke`, `live_scale_smoke`,
 `live_segment_smoke`, `signal_scale_smoke`, `project_portable_smoke`,
 `segment_edit_smoke`, `csv_export_view_smoke`, `source_rename_smoke`,
-`orphan_recordings_smoke`, `recording_control_smoke`,
+`orphan_recordings_smoke`, `recording_control_smoke`, `repeat_segment_smoke`,
+`arm_control_smoke` (control del brazo MaxArm por HTTP, sin hardware),
 `e2e_smoke` (flujo completo de extremo a extremo).

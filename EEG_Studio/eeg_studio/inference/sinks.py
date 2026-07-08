@@ -78,9 +78,13 @@ class SerialSink(CommandSink):
 
 
 def make_sink(kind: str, **params) -> CommandSink:
-    """Crea la salida indicada: ``"log"``, ``"udp"`` o ``"serial"``."""
+    """Crea la salida indicada: ``"log"``, ``"udp"``, ``"serial"`` o ``"arm"``."""
     if kind == "udp":
         return UdpSink(params.get("host", "127.0.0.1"), params.get("port", 9001))
     if kind == "serial":
         return SerialSink(params.get("port", "COM3"), params.get("baud", 9600))
+    if kind == "arm":
+        from .arm import ArmHttpSink
+        return ArmHttpSink(params.get("host", "192.168.4.1"),
+                           params.get("port", 80), params.get("pulse_ms", 400))
     return LogSink()

@@ -1,0 +1,531 @@
+import network
+import socket
+import time
+from machine import Pin, UART, PWM
+
+# ── 1. HARDWARE Y SILENCIADOR ──────────────────────────────
+buzzer = Pin(27, Pin.OUT)
+buzzer.value(0)
+
+receive_enable  = Pin(13, Pin.OUT)   # receiveEnablePin
+transmit_enable = Pin(14, Pin.OUT)   # transmitEnablePin
+transmit_enable.value(0)
+receive_enable.value(1)
+
+uart = UART(1, baudrate=115200, tx=12, rx=35)
+
+# ── 2. BOMBA DE SUCCIÓN Y VÁLVULA (PWM) ────────────────────
+PUMP_PIN1  = Pin(21, Pin.OUT)
+PUMP_PIN2  = Pin(19, Pin.OUT)
+VALVE_PIN1 = Pin(18, Pin.OUT)
+
+# El Pin 5 ahora es exclusivo de PWM a 1000 Hz para proteger la válvula de 6V
+VALVE_PIN2 = PWM(Pin(5), freq=1000)
+VALVE_PIN2.duty_u16(0) 
+
+# Variables de estado y protección asíncrona (Máquina de estados para la válvula)
+bomba_activa = False
+bomba_tiempo_maximo = 0
+MAX_TIEMPO_BOMBA_MS = 60000  # 60 segundos máximos de succión continua
+
+# Estados de válvula: 0 = Apagada, 1 = Golpe (Peak 75%), 2 = Retención (Hold 50%)
+estado_valvula = 0 
+tiempo_cambio_valvula = 0
+
+def bomba_init():
+    global estado_valvula, bomba_activa
+    PUMP_PIN1.value(0); PUMP_PIN2.value(0)
+    VALVE_PIN1.value(0); VALVE_PIN2.duty_u16(0)
+    estado_valvula = 0
+    bomba_activa = False
+
+def bomba_on():
+    global bomba_activa, bomba_tiempo_maximo, estado_valvula
+    # Encendemos la bomba
+    PUMP_PIN1.value(0); PUMP_PIN2.value(1)
+    # Nos aseguramos de que la válvula esté firmemente cerrada (0V)
+    VALVE_PIN1.value(0); VALVE_PIN2.duty_u16(0)
+    estado_valvula = 0
+    
+    # Activamos el temporizador de seguridad de la bomba
+    bomba_activa = True
+    bomba_tiempo_maximo = time.ticks_add(time.ticks_ms(), MAX_TIEMPO_BOMBA_MS)
+
+def bomba_off():
+    global estado_valvula, tiempo_cambio_valvula, bomba_activa
+    # Apagamos la bomba de inmediato
+    PUMP_PIN1.value(0); PUMP_PIN2.value(0)
+    bomba_activa = False
+    
+    # INICIA MÁQUINA DE ESTADOS: FASE 1 - GOLPE DE ARRANQUE (75% por 50ms)
+    VALVE_PIN1.value(0)
+    VALVE_PIN2.duty_u16(49151) 
+    estado_valvula = 1
+    tiempo_cambio_valvula = time.ticks_add(time.ticks_ms(), 50)
+
+bomba_init()
+
+# Tiempo sin movimiento para silenciar torque (Solo Seriales)
+SILENCIAR_MS = 600
+
+# =============================================================
+#  3. PROTOCOLO HIWONDER (SERIAL)
+# =============================================================
+def enviar_paquete(id_servo, posicion, duracion):
+    pos    = int(posicion)
+    p_low  = pos & 0xFF;        p_high = (pos >> 8) & 0xFF
+    t_low  = duracion & 0xFF;   t_high = (duracion >> 8) & 0xFF
+    longitud = 7;  cmd = 1
+    chk = ~(id_servo+longitud+cmd+p_low+p_high+t_low+t_high) & 0xFF
+    pkt = bytearray([0x55,0x55,id_servo,longitud,cmd,
+                     p_low,p_high,t_low,t_high,chk])
+    uart.read()
+    transmit_enable.value(1); receive_enable.value(0)
+    time.sleep_ms(2)
+    uart.write(pkt)
+    time.sleep_ms(20)
+    transmit_enable.value(0); receive_enable.value(1)
+
+def set_torque(id_servo, activo):
+    cmd = 31;  valor = 1 if activo else 0;  longitud = 4
+    chk = ~(id_servo + longitud + cmd + valor) & 0xFF
+    uart.read()
+    transmit_enable.value(1); receive_enable.value(0)
+    time.sleep_ms(2)
+    uart.write(bytearray([0x55,0x55,id_servo,longitud,cmd,valor,chk]))
+    time.sleep_ms(20)
+    transmit_enable.value(0); receive_enable.value(1)
+
+# =============================================================
+#  4. CLASES DE MOTORES (SERIAL Y PWM)
+# =============================================================
+class ServoSerial:
+    def __init__(self, id_servo, pos_inicio, pos_min, pos_max,
+                 paso=12, duracion=80, nombre="Servo", activo=True):
+        self.id         = id_servo
+        self.pos        = float(pos_inicio)
+        self.min        = pos_min
+        self.max        = pos_max
+        self.paso       = paso
+        self.duracion   = duracion
+        self.nombre     = nombre
+        self.activo     = activo
+        self.torque_on  = False
+        self.ultimo_mov = 0
+        self.silenciado = True
+
+        if activo:
+            set_torque(self.id, True)
+            time.sleep_ms(100)
+            enviar_paquete(self.id, int(self.pos), 2000)
+            time.sleep_ms(2600)          
+            set_torque(self.id, False)
+            time.sleep_ms(100)
+            set_torque(self.id, False)   
+            self.torque_on  = False
+            self.silenciado = True
+            print(f"  {self.nombre} ID{self.id} listo en pos={int(self.pos)}")
+
+    def mover(self, valor):
+        if not self.activo:
+            return
+
+        if abs(valor) < 0.12:
+            if not self.silenciado:
+                elapsed = time.ticks_diff(time.ticks_ms(), self.ultimo_mov)
+                if elapsed >= SILENCIAR_MS:
+                    set_torque(self.id, False)
+                    time.sleep_ms(50)
+                    set_torque(self.id, False)
+                    self.torque_on  = False
+                    self.silenciado = True
+                    print(f"  {self.nombre} silenciado en pos={int(self.pos)}")
+            return
+
+        if not self.torque_on:
+            set_torque(self.id, True)
+            time.sleep_ms(80)
+            self.torque_on  = True
+            self.silenciado = False
+
+        self.pos += valor * self.paso
+        if self.pos > self.max: self.pos = self.max
+        if self.pos < self.min: self.pos = self.min
+        enviar_paquete(self.id, int(self.pos), self.duracion)
+        self.ultimo_mov = time.ticks_ms()
+
+class ServoPWM:
+    def __init__(self, pin_num, pos_inicio=500, pos_min=200, pos_max=800, paso=12, nombre="PWM", activo=True):
+        self.pin_num = pin_num
+        self.pos = float(pos_inicio)
+        self.min = pos_min
+        self.max = pos_max
+        self.paso = paso
+        self.nombre = nombre
+        self.activo = activo
+        self.ultimo_mov = 0
+        
+        if self.activo:
+            self.pwm = PWM(Pin(pin_num), freq=50)
+            self._actualizar_pwm()
+            print(f"  {self.nombre} (PWM Pin {pin_num}) listo en pos={int(self.pos)}")
+
+    def mover(self, valor):
+        if not self.activo: return
+        
+        if abs(valor) < 0.12: 
+            return 
+            
+        self.pos += valor * self.paso
+        if self.pos > self.max: self.pos = self.max
+        if self.pos < self.min: self.pos = self.min
+        
+        self._actualizar_pwm()
+        self.ultimo_mov = time.ticks_ms()
+
+    def _actualizar_pwm(self):
+        us = int(self.pos * 2 + 500)
+        duty = int((us / 20000.0) * 65535)
+        self.pwm.duty_u16(duty)
+
+    def silenciar_forzado(self):
+        pass
+
+# =============================================================
+#  5. INSTANCIAR SERVOS
+# =============================================================
+print("Inicializando servos...")
+servos = {
+    '2': ServoSerial(2, 500, 200, 800, nombre="Base",   activo=False),
+    '1': ServoSerial(1, 440, 300, 650, nombre="Hombro", activo=True),
+    '3': ServoSerial(3, 480, 440, 700, nombre="Codo",   activo=True),
+    '4': ServoPWM(15, 500, 200, 800, nombre="Bomba", activo=True),
+}
+print("Servos listos.")
+
+joystick = {'2': 0.0, '1': 0.0, '3': 0.0, '4': 0.0}
+
+# =============================================================
+#  6. HTML DASHBOARD 
+# =============================================================
+HTML = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>MaxArm IPN</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@500;800&display=swap');
+  :root{
+    --bg:#080c10;--panel:#0d1420;--border:#1a2a40;
+    --green:#00e5a0;--blue:#0094ff;--orange:#ff6b00;
+    --red:#ff2255;--dim:#2a3a50;--text:#c8ddf0;
+    --mono:'Share Tech Mono',monospace;
+    --display:'Orbitron',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--mono);min-height:100vh;overflow-x:hidden}
+  body::before{content:'';position:fixed;inset:0;z-index:0;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.08) 2px,rgba(0,0,0,.08) 4px);
+    pointer-events:none}
+  header{position:relative;z-index:1;padding:16px 20px 12px;
+    border-bottom:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-between;
+    background:linear-gradient(90deg,#0d1a2a,#080c10)}
+  header h1{font-family:var(--display);font-size:1rem;letter-spacing:3px;
+    color:var(--green);text-shadow:0 0 20px rgba(0,229,160,.4)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .grid{position:relative;z-index:1;display:grid;
+    grid-template-columns:repeat(2,1fr);gap:14px;
+    padding:16px;max-width:680px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--border);
+    border-radius:12px;padding:14px;
+    display:flex;flex-direction:column;align-items:center;gap:10px}
+  .card.disabled{opacity:.3}
+  .card-title{font-family:var(--display);font-size:.55rem;letter-spacing:3px;
+    text-transform:uppercase;color:var(--text);
+    width:100%;display:flex;justify-content:space-between;align-items:center}
+  .badge{font-size:.5rem;padding:2px 7px;border-radius:4px;border:1px solid;letter-spacing:1px}
+  .g{color:var(--green);border-color:var(--green)}
+  .b{color:var(--blue);border-color:var(--blue)}
+  .o{color:var(--orange);border-color:var(--orange)}
+  .d{color:var(--dim);border-color:var(--dim)}
+  .jzone{width:130px;height:130px;border-radius:50%;
+    background:radial-gradient(circle at 40% 35%,#12202e,#06090f);
+    border:1.5px solid var(--border);position:relative;touch-action:none;cursor:grab}
+  .jzone::before{content:'';position:absolute;inset:14px;border-radius:50%;
+    border:1px dashed rgba(255,255,255,.05)}
+  .jzone.disabled{cursor:not-allowed}
+  .knob{width:44px;height:44px;border-radius:50%;position:absolute;
+    top:43px;left:43px;pointer-events:none;
+    transition:transform .04s;display:flex;align-items:center;justify-content:center}
+  .knob::after{content:'';width:11px;height:11px;border-radius:50%;background:#fff;opacity:.45}
+  .kg{background:radial-gradient(circle at 35% 30%,#00ffb8,#007a55);box-shadow:0 0 16px rgba(0,229,160,.55)}
+  .kb{background:radial-gradient(circle at 35% 30%,#60c8ff,#0055aa);box-shadow:0 0 16px rgba(0,148,255,.55)}
+  .ko{background:radial-gradient(circle at 35% 30%,#ffaa60,#aa4400);box-shadow:0 0 16px rgba(255,107,0,.55)}
+  .kd{background:#1e2e3e}
+  .pos{font-size:.65rem;letter-spacing:1px;opacity:.65;width:100%;text-align:center}
+  .pump-row{grid-column:1/-1;background:var(--panel);border:1px solid var(--border);
+    border-radius:12px;padding:14px 20px;
+    display:flex;align-items:center;justify-content:space-between}
+  .pump-label{font-family:var(--display);font-size:.55rem;letter-spacing:3px;margin-bottom:5px}
+  .pump-status{font-size:.6rem;color:var(--dim);transition:color .2s}
+  .pump-status.on{color:var(--red)}
+  .btn{width:62px;height:62px;border-radius:50%;border:2px solid var(--red);
+    background:transparent;color:var(--red);font-family:var(--display);
+    font-size:.5rem;letter-spacing:2px;cursor:pointer;transition:all .2s;
+    display:flex; align-items:center; justify-content:center;}
+  .btn.on{background:var(--red);color:#fff;box-shadow:0 0 22px rgba(255,34,85,.5)}
+  footer{position:relative;z-index:1;text-align:center;padding:10px;
+    font-size:.55rem;opacity:.25;letter-spacing:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>MAXARM // IPN</h1>
+  <div style="display:flex;align-items:center;gap:8px;font-size:.55rem;letter-spacing:2px;opacity:.6">
+    <div class="dot"></div>ONLINE
+  </div>
+</header>
+
+<div class="grid">
+  <div class="card disabled">
+    <div class="card-title">BASE<span class="badge d">ID2 OFFLINE</span></div>
+    <div class="jzone disabled"><div class="knob kd"></div></div>
+    <div class="pos">— SIN SERVICIO —</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">HOMBRO<span class="badge g">ID1</span></div>
+    <div class="jzone" id="jz1"><div class="knob kg" id="jk1"></div></div>
+    <div class="pos" id="px1">POS: 440</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">CODO<span class="badge b">ID3</span></div>
+    <div class="jzone" id="jz3"><div class="knob kb" id="jk3"></div></div>
+    <div class="pos" id="px3">POS: 480</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">ROT. BOMBA<span class="badge o">ID4</span></div>
+    <div class="jzone" id="jz4"><div class="knob ko" id="jk4"></div></div>
+    <div class="pos" id="px4">POS: 500</div>
+  </div>
+
+  <div class="pump-row" style="gap: 20px;">
+    <div>
+      <div class="pump-label">SISTEMA NEUMÁTICO</div>
+      <div class="pump-status" id="pst">INACTIVA</div>
+    </div>
+    <div style="display:flex; gap:12px;">
+      <button class="btn" id="pbtn" onclick="toggleBomba()"><span id="ptxt">ON</span></button>
+      <button class="btn" id="rbtn" onclick="resetArm()" style="border-color:var(--orange); color:var(--orange); font-size:0.45rem;"><span>HOME</span></button>
+    </div>
+  </div>
+</div>
+
+<footer>MAXARM CONTROL // IPN // v2.0</footer>
+
+<script>
+const R = 65, DEAD = 0.12;
+let st = {'1':0,'3':0,'4':0}, last = {'1':null,'3':null,'4':null};
+let bomba = false;
+
+function joy(zId, kId, sid, axis) {
+  const z = document.getElementById(zId);
+  const k = document.getElementById(kId);
+  if(!z||!k) return;
+  let down = false;
+
+  function upd(cx,cy) {
+    const r = z.getBoundingClientRect();
+    let dx = (cx - r.left  - 65) / R;
+    let dy = (cy - r.top   - 65) / R;
+    dx = Math.max(-1,Math.min(1,dx));
+    dy = Math.max(-1,Math.min(1,dy));
+    const v = axis==='X' ? dx : -dy;
+    st[sid] = v;
+    k.style.transform = axis==='X'
+      ? `translate(${dx*R*.7}px,0)`
+      : `translate(0,${dy*R*.7}px)`;
+  }
+  function rel(){
+    down=false; st[sid]=0;
+    k.style.transform='translate(0,0)';
+  }
+  z.addEventListener('touchstart', e=>{down=true;upd(e.targetTouches[0].clientX,e.targetTouches[0].clientY);},{passive:true});
+  z.addEventListener('touchmove',  e=>{e.preventDefault();if(down)upd(e.targetTouches[0].clientX,e.targetTouches[0].clientY);},{passive:false});
+  z.addEventListener('touchend',   rel);
+  z.addEventListener('mousedown',  e=>{down=true;upd(e.clientX,e.clientY);});
+  z.addEventListener('mousemove',  e=>{if(down)upd(e.clientX,e.clientY);});
+  z.addEventListener('mouseup',    rel);
+  z.addEventListener('mouseleave', rel);
+}
+
+joy('jz1','jk1','1','Y');
+joy('jz3','jk3','3','Y');
+joy('jz4','jk4','4','X');
+
+setInterval(()=>{
+  ['1','3','4'].forEach(id=>{
+    const v = st[id];
+    if(v !== last[id]){
+      fetch(`/cmd?id=${id}&v=${v.toFixed(3)}`).catch(()=>{});
+      last[id]=v;
+      const el = document.getElementById('px'+id);
+      if(el) el.textContent = Math.abs(v)>DEAD ? 'MOVIENDO...' : 'DETENIDO';
+    }
+  });
+},80);
+
+function toggleBomba(){
+  bomba=!bomba;
+  document.getElementById('pbtn').classList.toggle('on',bomba);
+  document.getElementById('pst').classList.toggle('on',bomba);
+  document.getElementById('pst').textContent = bomba?'SUCCIONANDO':'INACTIVA';
+  document.getElementById('ptxt').textContent = bomba?'OFF':'ON';
+  fetch('/pump?on='+(bomba?'1':'0')).catch(()=>{});
+}
+
+function resetArm(){
+  const btn = document.getElementById('rbtn');
+  btn.style.opacity = '0.4';
+  fetch('/reset').then(() => {
+    setTimeout(() => { btn.style.opacity = '1'; }, 1000);
+  }).catch(() => { btn.style.opacity = '1'; });
+}
+</script>
+</body>
+</html>"""
+
+# =============================================================
+#  7. WIFI Y SERVIDOR WEB
+# =============================================================
+ap = network.WLAN(network.AP_IF)
+ap.active(True)
+ap.config(essid="MaxArm_IPN", password="maxarm2024", authmode=3)
+print("="*40)
+print("  Red:   MaxArm_IPN")
+print("  Clave: maxarm2024")
+print("  URL:   http://192.168.4.1")
+print("="*40)
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(('', 80))
+srv.listen(3)
+srv.setblocking(False)
+
+ultimo = time.ticks_ms()
+
+while True:
+    # ── Actualizar servos cada 80ms ────────────────────────
+    if time.ticks_diff(time.ticks_ms(), ultimo) >= 80:
+        for sid, val in joystick.items():
+            servos[sid].mover(val)
+        ultimo = time.ticks_ms()
+
+    # ── Protecciones Neumáticas Asíncronas (No Bloqueantes) ──
+    AHORA = time.ticks_ms()
+    
+    # 1. MÁQUINA DE ESTADOS: Secuencia de liberación Peak & Hold 
+    if estado_valvula == 1 and time.ticks_diff(tiempo_cambio_valvula, AHORA) <= 0:
+        # Fin de los 50ms de golpe, pasamos a Retención (50% = 6V)
+        VALVE_PIN2.duty_u16(32768) 
+        estado_valvula = 2
+        tiempo_cambio_valvula = time.ticks_add(time.ticks_ms(), 1200) # Mantener abierta 1.2 seg
+        
+    elif estado_valvula == 2 and time.ticks_diff(tiempo_cambio_valvula, AHORA) <= 0:
+        # Fin de los 1.2 seg, cerramos válvula (0%)
+        VALVE_PIN2.duty_u16(0)
+        estado_valvula = 0
+        print("[NEUMÁTICA] Válvula cerrada. Liberación completada.")
+
+    # 2. Guardián térmico de la bomba (Apagado forzado tras 60 segundos)
+    if bomba_activa and time.ticks_diff(bomba_tiempo_maximo, AHORA) <= 0:
+        PUMP_PIN1.value(0); PUMP_PIN2.value(0)
+        bomba_activa = False
+        # Iniciamos máquina de estados de liberación
+        VALVE_PIN1.value(0); VALVE_PIN2.duty_u16(49151)
+        estado_valvula = 1
+        tiempo_cambio_valvula = time.ticks_add(time.ticks_ms(), 50)
+        print("[ALERTA CORRECCIÓN] Succión desactivada automáticamente por exceder el tiempo seguro (60s).")
+
+    # ── Manejo de Peticiones HTTP ──────────────────────────
+    try:
+        conn, _ = srv.accept()
+        conn.settimeout(1.0)
+        try:
+            req = conn.recv(512).decode('utf-8', 'ignore')
+        except:
+            req = ""
+
+        if "GET /cmd" in req:
+            try:
+                qs   = req.split('?')[1].split(' ')[0]
+                args = {p.split('=')[0]:p.split('=')[1] for p in qs.split('&')}
+                sid  = args.get('id','')
+                val  = float(args.get('v', 0))
+                if sid in joystick:
+                    joystick[sid] = val
+            except:
+                pass
+            conn.send(b"HTTP/1.1 200 OK\r\nContent-Length:2\r\n\r\nOK")
+
+        elif "GET /pump" in req:
+            try:
+                on = req.split('pump?on=')[1][0] == '1'
+                bomba_on() if on else bomba_off()
+            except:
+                pass
+            conn.send(b"HTTP/1.1 200 OK\r\nContent-Length:2\r\n\r\nOK")
+
+        elif "GET /reset" in req:
+            try:
+                print("\n[ALERTA] Reiniciando articulaciones a posición de origen...")
+                
+                pos_hombro_home = 440
+                pos_codo_home   = 480
+                pos_bomba_home  = 500
+                
+                set_torque(1, True)
+                set_torque(3, True)
+                time.sleep_ms(50)
+                
+                enviar_paquete(1, pos_hombro_home, 2000)
+                enviar_paquete(3, pos_codo_home, 2000)
+                
+                servos['4'].pos = float(pos_bomba_home)
+                servos['4']._actualizar_pwm()
+                
+                joystick['1'] = 0.0
+                joystick['3'] = 0.0
+                joystick['4'] = 0.0
+                
+                servos['1'].pos = float(pos_hombro_home)
+                servos['3'].pos = float(pos_codo_home)
+                
+                for sid in ['1', '3']:
+                    servos[sid].torque_on = True
+                    servos[sid].silenciado = False
+                    servos[sid].ultimo_mov = time.ticks_add(time.ticks_ms(), 1600)
+                
+                print("[ÉXITO] Viaje a Home iniciado. Se silenciará automáticamente.")
+                
+            except Exception as e:
+                print("Error en rutina Home:", e)
+            conn.send(b"HTTP/1.1 200 OK\r\nContent-Length:2\r\n\r\nOK")
+
+        elif "GET / " in req or "GET /index" in req:
+            body   = HTML.encode()
+            header = ("HTTP/1.1 200 OK\r\n"
+                      "Content-Type:text/html;charset=utf-8\r\n"
+                      f"Content-Length:{len(body)}\r\n\r\n").encode()
+            conn.send(header + body)
+
+        conn.close()
+    except OSError:
+        pass

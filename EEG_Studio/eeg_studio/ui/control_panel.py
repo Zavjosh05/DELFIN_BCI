@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import time
 
+import threading
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -22,6 +25,13 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+)
+
+from ..inference.arm import (
+    DEFAULT_HOST as ARM_HOST,
+    DEFAULT_PORT as ARM_PORT,
+    DEFAULT_PULSE_MS as ARM_PULSE,
+    ArmClient,
 )
 
 from ..config import (
@@ -68,6 +78,9 @@ class ControlPanel(QWidget):
         mform.addRow("Modelo:", self.model_combo)
         layout.addLayout(mform)
 
+        # Brazo robótico MaxArm: prueba manual de los comandos.
+        layout.addWidget(self._arm_section())
+
         # Parámetros de inferencia.
         cfg = QGroupBox("Inferencia")
         form = QFormLayout(cfg)
@@ -100,6 +113,7 @@ class ControlPanel(QWidget):
         out_layout = QVBoxLayout(out)
         self.sink_combo = QComboBox()
         self.sink_combo.addItem("Registro (solo mostrar)", "log")
+        self.sink_combo.addItem("Brazo MaxArm (HTTP)", "arm")
         self.sink_combo.addItem("UDP (red)", "udp")
         self.sink_combo.addItem("Puerto serie (Arduino)", "serial")
         self.sink_combo.currentIndexChanged.connect(self._on_sink_changed)
@@ -107,6 +121,7 @@ class ControlPanel(QWidget):
 
         self.sink_params = QStackedWidget()
         self.sink_params.addWidget(self._log_params())
+        self.sink_params.addWidget(self._arm_sink_params())
         self.sink_params.addWidget(self._udp_params())
         self.sink_params.addWidget(self._serial_params())
         out_layout.addWidget(self.sink_params)
@@ -160,6 +175,96 @@ class ControlPanel(QWidget):
         note.setWordWrap(True)
         lay.addRow(note)
         return w
+
+    def _arm_sink_params(self) -> QWidget:
+        w = QWidget()
+        lay = QFormLayout(w)
+        note = QLabel("Envía cada clase detectada al brazo MaxArm por HTTP.\n"
+                      "Usa la IP/puerto/pulso configurados en «Brazo robótico» arriba.")
+        note.setWordWrap(True)
+        lay.addRow(note)
+        return w
+
+    # --- Brazo robótico (MaxArm) ------------------------------------------
+    def _arm_section(self) -> QGroupBox:
+        box = QGroupBox("Brazo robótico (MaxArm) — prueba manual")
+        lay = QVBoxLayout(box)
+
+        conn = QFormLayout()
+        self.arm_host = QLineEdit(ARM_HOST)
+        self.arm_port = QSpinBox(); self.arm_port.setRange(1, 65535); self.arm_port.setValue(ARM_PORT)
+        self.arm_pulse = QSpinBox()
+        self.arm_pulse.setRange(50, 5000); self.arm_pulse.setValue(ARM_PULSE); self.arm_pulse.setSuffix(" ms")
+        self.arm_pulse.setToolTip("Cuánto dura cada pulsación de movimiento (comando discreto).")
+        conn.addRow("IP del brazo:", self.arm_host)
+        conn.addRow("Puerto:", self.arm_port)
+        conn.addRow("Pulso de movimiento:", self.arm_pulse)
+        lay.addLayout(conn)
+
+        row = QHBoxLayout()
+        test_btn = QPushButton("Probar conexión")
+        test_btn.clicked.connect(self._test_arm)
+        home_btn = QPushButton("HOME (posición inicial)")
+        home_btn.clicked.connect(lambda: self._arm_do("home"))
+        row.addWidget(test_btn); row.addWidget(home_btn)
+        lay.addLayout(row)
+
+        self.arm_status = QLabel("Conecta el PC a la red WiFi «MaxArm_IPN» (clave: maxarm2024) "
+                                 "y prueba la conexión.")
+        self.arm_status.setWordWrap(True)
+        self.arm_status.setStyleSheet("color: #8a929b; font-size: 11px;")
+        lay.addWidget(self.arm_status)
+
+        # Botones de los 6 comandos (estilo D-pad + pinza).
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        for text, cmd, r, c in (
+            ("▲ Arriba", "arriba", 0, 1),
+            ("◀ Izquierda", "izquierda", 1, 0),
+            ("▶ Derecha", "derecha", 1, 2),
+            ("▼ Abajo", "abajo", 2, 1),
+            ("✊ Agarre", "agarre", 3, 0),
+            ("✋ Soltar", "soltar", 3, 2),
+        ):
+            b = QPushButton(text)
+            b.setMinimumHeight(34)
+            b.clicked.connect(lambda _=False, cc=cmd: self._arm_do(cc))
+            grid.addWidget(b, r, c)
+        lay.addLayout(grid)
+        return box
+
+    def _arm_client(self) -> ArmClient:
+        return ArmClient(self.arm_host.text().strip() or ARM_HOST, self.arm_port.value())
+
+    @staticmethod
+    def _fire(fn) -> None:
+        """Ejecuta ``fn`` en un hilo daemon, tragándose errores (no bloquea la GUI)."""
+        def run():
+            try:
+                fn()
+            except Exception:  # noqa: BLE001
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def _test_arm(self) -> None:
+        host, port = self.arm_host.text().strip() or ARM_HOST, self.arm_port.value()
+        client = ArmClient(host, port)
+        self.arm_status.setText("Probando conexión…")
+        # En un hilo del controlador para reflejar el resultado en la GUI.
+        self.controller._spawn(
+            client.ping,
+            lambda ok: self.arm_status.setText(
+                f"✓ Brazo conectado en {host}:{port}." if ok else
+                f"✗ Sin respuesta de {host}:{port}. ¿El PC está en la red «MaxArm_IPN»?"))
+
+    def _arm_do(self, command: str) -> None:
+        client = self._arm_client()
+        if command == "home":
+            self._fire(client.reset)
+            self.arm_status.setText("HOME enviado (posición inicial).")
+        else:
+            client.execute_async(command, self.arm_pulse.value())
+            self.arm_status.setText(f"Comando «{command}» enviado al brazo.")
 
     def _on_sink_changed(self, idx: int) -> None:
         self.sink_params.setCurrentIndex(idx)
@@ -257,6 +362,9 @@ class ControlPanel(QWidget):
                     "port": self.udp_port.value()}
         if kind == "serial":
             return {"port": self.serial_port.text().strip(), "baud": self.serial_baud.value()}
+        if kind == "arm":
+            return {"host": self.arm_host.text().strip() or ARM_HOST,
+                    "port": self.arm_port.value(), "pulse_ms": self.arm_pulse.value()}
         return {}
 
     def _set_inputs_enabled(self, enabled: bool) -> None:
