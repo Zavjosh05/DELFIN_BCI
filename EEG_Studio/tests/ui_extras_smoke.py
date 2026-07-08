@@ -110,16 +110,22 @@ def main() -> int:
     assert panel.raw_window_value() > 0
     print(f"    EEGNet config OK (F1={cfg['F1']}, D={cfg['D']}), Riemann ventana={panel.raw_window_value()}")
 
-    print("[5] Historial navegable")
+    print("[5] Historial navegable (árbol)")
     win.refresh_all()
-    hist = win.changelog_list
-    assert hist.count() >= 2, "el historial no se pobló"
-    assert hist.item(0).data(Qt.ItemDataRole.UserRole) == 0, "falta 'Estado inicial'"
-    win._on_history_click(hist.item(0))                 # navegar al inicio
+    tree = win.changelog_tree
+    root = tree.topLevelItem(0)
+    assert root is not None and root.data(0, Qt.ItemDataRole.UserRole) == 0, \
+        "falta 'Estado inicial' en la raíz del árbol"
+    assert root.childCount() >= 1, "el historial no se pobló"
+    win._on_history_click(root)                         # navegar al inicio (reconstruye)
     assert win.project.changelog.applied_count() == 0, "no navegó al inicio"
-    win._on_history_click(win.changelog_list.item(win.changelog_list.count() - 1))
+    # El árbol se reconstruye tras navegar: re-obtener los ítems y bajar a una hoja.
+    leaf = tree.topLevelItem(0)
+    while leaf.childCount() > 0:
+        leaf = leaf.child(leaf.childCount() - 1)
+    win._on_history_click(leaf)
     assert win.project.changelog.applied_count() > 0, "no volvió hacia adelante"
-    print("    clic en el historial navega por la línea de tiempo")
+    print("    clic en el árbol navega por el historial")
 
     win.acq_panel.shutdown()
     print("\nUI EXTRAS OK ✓")

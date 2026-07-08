@@ -11,11 +11,13 @@ import hashlib
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -46,6 +48,8 @@ class SignalView(QWidget):
     segment_requested = pyqtSignal(int, int)  # (start_sample, stop_sample)
     cut_requested = pyqtSignal(int, int)      # recortar (eliminar) el tramo seleccionado
     delete_segments_requested = pyqtSignal(int, int)  # borrar segmentos de la selección
+    relabel_segment_requested = pyqtSignal(str)   # reetiquetar un segmento (por id)
+    delete_segment_requested = pyqtSignal(str)    # eliminar un segmento (por id)
     mode_changed = pyqtSignal()               # cambió Cruda/Procesada
 
     def __init__(self, parent=None) -> None:
@@ -164,6 +168,8 @@ class SignalView(QWidget):
         self.plot.setClipToView(True)
         # Redibuja solo los marcadores/segmentos visibles al hacer pan/zoom.
         self.plot.getViewBox().sigXRangeChanged.connect(self._on_xrange_changed)
+        # Clic derecho sobre un segmento: reetiquetar / eliminar.
+        self.plot.scene().sigMouseClicked.connect(self._on_scene_clicked)
         layout.addWidget(self.plot, 1)
 
         # Región de selección de tiempo.
@@ -337,6 +343,40 @@ class SignalView(QWidget):
         if not self._drawing and self._data is not None:
             self._overlay_timer.start()          # agrupa redibujos del overlay
 
+    def _segment_at(self, sample: int):
+        """Segmento cuyo ``[inicio, fin)`` contiene ``sample`` (el más específico).
+
+        Devuelve ``(id, etiqueta)`` o ``None``. Necesita que los segmentos lleven
+        su id (4º elemento de la tupla)."""
+        hits = [s for s in self._segments
+                if len(s) >= 4 and s[3] and s[0] <= sample < s[1]]
+        if not hits:
+            return None
+        start, stop, label, seg_id = min(hits, key=lambda s: s[1] - s[0])[:4]
+        return seg_id, label
+
+    def _on_scene_clicked(self, ev) -> None:
+        """Clic derecho sobre un segmento → menú Reetiquetar / Eliminar."""
+        if ev.button() != Qt.MouseButton.RightButton or self._data is None:
+            return
+        try:
+            pos = self.plot.getViewBox().mapSceneToView(ev.scenePos())
+        except Exception:  # noqa: BLE001
+            return
+        hit = self._segment_at(int(round(pos.x() * self._fs)))
+        if hit is None:
+            return                                # no hay segmento aquí: menú por defecto
+        ev.accept()
+        seg_id, label = hit
+        menu = QMenu()
+        act_re = menu.addAction(f"Reetiquetar «{label}»…")
+        act_del = menu.addAction(f"Eliminar segmento «{label}»")
+        chosen = menu.exec(QCursor.pos())
+        if chosen is act_re:
+            self.relabel_segment_requested.emit(seg_id)
+        elif chosen is act_del:
+            self.delete_segment_requested.emit(seg_id)
+
     def _visible_x(self) -> tuple[float, float]:
         try:
             (x0, x1), _ = self.plot.getViewBox().viewRange()
@@ -386,10 +426,11 @@ class SignalView(QWidget):
         if not self.segments_chk.isChecked() or not self._segments:
             return
         fs, n = self._fs, self._n
-        vis = [(a, b, l) for (a, b, l) in self._segments
-               if max(0, a) / fs < x1 and min(b, n) / fs > x0]
+        vis = [s for s in self._segments
+               if max(0, s[0]) / fs < x1 and min(s[1], n) / fs > x0]
         show_labels = len(vis) <= 40
-        for start, stop, label in vis:
+        for seg in vis:
+            start, stop, label = seg[0], seg[1], seg[2]
             t0 = max(0, start) / fs
             t1 = min(stop, n) / fs
             if t1 <= t0:

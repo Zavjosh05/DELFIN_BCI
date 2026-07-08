@@ -16,10 +16,12 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QStackedWidget,
@@ -38,6 +40,7 @@ from ..acquisition import (
 )
 from ..acquisition.emotiv import quick_diagnose
 from ..acquisition.recorder import CSVRecorder
+from ..core import marks_sidecar
 from ..config import (
     CYKIT_CHANNEL_START,
     CYKIT_HOST,
@@ -64,6 +67,9 @@ class AcquisitionPanel(QWidget):
         self._seg_active = False
         self._seg_start = 0
         self._seg_label = ""
+        self._paused = False                     # grabación en pausa (no escribe)
+        self._rec_path = None
+        self._rec_alias = None
         self._roll: np.ndarray | None = None    # buffer circular para inferencia
         self._roll_filled = 0
         self._quality_tick = 0                   # para refrescar la calidad cada N ticks
@@ -102,7 +108,16 @@ class AcquisitionPanel(QWidget):
         conn.addWidget(self.connect_btn)
         layout.addLayout(conn)
 
-        # Grabación.
+        # Estado + calidad (canales detectados): ARRIBA, para que quede siempre a la
+        # vista aunque haya muchos botones de grabación debajo.
+        self.status = QLabel("Desconectado.")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.quality_label = QLabel("")
+        self.quality_label.setWordWrap(True)
+        layout.addWidget(self.quality_label)
+
+        # --- Grabación --------------------------------------------------------
         rec_box = QGroupBox("Grabación")
         rec_layout = QVBoxLayout(rec_box)
 
@@ -115,54 +130,56 @@ class AcquisitionPanel(QWidget):
         name_row.addWidget(self.name_edit, 1)
         rec_layout.addLayout(name_row)
 
-        self.record_btn = QPushButton("Iniciar grabación")
+        # Controles: iniciar/detener · pausar · descartar.
+        ctl = QHBoxLayout()
+        self.record_btn = QPushButton("● Iniciar grabación")
         self.record_btn.clicked.connect(self.toggle_recording)
-        rec_layout.addWidget(self.record_btn)
+        self.pause_btn = QPushButton("⏸ Pausar")
+        self.pause_btn.setToolTip("Pausa/reanuda la grabación (la señal en vivo sigue).")
+        self.pause_btn.clicked.connect(self.toggle_pause)
+        self.discard_btn = QPushButton("✕ Descartar")
+        self.discard_btn.setToolTip("Detiene y BORRA la grabación actual (pide confirmación).")
+        self.discard_btn.clicked.connect(self.discard_recording)
+        ctl.addWidget(self.record_btn, 2)
+        ctl.addWidget(self.pause_btn, 1)
+        ctl.addWidget(self.discard_btn, 1)
+        rec_layout.addLayout(ctl)
 
-        marker_row = QHBoxLayout()
+        # Etiqueta + botones de marca/segmento, compactos en rejilla.
         self.marker_edit = QLineEdit()
-        self.marker_edit.setPlaceholderText("Etiqueta (p.ej. ojos_cerrados / mano_izq)")
-        self.marker_btn = QPushButton("Marca (instante)")
+        self.marker_edit.setPlaceholderText("Etiqueta (p. ej. mano_izq / ojos_cerrados)")
+        rec_layout.addWidget(self.marker_edit)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(4)
+        self.marker_btn = QPushButton("Marca · F3")
         self.marker_btn.setToolTip("Marca un instante puntual en la grabación (F3).")
         self.marker_btn.clicked.connect(self._insert_marker)
-        marker_row.addWidget(self.marker_edit, 1)
-        marker_row.addWidget(self.marker_btn)
-        rec_layout.addLayout(marker_row)
-
-        # Segmento etiquetado (inicio/fin): 1º clic marca el inicio, 2º el fin.
-        self.segment_btn = QPushButton("▶ Marcar inicio de segmento")
-        self.segment_btn.setToolTip(
-            "Marca un SEGMENTO (no un instante): el 1er clic marca el inicio y el 2º el "
-            "fin, con la etiqueta de arriba. Se crea como segmento de la clase al añadir "
-            "la grabación. Atajo: F4.")
+        self.segment_btn = QPushButton("▶ Segmento · F4")
+        self.segment_btn.setToolTip("Segmento con inicio/fin: 1er clic inicio, 2º fin (F4).")
         self.segment_btn.clicked.connect(self._toggle_segment)
-        rec_layout.addWidget(self.segment_btn)
-
-        # Marca de DURACIÓN FIJA: crea un segmento de N segundos desde ahora.
-        timed_row = QHBoxLayout()
-        timed_row.addWidget(QLabel("Duración:"))
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(1, 600)
         self.duration_spin.setValue(5)
         self.duration_spin.setSuffix(" s")
         self.duration_spin.setToolTip("Duración de la marca de duración fija.")
-        timed_row.addWidget(self.duration_spin)
-        self.timed_btn = QPushButton("Marca de duración fija")
-        self.timed_btn.setToolTip(
-            "Crea un segmento de la duración indicada a partir de AHORA (p. ej. 5 s "
-            "de una clase), con la etiqueta de arriba. Atajo: F5.")
+        self.timed_btn = QPushButton("Marca fija · F5")
+        self.timed_btn.setToolTip("Segmento de la duración indicada, desde ahora (F5).")
         self.timed_btn.clicked.connect(self._add_timed_marker)
-        timed_row.addWidget(self.timed_btn, 1)
-        rec_layout.addLayout(timed_row)
+        grid.addWidget(self.marker_btn, 0, 0)
+        grid.addWidget(self.segment_btn, 0, 1)
+        grid.addWidget(self.duration_spin, 1, 0)
+        grid.addWidget(self.timed_btn, 1, 1)
+        rec_layout.addLayout(grid)
 
-        mk_hint = QLabel("• Marca = un instante (para «Segmentos desde marcadores»).\n"
-                         "• Segmento = un tramo con inicio y fin (se etiqueta como clase).\n"
-                         "• Marca de duración fija = un segmento de N s desde ahora.\n"
-                         "Atajos: F3 instante · F4 inicia/termina segmento · F5 duración fija.")
+        mk_hint = QLabel("Marca = un instante · Segmento = inicio/fin · "
+                         "Marca fija = N s desde ahora.")
         mk_hint.setWordWrap(True)
         mk_hint.setStyleSheet("color: #8a929b; font-size: 11px;")
         rec_layout.addWidget(mk_hint)
         layout.addWidget(rec_box)
+        layout.addStretch(1)
 
         # Atajos de teclado para marcar sin soltar el ratón del casco/tarea.
         self._sc_marker = QShortcut(QKeySequence("F3"), self)
@@ -174,16 +191,6 @@ class AcquisitionPanel(QWidget):
         self._sc_timed = QShortcut(QKeySequence("F5"), self)
         self._sc_timed.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self._sc_timed.activated.connect(self._add_timed_marker)
-
-        self.status = QLabel("Desconectado.")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-
-        # Indicador de calidad/ruido de la señal recibida (verde/ámbar/rojo).
-        self.quality_label = QLabel("")
-        self.quality_label.setWordWrap(True)
-        layout.addWidget(self.quality_label)
-        layout.addStretch(1)
 
     def _sim_params(self) -> QWidget:
         w = QWidget()
@@ -365,8 +372,12 @@ class AcquisitionPanel(QWidget):
             return
         if self.source.error:
             msg = self.source.error
-            self._disconnect()
-            self.controller.warn("Error de adquisición", msg)
+            self._disconnect()               # guarda la grabación en curso, si la había
+            self.status.setText(f"⚠ La fuente se detuvo: {msg}")
+            self.controller.warn(
+                "Error de adquisición",
+                f"La fuente dejó de enviar datos:\n{msg}\n\n"
+                "Vuelve a pulsar «Conectar» para seguir grabando.")
             return
         chunk = self.source.read()
         if chunk is None:
@@ -380,7 +391,7 @@ class AcquisitionPanel(QWidget):
             self._configured = True
         self.controller.live_view.append(chunk)
         self._push_buffer(chunk)
-        if self.recorder is not None:
+        if self.recorder is not None and not self._paused:   # en pausa no se escribe
             self.recorder.write(chunk)
         self._n_samples += chunk.shape[1]
         self._update_status()
@@ -468,12 +479,69 @@ class AcquisitionPanel(QWidget):
         self._rec_alias = raw_name or os.path.splitext(os.path.basename(path))[0]
         self.recorder = CSVRecorder(path, self.source.n_channels, self.source.sample_rate)
         self._rec_path = path
-        # Reinicia los segmentos de esta grabación.
+        # Reinicia el estado de esta grabación.
         self._rec_segments = []
         self._seg_active = False
-        self.segment_btn.setText("▶ Marcar inicio de segmento")
-        self.record_btn.setText("Detener grabación")
+        self._paused = False
+        self.segment_btn.setText("▶ Segmento · F4")
+        self.pause_btn.setText("⏸ Pausar")
+        self.record_btn.setText("■ Detener grabación")
+        self._flush_sidecar()                # crea el lateral (vacío) desde ya
         self.status.setText(f"Grabando «{self._rec_alias}» en {os.path.basename(path)}…")
+        self._update_states()
+
+    def _flush_sidecar(self) -> None:
+        """Escribe el archivo lateral con los segmentos actuales (blindaje anti-pérdida)."""
+        if self.recorder is None or not self._rec_path:
+            return
+        fs = self.source.sample_rate if self.source else 128.0
+        marks_sidecar.write_marks(self._rec_path, self._rec_segments, fs)
+
+    def toggle_pause(self) -> None:
+        if self.recorder is None:
+            self.controller.info("Sin grabación", "No hay ninguna grabación en curso.")
+            return
+        self._paused = not self._paused
+        self.pause_btn.setText("▶ Reanudar" if self._paused else "⏸ Pausar")
+        if self._paused:
+            self.status.setText(f"⏸ Grabación EN PAUSA en {self.recorder.n_samples} muestras…")
+        else:
+            self.status.setText(f"Grabando «{self._rec_alias}»…")
+
+    def discard_recording(self) -> None:
+        """Detiene y BORRA la grabación actual (archivo + lateral), tras confirmar."""
+        if self.recorder is None:
+            self.controller.info("Sin grabación", "No hay ninguna grabación en curso.")
+            return
+        alias = self._rec_alias or os.path.basename(self._rec_path or "")
+        if QMessageBox.question(
+                self, "Descartar grabación",
+                f"¿Descartar la grabación «{alias}»?\n\nSe borrará el archivo y sus marcas. "
+                "Esta acción no se puede deshacer.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        path = self._rec_path
+        try:
+            self.recorder.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self.recorder = None
+        self._paused = False
+        self._seg_active = False
+        self._rec_segments = []
+        self.record_btn.setText("● Iniciar grabación")
+        self.pause_btn.setText("⏸ Pausar")
+        self.segment_btn.setText("▶ Segmento · F4")
+        try:
+            if path and os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+        if path:
+            marks_sidecar.remove_marks(path)
+        self.status.setText("Grabación descartada.")
+        self._update_states()
 
     @staticmethod
     def _safe_name(name: str) -> str:
@@ -500,20 +568,25 @@ class AcquisitionPanel(QWidget):
             if stop > self._seg_start:
                 self._rec_segments.append((self._seg_start, stop, self._seg_label))
             self._seg_active = False
-            self.segment_btn.setText("▶ Marcar inicio de segmento")
+            self.segment_btn.setText("▶ Segmento · F4")
         # Recorta segmentos cuyo fin caiga más allá de lo grabado (marcas de
         # duración fija que no llegaron a completarse); descarta los vacíos.
         final = self.recorder.n_samples
         segments = [(s, min(e, final), lbl) for (s, e, lbl) in self._rec_segments
                     if s < final and min(e, final) - s >= 1]
+        self._rec_segments = segments
+        self._flush_sidecar()                # lateral final (por si el guardado fallara)
         self.recorder.close()
         path = self._rec_path
         alias = getattr(self, "_rec_alias", None)
         self.recorder = None
-        self.record_btn.setText("Iniciar grabación")
-        # Ofrecer añadir la grabación como fuente del proyecto (con nombre y segmentos).
-        if self.controller.ask_add_recording(path):
-            self.controller.add_recording_as_source(path, segments, alias)
+        self._paused = False
+        self.pause_btn.setText("⏸ Pausar")
+        self.record_btn.setText("● Iniciar grabación")
+        self._update_states()
+        # La grabación se añade como fuente del proyecto AUTOMÁTICAMENTE (sin preguntar),
+        # con su nombre y segmentos. Se guarda enseguida (no se pierde al cerrar).
+        self.controller.add_recording_as_source(path, segments, alias)
 
     def _insert_marker(self) -> None:
         if self.recorder is None:
@@ -536,6 +609,7 @@ class AcquisitionPanel(QWidget):
         stop = start + max(1, int(round(secs * fs)))     # se completará al grabar N s
         label = self.marker_edit.text().strip() or "marca"
         self._rec_segments.append((start, stop, label))
+        self._flush_sidecar()                # guarda la marca en el lateral al instante
         self.status.setText(
             f"Marca «{label}» de {secs}s añadida (se completa al grabar {secs}s)  "
             f"· {len(self._rec_segments)} segmentos.")
@@ -555,9 +629,10 @@ class AcquisitionPanel(QWidget):
         else:                                             # marcar FIN
             start, stop = self._seg_start, self.recorder.n_samples
             self._seg_active = False
-            self.segment_btn.setText("▶ Marcar inicio de segmento")
+            self.segment_btn.setText("▶ Segmento · F4")
             if stop > start:
                 self._rec_segments.append((start, stop, self._seg_label))
+                self._flush_sidecar()         # guarda el segmento en el lateral
                 fs = self.source.sample_rate if self.source else 128.0
                 dur = (stop - start) / max(1.0, fs)
                 self.status.setText(
@@ -569,6 +644,7 @@ class AcquisitionPanel(QWidget):
     # --- Estados de los botones ------------------------------------------
     def _update_states(self) -> None:
         connected = self.source is not None
+        recording = self.recorder is not None
         self.connect_btn.setText("Desconectar" if connected else "Conectar")
         self.source_combo.setEnabled(not connected)
         self.params.setEnabled(not connected)
@@ -576,11 +652,15 @@ class AcquisitionPanel(QWidget):
         self.marker_btn.setEnabled(connected)
         self.segment_btn.setEnabled(connected)
         self.timed_btn.setEnabled(connected)
+        # Pausar/descartar solo tienen sentido mientras se graba.
+        self.pause_btn.setEnabled(recording)
+        self.discard_btn.setEnabled(recording)
 
     def shutdown(self) -> None:
         """Cierre limpio al salir de la aplicación."""
         self._timer.stop()
         if self.recorder is not None:
+            self._flush_sidecar()        # deja las marcas en disco (recuperables al reabrir)
             self.recorder.close()
             self.recorder = None
         if self.source is not None:

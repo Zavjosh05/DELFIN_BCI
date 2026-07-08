@@ -276,8 +276,18 @@ class EmotivDongleSource(StreamSource):
             mode, cipher = self._select_mode(device, serial)
             product = info.get("product_string") or "Emotiv"
             self._info = f"{product} · serie {serial} · modo {mode}"
+            fails = 0
             while self._running.is_set():
-                block = self._read_block(device)
+                # Tolera fallos transitorios de lectura USB (un hipo del dongle no
+                # debe tumbar toda la sesión); solo se rinde si persisten ~10 s.
+                try:
+                    block = self._read_block(device)
+                except Exception:  # noqa: BLE001
+                    fails += 1
+                    if fails > 50:
+                        raise
+                    continue
+                fails = 0
                 if block is None:
                     continue
                 frame = cipher.decrypt(block)

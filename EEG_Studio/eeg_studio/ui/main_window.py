@@ -31,6 +31,8 @@ from PyQt6.QtWidgets import (
     QStyle,
     QTabWidget,
     QToolBar,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -231,11 +233,21 @@ class MainWindow(QMainWindow):
             self.center_stack.setCurrentWidget(self.center_tabs)
 
     def _build_docks(self) -> None:
+        # Permite arrastrar los paneles a cualquier borde y anidarlos/dividir áreas
+        # (más libertad para acomodar la disposición). "Ver → Restaurar paneles"
+        # deja todo en su sitio de nuevo.
+        self.setDockNestingEnabled(True)
+
         # Izquierda: fuentes (CSV) del proyecto.
         self.sources_list = QListWidget()
         self.sources_list.currentRowChanged.connect(self._on_source_selected)
-        self.sources_list.itemDoubleClicked.connect(
-            lambda _it: self.open_source_window())   # doble clic: abrir en ventana
+        # Renombrar con clic izquierdo sobre la señal ya seleccionada (o F2):
+        # edición en el sitio. «Abrir en ventana nueva» pasa al menú contextual.
+        self.sources_list.setEditTriggers(
+            QListWidget.EditTrigger.SelectedClicked
+            | QListWidget.EditTrigger.DoubleClicked
+            | QListWidget.EditTrigger.EditKeyPressed)
+        self.sources_list.itemChanged.connect(self._on_source_renamed)
         self.sources_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.sources_list.customContextMenuRequested.connect(self._on_sources_menu)
         self.src_dock = QDockWidget("Fuentes (CSV)", self)
@@ -261,23 +273,35 @@ class MainWindow(QMainWindow):
         self.right_dock.setMinimumWidth(340)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.right_dock)
 
-        # Abajo: historial de cambios navegable (línea de tiempo).
+        # Abajo: historial de cambios navegable, como ÁRBOL colapsable.
         hist_container = QWidget()
         hist_layout = QVBoxLayout(hist_container)
         hist_layout.setContentsMargins(6, 4, 6, 6)
-        hint = QLabel("Árbol de cambios · clic para navegar · las ramas conservan lo hecho")
+        hrow = QHBoxLayout()
+        hint = QLabel("Árbol de cambios · clic para navegar · ▶ actual · ⑂ bifurcación")
         hint.setStyleSheet("color: #8a929b; font-size: 11px;")
-        hist_layout.addWidget(hint)
-        self.changelog_list = QListWidget()
-        self.changelog_list.setAlternatingRowColors(True)
-        self.changelog_list.setStyleSheet(
-            "QListWidget { border: none; background: #14181d; }"
-            "QListWidget::item { padding: 3px 4px; }"
-            "QListWidget::item:alternate { background: #181d23; }"
-            "QListWidget::item:hover { background: #243042; }"
+        hrow.addWidget(hint, 1)
+        collapse_btn = QPushButton("Colapsar ramas")
+        collapse_btn.setToolTip("Contrae las ramas para ver solo la estructura.")
+        collapse_btn.clicked.connect(lambda: self.changelog_tree.collapseAll())
+        expand_btn = QPushButton("Expandir")
+        expand_btn.clicked.connect(lambda: self.changelog_tree.expandAll())
+        for b in (collapse_btn, expand_btn):
+            b.setStyleSheet("padding: 1px 8px; font-size: 11px;")
+            hrow.addWidget(b)
+        hist_layout.addLayout(hrow)
+        self.changelog_tree = QTreeWidget()
+        self.changelog_tree.setHeaderHidden(True)
+        self.changelog_tree.setIndentation(16)
+        self.changelog_tree.setUniformRowHeights(True)
+        self.changelog_tree.setStyleSheet(
+            "QTreeWidget { border: none; background: #14181d; }"
+            "QTreeWidget::item { padding: 2px 2px; }"
+            "QTreeWidget::item:hover { background: #243042; }"
+            "QTreeWidget::item:selected { background: #24402f; color: #eaf6ef; }"
         )
-        self.changelog_list.itemClicked.connect(self._on_history_click)
-        hist_layout.addWidget(self.changelog_list)
+        self.changelog_tree.itemClicked.connect(self._on_history_click)
+        hist_layout.addWidget(self.changelog_tree)
         self.log_dock = QDockWidget("Historial", self)
         self.log_dock.setWidget(hist_container)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
@@ -463,6 +487,46 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Proyecto abierto: {self.project.path}"
             + (f"  ·  {n} modelo(s) cargado(s)" if n else ""))
+        self._offer_orphan_recordings()
+
+    def _offer_orphan_recordings(self) -> None:
+        """Si hay grabaciones en recordings/ sin añadir, ofrece incorporarlas."""
+        if self.project is None:
+            return
+        orphans = self.project.orphan_recordings()
+        if not orphans:
+            return
+        res = QMessageBox.question(
+            self, "Grabaciones sin añadir",
+            f"Hay {len(orphans)} grabación(es) en la carpeta «recordings/» que no están "
+            f"en el proyecto (p. ej. de una sesión anterior).\n\n¿Añadirlas ahora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if res == QMessageBox.StandardButton.Yes:
+            self.add_orphan_recordings(orphans)
+
+    def add_orphan_recordings(self, paths=None) -> int:
+        """Añade como fuentes las grabaciones sueltas de recordings/. Devuelve cuántas."""
+        if not self._require_project():
+            return 0
+        paths = paths if paths is not None else self.project.orphan_recordings()
+        from ..core import marks_sidecar
+        added, n_seg = 0, 0
+        for p in paths:
+            try:
+                src = self.project.add_source(p)
+                for start, stop, label in marks_sidecar.read_marks(p):   # restaura marcas
+                    self.project.add_segment(src["id"], start, stop, label)
+                    n_seg += 1
+                added += 1
+            except Exception:  # noqa: BLE001
+                pass
+        if added:
+            self.refresh_all()
+            self._persist_now()
+            extra = f" · {n_seg} segmento(s) recuperados" if n_seg else ""
+            self.statusBar().showMessage(f"{added} grabación(es) añadida(s){extra}.")
+        return added
 
     # ------------------------------------------------------------------ #
     # Proyectos recientes (persisten entre sesiones vía QSettings)
@@ -834,7 +898,9 @@ class MainWindow(QMainWindow):
             self._set_dirty(False)
             self.statusBar().showMessage("Guardado automáticamente.", 1500)
         except Exception as exc:  # noqa: BLE001
-            self.statusBar().showMessage(f"No se pudo autoguardar: {exc}", 3000)
+            # No se rinde: reintenta (deja el proyecto marcado como pendiente).
+            self.statusBar().showMessage(f"No se pudo autoguardar (reintentando)…: {exc}", 3000)
+            self._autosave_timer.start()
 
     def _auto_exclude_eog(self) -> int:
         """Marca como excluidos los canales EOG de todas las fuentes (no destructivo).
@@ -1022,6 +1088,8 @@ class MainWindow(QMainWindow):
             view.segment_requested.connect(self._on_segment_requested)
             view.cut_requested.connect(self._on_cut_requested)
             view.delete_segments_requested.connect(self._on_delete_segments_in_selection)
+            view.relabel_segment_requested.connect(self.relabel_segment)
+            view.delete_segment_requested.connect(self.remove_segment)
             view.mode_changed.connect(self._update_signal_view)
             self._source_views[sid] = view
             src = self.project.get_source(sid) if self.project else None
@@ -1147,9 +1215,10 @@ class MainWindow(QMainWindow):
             (e["sample"], e["id"]) for e in rec.events
             if not any(ca <= e["sample"] < cb for ca, cb in cuts)
         ])
-        # Segmentos ya etiquetados de esta fuente, sombreados por clase.
+        # Segmentos ya etiquetados de esta fuente, sombreados por clase (con su id
+        # para poder reetiquetarlos/eliminarlos con clic derecho).
         view.set_segments([
-            (s["start"], s["stop"], s["label"])
+            (s["start"], s["stop"], s["label"], s["id"])
             for s in self.project.state["segments"]
             if s["source_id"] == sid
         ])
@@ -1824,9 +1893,100 @@ class MainWindow(QMainWindow):
         sid = self.project.sources[row]["id"]
         menu = QMenu(self)
         menu.addAction("Abrir en ventana nueva", lambda: self.open_source_window(sid))
+        menu.addAction("Renombrar…", lambda: self._rename_source_dialog(sid))
+        menu.addAction("Ver datos (tabla numérica)…", lambda: self.view_source_data(sid))
+        menu.addAction("Exportar CSV (descomprimido)…", lambda: self.export_source_csv(sid))
         menu.addSeparator()
+        menu.addAction("Buscar grabaciones sueltas…", self._offer_orphan_recordings)
         menu.addAction("Quitar del proyecto…", self.remove_current_source)
         menu.exec(self.sources_list.mapToGlobal(pos))
+
+    def _on_source_renamed(self, item) -> None:
+        """Edición en el sitio de la lista de fuentes → renombra la señal."""
+        if self.project is None:
+            return
+        row = self.sources_list.row(item)
+        if row < 0 or row >= len(self.project.sources):
+            return
+        self.rename_source(self.project.sources[row]["id"], item.text())
+
+    def _rename_source_dialog(self, source_id: str) -> None:
+        src = self.project.get_source(source_id) if self.project else None
+        if src is None:
+            return
+        name, ok = QInputDialog.getText(self, "Renombrar señal", "Nuevo nombre:",
+                                        text=src["alias"])
+        if ok:
+            self.rename_source(source_id, name)
+
+    def rename_source(self, source_id: str, new_name: str) -> None:
+        if not self._require_project():
+            return
+        try:
+            changed = self.project.rename_source(source_id, new_name)
+        except OSError as exc:
+            QMessageBox.warning(self, "No se pudo renombrar el archivo", str(exc))
+            self._refresh_sources()             # revierte el texto mostrado
+            return
+        if changed:
+            self._after_state_change()
+        else:
+            self._refresh_sources()             # nombre vacío o igual: revierte
+
+    def export_source_csv(self, source_id: str) -> None:
+        """Exporta el CSV de una fuente **descomprimido** a la ubicación elegida.
+
+        Útil para abrirlo en VS Code u otro editor, que no leen ``.csv.gz``."""
+        if not self._require_project():
+            return
+        src = self.project.get_source(source_id)
+        if src is None:
+            return
+        path = self.project._resolve_path(src["path"])
+        if not os.path.isfile(path):
+            QMessageBox.warning(self, "No encontrado",
+                                f"No se encuentra el archivo de la fuente:\n{path}")
+            return
+        default = os.path.join(os.path.expanduser("~"), f"{src['alias']}.csv")
+        out, _ = QFileDialog.getSaveFileName(
+            self, "Exportar CSV (descomprimido)", default, "CSV (*.csv)")
+        if not out:
+            return
+        try:
+            self._write_plain_csv(path, out)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "No se pudo exportar", f"{out}\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"CSV exportado: {out}")
+        QMessageBox.information(self, "CSV exportado",
+                               f"Guardado (descomprimido) en:\n{out}")
+
+    @staticmethod
+    def _write_plain_csv(src_path: str, out_path: str) -> None:
+        """Escribe ``src_path`` en ``out_path`` como CSV plano (descomprime si es .gz)."""
+        import shutil
+        if src_path.lower().endswith(".gz"):
+            import gzip
+            with gzip.open(src_path, "rb") as fin, open(out_path, "wb") as fout:
+                shutil.copyfileobj(fin, fout)
+        else:
+            shutil.copyfile(src_path, out_path)
+
+    def view_source_data(self, source_id: str) -> None:
+        """Abre un visor con los datos de la fuente en forma numérica (tabla)."""
+        if not self._require_project():
+            return
+        try:
+            rec = self.project.get_recording(source_id)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "No se pudo cargar", str(exc))
+            return
+        src = self.project.get_source(source_id)
+        alias = src["alias"] if src else source_id
+        from .csv_view import build_data_dialog
+        dlg = build_data_dialog(self, rec, rec.channel_names, f"Datos — {alias}",
+                                on_export=lambda: self.export_source_csv(source_id))
+        dlg.exec()
 
     def open_source_window(self, source_id: str | None = None) -> None:
         """Abre una fuente en una ventana aparte (se pueden tener varias a la vez)."""
@@ -1851,7 +2011,11 @@ class MainWindow(QMainWindow):
         self.sources_list.clear()
         if self.project:
             for src in self.project.sources:
-                self.sources_list.addItem(QListWidgetItem(src["alias"]))
+                item = QListWidgetItem(src["alias"])
+                # Editable en el sitio para renombrar (clic izquierdo / F2).
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                item.setToolTip("Clic para renombrar (o F2, o clic derecho → Renombrar).")
+                self.sources_list.addItem(item)
             if self.current_source_id:
                 ids = [s["id"] for s in self.project.sources]
                 if self.current_source_id in ids:
@@ -1865,52 +2029,55 @@ class MainWindow(QMainWindow):
         "dataset": "📊", "channel_aliases": "🏷", "excluded_channels": "🚫",
     }
 
-    def _add_history_item(self, text: str, target: int, *, current: bool,
-                          applied: bool) -> None:
-        item = QListWidgetItem(text)
-        item.setData(Qt.ItemDataRole.UserRole, target)
-        if current:
-            font = item.font(); font.setBold(True); item.setFont(font)
-            item.setForeground(QColor("#9be7c4"))
-            item.setBackground(QColor("#1f3a2e"))
-        elif not applied:
-            font = item.font(); font.setItalic(True); item.setFont(font)
-            item.setForeground(QColor("#727a83"))   # rehacible: atenuado
-        else:
-            item.setForeground(QColor("#c8d0d8"))
-        self.changelog_list.addItem(item)
-
     def _refresh_history(self) -> None:
-        """Pinta el historial como ÁRBOL: cada rama con su sangría.
+        """Pinta el historial como ÁRBOL colapsable (QTreeWidget).
 
-        La rama actual va resaltada; las ramas/estados no aplicados, atenuados.
-        Un clic navega a ese nodo (aunque esté en otra rama).
+        Cada nodo cuelga de su padre; la rama actual va resaltada (▶) y en negrita,
+        las ramas/estados no aplicados se atenúan. Un clic navega a ese nodo.
         """
-        self.changelog_list.clear()
+        tree = self.changelog_tree
+        tree.clear()
         if not self.project:
             return
-        cl = self.project.changelog
+        stack: list[QTreeWidgetItem] = []      # stack[d] = último ítem visto a profundidad d
         current_item = None
-        for node in cl.nodes():
-            indent = "    " * node["depth"]
+        for node in self.project.changelog.nodes():
+            depth = node["depth"]
             if node["is_root"]:
-                icon, desc, ts = "⏮", "Estado inicial", ""
+                text = "⏮  Estado inicial"
             else:
                 icon = self._HISTORY_ICONS.get(node["section"], "•")
-                desc = node["description"]
-                ts = "    ·  " + time.strftime("%H:%M:%S", time.localtime(node["timestamp"]))
-            branch = "  ⑂" if node["n_children"] > 1 else ""   # punto de bifurcación
-            marker = "▶  " if node["is_current"] else ("   " if node["on_path"] else "↳  ")
-            text = f"{indent}{marker}{icon}  {desc}{branch}{ts}"
-            self._add_history_item(text, node["id"], current=node["is_current"],
-                                   applied=node["on_path"])
+                ts = time.strftime("%H:%M:%S", time.localtime(node["timestamp"]))
+                branch = "   ⑂" if node["n_children"] > 1 else ""
+                text = f"{icon}  {node['description']}{branch}    ·  {ts}"
+            item = QTreeWidgetItem([("▶  " if node["is_current"] else "") + text])
+            item.setData(0, Qt.ItemDataRole.UserRole, node["id"])
+            item.setToolTip(0, text)
             if node["is_current"]:
-                current_item = self.changelog_list.item(self.changelog_list.count() - 1)
-        if current_item is not None:
-            self.changelog_list.scrollToItem(current_item)
+                f = item.font(0); f.setBold(True); item.setFont(0, f)
+                item.setForeground(0, QColor("#9be7c4"))
+                current_item = item
+            elif not node["on_path"]:            # rama no aplicada: atenuada/cursiva
+                f = item.font(0); f.setItalic(True); item.setFont(0, f)
+                item.setForeground(0, QColor("#7c848d"))
+            else:
+                item.setForeground(0, QColor("#c8d0d8"))
 
-    def _on_history_click(self, item) -> None:
-        target = item.data(Qt.ItemDataRole.UserRole)
+            parent = stack[depth - 1] if depth > 0 and len(stack) >= depth else None
+            if parent is None:
+                tree.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
+            del stack[depth:]
+            stack.append(item)
+
+        tree.expandAll()
+        if current_item is not None:
+            tree.setCurrentItem(current_item)
+            tree.scrollToItem(current_item)
+
+    def _on_history_click(self, item, *_args) -> None:
+        target = item.data(0, Qt.ItemDataRole.UserRole)
         if self.project is None or target is None:
             return
         if int(target) != self.project.changelog.current_id:
@@ -1960,7 +2127,10 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "No se pudo añadir", f"{path}\n\n{exc}")
             return
-        # Segmentos marcados en vivo (start, stop, etiqueta) → segmentos del proyecto.
+        # Si no llegan segmentos, recupéralos del archivo lateral (.marks.json).
+        if not segments:
+            from ..core import marks_sidecar
+            segments = marks_sidecar.read_marks(path)
         n_seg = 0
         if segments and isinstance(src, dict) and src.get("id"):
             sid = src["id"]
@@ -1968,16 +2138,33 @@ class MainWindow(QMainWindow):
                 self.project.add_segment(sid, int(start), int(stop), str(label))
                 n_seg += 1
         self.refresh_all()
+        self._persist_now()              # guarda YA (blindaje: no se pierde al cerrar)
         extra = f" con {n_seg} segmento(s)" if n_seg else ""
         self.statusBar().showMessage(f"Grabación añadida como fuente{extra}.")
 
+    def _persist_now(self) -> None:
+        """Guarda el proyecto inmediatamente (no depende del temporizador de autosave)."""
+        if self.project is None:
+            return
+        try:
+            self._autosave_timer.stop()
+            self.project.save()
+            self._set_dirty(False)
+        except Exception:  # noqa: BLE001
+            self.request_autosave()      # si falla, al menos deja el autosave programado
+
     def closeEvent(self, event) -> None:  # noqa: N802 (API de Qt)
         try:
-            if self._autosave_timer.isActive() and self.project is not None:
-                self._autosave_timer.stop()
-                self.project.save()       # vaciar guardado pendiente al salir
             self.control_panel.shutdown()
-            self.acq_panel.shutdown()
+            self.acq_panel.shutdown()     # cierra grabación en curso (deja CSV + lateral)
+            # Guardado de PRECAUCIÓN al cerrar: siempre que haya proyecto, no solo si
+            # había un autosave pendiente (blindaje contra pérdida de datos).
+            if self.project is not None:
+                try:
+                    self._autosave_timer.stop()
+                    self.project.save()
+                except Exception:  # noqa: BLE001
+                    pass
         finally:
             super().closeEvent(event)
 

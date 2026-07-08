@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -41,6 +42,20 @@ from . import preprocessing
 from .changelog import ChangeLog, EditCommand, snapshot
 from .csv_loader import load_recording
 from .recording import Recording
+
+
+def _safe_filename(name: str) -> str:
+    """Nombre de archivo seguro (sin caracteres problemáticos; espacios → '_')."""
+    name = re.sub(r"[^\w\- ]", "", name or "", flags=re.UNICODE).strip()
+    return re.sub(r"\s+", "_", name)
+
+
+def _split_csv_ext(basename: str) -> str:
+    """Devuelve la extensión conservando ``.csv.gz`` como una sola."""
+    low = basename.lower()
+    if low.endswith(".csv.gz"):
+        return ".csv.gz"
+    return os.path.splitext(basename)[1]
 
 
 def _default_state() -> dict:
@@ -118,10 +133,21 @@ class Project:
             "sources": sources_persist,
             "state": self.state,
         }
-        with open(os.path.join(self.path, PROJECT_MANIFEST), "w", encoding="utf-8") as fh:
-            json.dump(manifest, fh, indent=2, ensure_ascii=False)
-        with open(os.path.join(self.path, CHANGELOG_FILE), "w", encoding="utf-8") as fh:
-            json.dump(self._persisted_changelog(), fh, indent=2, ensure_ascii=False)
+        # Escritura ATÓMICA (a .tmp y os.replace): un fallo/corte a mitad de guardado
+        # nunca deja el project.json/changelog.json corrupto.
+        self._atomic_write_json(os.path.join(self.path, PROJECT_MANIFEST), manifest)
+        self._atomic_write_json(os.path.join(self.path, CHANGELOG_FILE),
+                                self._persisted_changelog())
+
+    @staticmethod
+    def _atomic_write_json(path: str, data) -> None:
+        """Escribe ``data`` como JSON de forma atómica (temporal + reemplazo)."""
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
 
     # ------------------------------------------------------------------ #
     # Fuentes (CSV)
@@ -160,6 +186,25 @@ class Project:
 
     def get_source(self, source_id: str) -> dict | None:
         return next((s for s in self.sources if s["id"] == source_id), None)
+
+    def orphan_recordings(self) -> list[str]:
+        """CSV en ``recordings/`` que NO están registrados como fuente del proyecto.
+
+        Sirve para recuperar grabaciones que quedaron en disco sin añadirse."""
+        rec_dir = os.path.join(self.path, RECORDINGS_DIR)
+        if not os.path.isdir(rec_dir):
+            return []
+        known = {os.path.normcase(os.path.abspath(self._resolve_path(s.get("path", ""))))
+                 for s in self.sources if s.get("path")}
+        out = []
+        for fn in sorted(os.listdir(rec_dir)):
+            low = fn.lower()
+            if not (low.endswith(".csv") or low.endswith(".csv.gz")):
+                continue
+            full = os.path.abspath(os.path.join(rec_dir, fn))
+            if os.path.normcase(full) not in known:
+                out.append(full)
+        return out
 
     def is_internal_path(self, path: str) -> bool:
         """True si ``path`` vive dentro de la carpeta del proyecto.
@@ -240,6 +285,39 @@ class Project:
                      setter=lambda v: setattr(self, "sources", v))
         with self._lock:                       # forzar recarga desde la nueva ruta
             self._recordings.pop(source_id, None)
+
+    def rename_source(self, source_id: str, new_alias: str) -> bool:
+        """Renombra una fuente: cambia su nombre mostrado (alias) y, si el archivo
+        es **interno** al proyecto, también lo renombra en disco (conservando la
+        extensión). No toca los archivos de origen externos. Devuelve si cambió."""
+        src = self.get_source(source_id)
+        if src is None:
+            return False
+        new_alias = (new_alias or "").strip()
+        if not new_alias or new_alias == src["alias"]:
+            return False
+        new_sources = [dict(s) for s in self.sources]
+        target = next(s for s in new_sources if s["id"] == source_id)
+        target["alias"] = new_alias
+
+        # Renombra el archivo si vive dentro del proyecto (recordings/, imported/…).
+        old_path = self._resolve_path(src["path"])
+        if self.is_internal_path(old_path) and os.path.isfile(old_path):
+            folder = os.path.dirname(old_path)
+            ext = _split_csv_ext(os.path.basename(old_path))
+            base = _safe_filename(new_alias) or "senal"
+            cand = os.path.join(folder, base + ext)
+            i = 2
+            while os.path.exists(cand) and os.path.abspath(cand) != os.path.abspath(old_path):
+                cand = os.path.join(folder, f"{base}_{i}{ext}")
+                i += 1
+            if os.path.abspath(cand) != os.path.abspath(old_path):
+                os.rename(old_path, cand)       # el id no cambia → caché sigue válida
+            target["path"] = cand
+
+        self._commit("sources", new_sources, f"Renombrar fuente a «{new_alias}»",
+                     setter=lambda v: setattr(self, "sources", v))
+        return True
 
     def get_recording(self, source_id: str) -> Recording:
         with self._lock:

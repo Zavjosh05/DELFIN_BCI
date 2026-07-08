@@ -21,6 +21,10 @@ class SignalWindow(QMainWindow):
 
         self.view = SignalView()
         self.view.mode_changed.connect(self.reload)
+        # Clic derecho sobre un segmento: reetiquetar / eliminar (funciona por id,
+        # independiente de la fuente activa en la ventana principal).
+        self.view.relabel_segment_requested.connect(controller.relabel_segment)
+        self.view.delete_segment_requested.connect(controller.remove_segment)
         self.setCentralWidget(self.view)
 
         src = controller.project.get_source(source_id) if controller.project else None
@@ -47,7 +51,7 @@ class SignalWindow(QMainWindow):
         self.view.set_markers([(e["sample"], e["id"]) for e in rec.events
                                if not any(ca <= e["sample"] < cb for ca, cb in cuts)])
         self.view.set_segments([
-            (s["start"], s["stop"], s["label"])
+            (s["start"], s["stop"], s["label"], s["id"])
             for s in proj.state["segments"] if s["source_id"] == self.source_id
         ])
 

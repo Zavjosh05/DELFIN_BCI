@@ -43,7 +43,8 @@ def main(csv_path: str) -> int:
 
     assert win.sources_list.count() == 1, "la lista de fuentes no se pobló"
     assert win.preproc_panel.steps_list.count() == 2, "el pipeline no se reflejó"
-    assert win.changelog_list.count() >= 2, "el historial de cambios está vacío"
+    root = win.changelog_tree.topLevelItem(0)
+    assert root is not None and root.childCount() >= 1, "el historial de cambios está vacío"
     print("GUI OK: ventana, visor, paneles y worker funcionan en offscreen.")
     return 0
 

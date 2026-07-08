@@ -15,6 +15,33 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-01]
 
 ### Añadido
+- **Pausar y descartar la grabación**: botón **⏸ Pausar/Reanudar** (la señal en
+  vivo sigue; en pausa no se escribe) y **✕ Descartar** (detiene y borra el archivo
+  y sus marcas, **pidiendo confirmación**).
+- **Archivo lateral de marcas** (`<csv>.marks.json`): los segmentos de cada
+  grabación se guardan **junto al CSV mientras grabas** (escritura atómica), no
+  solo en el proyecto. Si la app se cierra o falla, las marcas quedan en disco y se
+  **recuperan** al añadir/reabrir la grabación. Blindaje contra la pérdida de marcas.
+- **Renombrar señales desde la lista de Fuentes**: **clic izquierdo** sobre la
+  señal ya seleccionada (o **F2**, o clic derecho → **Renombrar…**) la edita en el
+  sitio. Cambia el nombre mostrado y, si el archivo es **interno** al proyecto,
+  también **renombra el CSV en disco** (conserva la extensión `.csv`/`.csv.gz`,
+  con sufijo si hay colisión); las fuentes **externas** solo cambian el nombre
+  mostrado (el archivo de origen no se toca). Reversible con Ctrl+Z. «Abrir en
+  ventana nueva» pasó al **menú contextual** (clic derecho).
+- **Exportar CSV (descomprimido)** y **visor de datos numérico** en el menú
+  contextual de *Fuentes* (clic derecho): «Exportar CSV (descomprimido)…» guarda
+  el CSV **en texto plano** en la ubicación que elijas (descomprime los `.csv.gz`
+  para poder abrirlos en VS Code u otros editores que no leen comprimidos), y
+  «Ver datos (tabla numérica)…» abre una **tabla eficiente** (virtualizada, apta
+  para grabaciones grandes) con los valores: nº de muestra, tiempo, cada canal y
+  el `Event Id`. El visor incluye un botón para exportar y un «ir a muestra».
+- **Editar segmentos desde el visor de la señal (clic derecho)**: sobre un
+  segmento etiquetado, un menú permite **Reetiquetar** (cambiar su clase, con la
+  lista de clases existentes) o **Eliminar** el segmento. Si hay segmentos
+  solapados, actúa sobre el **más específico** (el de menor duración bajo el
+  cursor). Funciona en el visor de análisis y en las ventanas de señal
+  desacopladas; reversible con Ctrl+Z.
 - **Nombrar la grabación**: campo «Nombre» en el panel de adquisición. Se usa como
   nombre del CSV (saneado y con sufijo `_2`, `_3`… si ya existe) y como **alias**
   de la fuente al añadirla. Si se deja vacío, se usa la fecha/hora
@@ -80,6 +107,16 @@ cambios se agrupan por fecha de trabajo.
   barras de desplazamiento); en la interfaz las tablas siguen igual.
 
 ### Corregido
+- **Grabaciones que se perdían al cerrar** (blindado): al añadir una grabación como
+  fuente no se guardaba, así que si cerrabas sin otro cambio, las altas se perdían.
+  Ahora **se guarda de inmediato** (no depende del temporizador), hay **guardado de
+  precaución al cerrar** la app (siempre que haya proyecto), y las marcas quedan
+  además en su **archivo lateral**. Al abrir un proyecto se detectan las grabaciones
+  de `recordings/` no añadidas y se ofrece incorporarlas **con sus marcas**; también
+  desde el menú contextual → «Buscar grabaciones sueltas…».
+- **Adquisición Emotiv más robusta**: el lector **tolera fallos transitorios** de
+  lectura USB (un hipo del dongle ya no tumba toda la sesión; solo se rinde si
+  persisten ~10 s), y si la fuente se detiene se **muestra el motivo** en el panel.
 - **Proyecto portátil**: las rutas de las fuentes **internas** (dentro de la
   carpeta `.eegproj`: `recordings/`, `imported/`…) se guardan **relativas al
   proyecto** en `project.json` y en `changelog.json`, y se **resuelven contra la
@@ -96,6 +133,20 @@ cambios se agrupan por fecha de trabajo.
   datos; las medidas del canal aislado siguen mostrando los valores reales.
 
 ### Cambiado
+- **Árbol de cambios más navegable**: el historial pasa de una lista con sangría a
+  un **árbol colapsable** (cada nodo cuelga de su padre), con botones **Expandir /
+  Colapsar ramas**, la rama actual resaltada (▶) y las bifurcaciones marcadas (⑂).
+- **Guardado más robusto**: el proyecto se escribe de forma **atómica** (a un
+  temporal + reemplazo con `fsync`), de modo que un fallo/corte a mitad de guardado
+  **no corrompe** `project.json`/`changelog.json`; y el **autoguardado reintenta**
+  si una escritura falla.
+- **La grabación se añade automáticamente** como fuente al terminar (antes
+  preguntaba «¿Añadirla como fuente?»). Se guarda enseguida, con su nombre y sus
+  segmentos.
+- **Panel de adquisición reordenado**: el **estado y la calidad de la señal
+  (canales detectados)** se muestran **arriba** (siempre a la vista), y los botones
+  de marca/segmento se **compactan en rejilla** (marca · segmento · marca fija) para
+  que no queden amontonados.
 - **Visor en vivo — escala seleccionable**: nuevo modo **«Fija (µV)»** (por
   defecto, estilo OpenViBE) con escala en microvoltios **constante y ajustable**
   (selector «µV/canal»), para que la escala **no cambie sola** y las amplitudes
