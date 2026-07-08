@@ -19,14 +19,23 @@ cambios se agrupan por fecha de trabajo.
   **Control**. Sección de **prueba manual** con botones para los 6 comandos del
   proyecto Delfin (**Arriba, Abajo, Izquierda, Derecha, Agarre, Soltar**), además de
   **HOME** y **Probar conexión**. Envía peticiones **HTTP** al firmware (punto de
-  acceso `MaxArm_IPN`, `http://192.168.4.1`): `/cmd?id=&v=` mueve los servos
-  (1=Hombro → arriba/abajo, 4=rotación de pinza → izquierda/derecha) mediante
-  **pulsos** de velocidad continua, y `/pump?on=` activa la succión (agarre/soltar).
+  acceso `MaxArm_IPN`, `http://192.168.4.1`): `/cmd?<id>=<valor>` mueve los servos
+  (**1=Hombro** → arriba/abajo) mediante **pulsos** de velocidad continua, y
+  `/pump?on=` activa la bomba de succión (**agarre**=encender, **soltar**=apagar).
   Nueva **salida «Brazo MaxArm (HTTP)»** en el modo en tiempo real, para que el
   **clasificador mueva el brazo** con las clases detectadas («controlar con la
   mente»). El envío es **no bloqueante** (cada comando en su propio hilo) y el mapeo
   clase→acción vive en `inference/arm.py` (editable). Cliente HTTP nuevo
   (`ArmClient`) + salida (`ArmHttpSink`), con `make_sink("arm", …)`.
+
+### Corregido
+- **Formato de `/cmd` del brazo MaxArm**: se enviaba `/cmd?id=<n>&v=<x>`, pero el
+  firmware espera la clave del servo directamente (`/cmd?<n>=<x>`, p. ej.
+  `/cmd?1=1.000`); por eso solo respondía HOME. Ahora los movimientos funcionan.
+- **Izquierda/Derecha** apuntaban a la **base giratoria (servo 2)**, que está
+  **sin servicio** en el firmware: sus botones siguen visibles pero **inhabilitados**
+  (y el clasificador los ignora). Arriba/Abajo controlan el Hombro; Agarre/Soltar,
+  la bomba.
 
 ---
 

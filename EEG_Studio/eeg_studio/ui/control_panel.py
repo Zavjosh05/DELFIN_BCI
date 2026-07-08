@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..inference.arm import (
+    ARM_DISABLED,
     DEFAULT_HOST as ARM_HOST,
     DEFAULT_PORT as ARM_PORT,
     DEFAULT_PULSE_MS as ARM_PULSE,
@@ -216,6 +217,9 @@ class ControlPanel(QWidget):
         lay.addWidget(self.arm_status)
 
         # Botones de los 6 comandos (estilo D-pad + pinza).
+        #   Arriba/Abajo -> Hombro (servo 1); Agarre/Soltar -> bomba de succión.
+        #   Izquierda/Derecha -> base giratoria (servo 2), sin servicio: se
+        #   muestran pero quedan inhabilitados.
         grid = QGridLayout()
         grid.setSpacing(6)
         for text, cmd, r, c in (
@@ -228,7 +232,11 @@ class ControlPanel(QWidget):
         ):
             b = QPushButton(text)
             b.setMinimumHeight(34)
-            b.clicked.connect(lambda _=False, cc=cmd: self._arm_do(cc))
+            if cmd in ARM_DISABLED:
+                b.setEnabled(False)
+                b.setToolTip("Base giratoria (servo 2) sin servicio en el brazo.")
+            else:
+                b.clicked.connect(lambda _=False, cc=cmd: self._arm_do(cc))
             grid.addWidget(b, r, c)
         lay.addLayout(grid)
         return box

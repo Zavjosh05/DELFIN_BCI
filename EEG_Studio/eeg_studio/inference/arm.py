@@ -1,17 +1,24 @@
 """Control del brazo robótico **MaxArm** (Hiwonder + ESP32) por HTTP.
 
 La ESP32 es un punto de acceso WiFi (``MaxArm_IPN`` / ``maxarm2024``) con un
-servidor HTTP en ``http://192.168.4.1``:
+servidor HTTP en ``http://192.168.4.1``. Según el firmware de pruebas que sí
+funciona (``Brazo/Codigo de pruebas.txt``):
 
-* ``GET /cmd?id=<servo>&v=<-1..1>`` — mueve un servo a velocidad continua
-  (``v=0`` lo detiene). Servos: **1**=Hombro (sube/baja), **3**=Codo,
-  **4**=Rotación de la pinza. La base (id 2) está deshabilitada en el firmware.
-* ``GET /pump?on=1|0`` — bomba de succión (agarrar / soltar).
+* ``GET /cmd?<id>=<-1..1>`` — mueve el servo ``<id>`` a **velocidad continua**
+  (0 lo detiene). Se pueden combinar varios: ``/cmd?1=0.5&3=-0.2``. Servos:
+  **1**=Hombro (sube/baja), **3**=Codo, **4**=Rotación de la pinza. La **Base**
+  (id 2) está **deshabilitada** en el firmware (sin servicio).
+* ``GET /pump?on=1|0`` — bomba de succión: ``1`` enciende (agarrar), ``0``
+  apaga (soltar).
 * ``GET /reset`` — posición HOME.
 
 Los 6 comandos del proyecto Delfin se mapean a acciones del brazo en
 :data:`ARM_COMMANDS` (editable). Como ``/cmd`` es velocidad continua, un comando
 discreto se traduce en un **pulso**: mover un ratito y luego detener.
+
+**Izquierda/derecha** irían a la base giratoria (servo 2), que está sin servicio,
+así que quedan como ``"disabled"``: la interfaz muestra sus botones pero
+inhabilitados y el clasificador simplemente los ignora.
 """
 from __future__ import annotations
 
@@ -27,15 +34,19 @@ DEFAULT_PULSE_MS = 400
 #   ("move", id_servo, v): pulso de movimiento del servo en la dirección v (±1)
 #   ("pump", bool):        bomba de succión on/off
 #   ("reset", None):       posición HOME
+#   ("disabled", None):    comando reconocido pero sin acción (hardware sin servicio)
 ARM_COMMANDS: dict[str, tuple] = {
     "arriba":    ("move", 1, +1.0),   # Hombro sube
     "abajo":     ("move", 1, -1.0),   # Hombro baja
-    "derecha":   ("move", 4, +1.0),   # Rotación de la pinza (der.)
-    "izquierda": ("move", 4, -1.0),   # Rotación de la pinza (izq.)
-    "agarre":    ("pump", True),      # succión ON
-    "soltar":    ("pump", False),     # succión OFF
+    "izquierda": ("disabled", None),  # Base giratoria (servo 2): sin servicio
+    "derecha":   ("disabled", None),  # Base giratoria (servo 2): sin servicio
+    "agarre":    ("pump", True),      # bomba de succión ON (encender)
+    "soltar":    ("pump", False),     # bomba de succión OFF (apagar)
 }
 ARM_COMMAND_NAMES = list(ARM_COMMANDS)
+# Comandos reconocidos pero sin acción (p. ej. servo sin servicio en el firmware).
+ARM_DISABLED = frozenset(
+    name for name, spec in ARM_COMMANDS.items() if spec[0] == "disabled")
 
 
 class ArmClient:
@@ -56,7 +67,8 @@ class ArmClient:
             return resp.read()
 
     def move(self, servo_id: int, value: float) -> None:
-        self._get(f"/cmd?id={int(servo_id)}&v={float(value):.3f}")
+        # El firmware espera la query "<id>=<valor>" (no "id=&v="): /cmd?1=1.000
+        self._get(f"/cmd?{int(servo_id)}={float(value):.3f}")
 
     def pump(self, on: bool) -> None:
         self._get(f"/pump?on={'1' if on else '0'}")
@@ -90,6 +102,8 @@ class ArmClient:
             self.pump(spec[1])
         elif kind == "reset":
             self.reset()
+        else:  # "disabled" u otro: reconocido pero sin acción
+            return False
         return True
 
     def execute_async(self, command: str, pulse_ms: int = DEFAULT_PULSE_MS,

@@ -5,7 +5,13 @@ Permite, con un modelo ya entrenado, clasificar ventanas de la señal entrante
 a un controlador externo (brazo robótico, carrito…) por UDP, puerto serie o
 simplemente registrarla.
 """
-from .arm import ARM_COMMAND_NAMES, ARM_COMMANDS, ArmClient, ArmHttpSink
+from .arm import (
+    ARM_COMMAND_NAMES,
+    ARM_COMMANDS,
+    ARM_DISABLED,
+    ArmClient,
+    ArmHttpSink,
+)
 from .online import PredictionSmoother, classify_window
 from .sinks import (
     CommandSink,
@@ -29,4 +35,5 @@ __all__ = [
     "ArmHttpSink",
     "ARM_COMMANDS",
     "ARM_COMMAND_NAMES",
+    "ARM_DISABLED",
 ]

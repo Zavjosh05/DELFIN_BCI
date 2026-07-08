@@ -17,7 +17,12 @@ except Exception:  # noqa: BLE001
     pass
 
 from eeg_studio.inference import make_sink
-from eeg_studio.inference.arm import ARM_COMMANDS, ArmClient, ArmHttpSink
+from eeg_studio.inference.arm import (
+    ARM_COMMANDS,
+    ARM_DISABLED,
+    ArmClient,
+    ArmHttpSink,
+)
 
 _LOG: list[str] = []
 
@@ -52,17 +57,17 @@ def main() -> int:
     print("[1] ping responde al servidor")
     assert client.ping() is True
 
-    print("[2] move/pump/reset envían las URLs correctas")
+    print("[2] move/pump/reset usan el formato del firmware (/cmd?<id>=<v>)")
     _LOG.clear()
     client.move(1, 1.0); client.pump(True); client.reset()
-    assert "/cmd?id=1&v=1.000" in _LOG, _LOG
+    assert "/cmd?1=1.000" in _LOG, _LOG
     assert "/pump?on=1" in _LOG and "/reset" in _LOG, _LOG
 
     print("[3] execute('arriba') = pulso (mover Hombro +1, luego 0)")
     _LOG.clear()
     client.execute("arriba", pulse_ms=30)
     cmds = [p for p in _LOG if p.startswith("/cmd")]
-    assert cmds == ["/cmd?id=1&v=1.000", "/cmd?id=1&v=0.000"], cmds
+    assert cmds == ["/cmd?1=1.000", "/cmd?1=0.000"], cmds
 
     print("[4] execute('agarre') = bomba ON; 'soltar' = bomba OFF")
     _LOG.clear(); client.execute("agarre")
@@ -70,7 +75,14 @@ def main() -> int:
     _LOG.clear(); client.execute("soltar")
     assert _LOG == ["/pump?on=0"], _LOG
 
-    print("[5] make_sink('arm') → ArmHttpSink; send() envía en segundo plano")
+    print("[5] izquierda/derecha están deshabilitados (no envían nada)")
+    assert ARM_DISABLED == {"izquierda", "derecha"}, ARM_DISABLED
+    for cmd in ("izquierda", "derecha"):
+        _LOG.clear()
+        assert client.execute(cmd) is False, cmd
+        assert _LOG == [], (cmd, _LOG)
+
+    print("[6] make_sink('arm') → ArmHttpSink; send() envía en segundo plano")
     sink = make_sink("arm", host="127.0.0.1", port=port, pulse_ms=30)
     assert isinstance(sink, ArmHttpSink)
     _LOG.clear()
@@ -78,13 +90,13 @@ def main() -> int:
     assert sink.history == ["abajo"]
     assert _wait_for(lambda: len([p for p in _LOG if p.startswith("/cmd")]) >= 2), _LOG
     cmds = [p for p in _LOG if p.startswith("/cmd")]
-    assert cmds[:2] == ["/cmd?id=1&v=-1.000", "/cmd?id=1&v=0.000"], cmds
+    assert cmds[:2] == ["/cmd?1=-1.000", "/cmd?1=0.000"], cmds
 
-    print("[6] Los 6 comandos de Delfin están mapeados")
+    print("[7] Los 6 comandos de Delfin están mapeados")
     assert set(ARM_COMMANDS) == {"arriba", "abajo", "izquierda", "derecha",
                                  "agarre", "soltar"}, set(ARM_COMMANDS)
 
-    print("[7] Comando desconocido no rompe (execute devuelve False)")
+    print("[8] Comando desconocido no rompe (execute devuelve False)")
     assert client.execute("no_existe") is False
 
     srv.shutdown()
