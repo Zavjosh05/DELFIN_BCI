@@ -319,6 +319,29 @@ class Project:
                      setter=lambda v: setattr(self, "sources", v))
         return True
 
+    def reorder_sources(self, ordered_ids: list[str]) -> bool:
+        """Reordena las fuentes según ``ordered_ids`` (el «orden propio» del usuario).
+
+        Solo cambia el orden, no los datos. Ignora ids desconocidos y conserva al
+        final (en su orden actual) las fuentes que no aparezcan en la lista, para no
+        perder ninguna. Devuelve ``True`` si el orden efectivamente cambió.
+        """
+        by_id = {s["id"]: s for s in self.sources}
+        seen: set[str] = set()
+        new_sources = []
+        for sid in ordered_ids:
+            if sid in by_id and sid not in seen:
+                new_sources.append(by_id[sid])
+                seen.add(sid)
+        for s in self.sources:                       # las que falten, al final
+            if s["id"] not in seen:
+                new_sources.append(s)
+        if [s["id"] for s in new_sources] == [s["id"] for s in self.sources]:
+            return False
+        self._commit("sources", new_sources, "Reordenar fuentes",
+                     setter=lambda v: setattr(self, "sources", v))
+        return True
+
     def get_recording(self, source_id: str) -> Recording:
         with self._lock:
             rec = self._recordings.get(source_id)

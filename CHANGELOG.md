@@ -15,6 +15,15 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-08]
 
 ### Añadido
+- **Ordenar el panel de Fuentes** con un selector arriba de la lista: **orden
+  propio** (arrastrar para reordenar, se guarda en el proyecto y es reversible con
+  Ctrl+Z), **alfabético (A→Z)**, **fecha de creación** y **última modificación**
+  (por el archivo en disco). El modo elegido se recuerda entre sesiones.
+- **Indicador de contenido por archivo** en el panel de Fuentes: un pequeño
+  recuadro de color y un leve sombreado señalan qué señales tienen datos
+  etiquetados — **verde** si tienen **segmentos**, **ámbar** si solo tienen
+  **marcadores** (Event Id). El recuento de marcadores se calcula en segundo plano
+  (sin bloquear la interfaz) y el *tooltip* detalla cuántos hay de cada uno.
 - **Control del brazo robótico MaxArm** (Hiwonder + ESP32) desde la pestaña
   **Control**. Sección de **prueba manual** con botones para los 6 comandos del
   proyecto Delfin (**Arriba, Abajo, Izquierda, Derecha, Agarre, Soltar**), además de

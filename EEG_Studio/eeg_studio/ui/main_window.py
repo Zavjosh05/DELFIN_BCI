@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSettings, QSize, QTimer, QUrl
+from PyQt6.QtCore import Qt, QSettings, QSize, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDockWidget,
@@ -62,7 +65,25 @@ from .signal_view import SignalView
 from .signal_window import SignalWindow
 
 
+class _SourceListWidget(QListWidget):
+    """Lista de fuentes que avisa cuando se reordena arrastrando.
+
+    ``QListWidget`` implementa el «internal move» como insertar + eliminar, así que
+    ``model().rowsMoved`` no se dispara; emitimos ``reordered`` al terminar el drop.
+    """
+
+    reordered = pyqtSignal()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        super().dropEvent(event)
+        self.reordered.emit()
+
+
 class MainWindow(QMainWindow):
+    # Emitida desde el hilo (daemon) de escaneo de marcadores con {source_id: nº}.
+    # Se entrega en el hilo GUI (conexión en cola) para pintar los indicadores.
+    _markers_scanned = pyqtSignal(object)
+
     def __init__(self) -> None:
         super().__init__()
         self.project: Project | None = None
@@ -242,7 +263,18 @@ class MainWindow(QMainWindow):
         self.setDockNestingEnabled(True)
 
         # Izquierda: fuentes (CSV) del proyecto.
-        self.sources_list = QListWidget()
+        #   Orden guardado entre sesiones (alfabético / fechas / propio) y un
+        #   indicador de si cada archivo tiene segmentos (✂) o marcadores (⚑).
+        self._source_sort = str(self._settings().value("source_sort", "custom"))
+        if self._source_sort not in self._SORT_MODES:
+            self._source_sort = "custom"
+        self._src_event_counts: dict[str, int] = {}   # caché de nº de marcadores
+        self._reordering = False
+        self._scanning_markers = False
+        self._scan_project = None
+        self._markers_scanned.connect(self._on_markers_scanned)
+
+        self.sources_list = _SourceListWidget()
         self.sources_list.currentRowChanged.connect(self._on_source_selected)
         # Renombrar con clic izquierdo sobre la señal ya seleccionada (o F2):
         # edición en el sitio. «Abrir en ventana nueva» pasa al menú contextual.
@@ -253,9 +285,34 @@ class MainWindow(QMainWindow):
         self.sources_list.itemChanged.connect(self._on_source_renamed)
         self.sources_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.sources_list.customContextMenuRequested.connect(self._on_sources_menu)
+        # Reordenar arrastrando (solo tiene efecto en modo «orden propio»).
+        self.sources_list.reordered.connect(self._on_sources_reordered)
+
+        # Barra superior: selector de orden.
+        self.source_sort_combo = QComboBox()
+        for key, label in self._SORT_MODES.items():
+            self.source_sort_combo.addItem(label, key)
+        self.source_sort_combo.setCurrentIndex(
+            self.source_sort_combo.findData(self._source_sort))
+        self.source_sort_combo.setToolTip("Orden de la lista de fuentes.")
+        self.source_sort_combo.currentIndexChanged.connect(self._on_source_sort_changed)
+
+        sort_bar = QHBoxLayout()
+        sort_bar.setContentsMargins(4, 2, 4, 2)
+        sort_bar.addWidget(QLabel("Orden:"))
+        sort_bar.addWidget(self.source_sort_combo, 1)
+
+        src_container = QWidget()
+        src_layout = QVBoxLayout(src_container)
+        src_layout.setContentsMargins(0, 0, 0, 0)
+        src_layout.setSpacing(2)
+        src_layout.addLayout(sort_bar)
+        src_layout.addWidget(self.sources_list, 1)
+
         self.src_dock = QDockWidget("Fuentes (CSV)", self)
-        self.src_dock.setWidget(self.sources_list)
+        self.src_dock.setWidget(src_container)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.src_dock)
+        self._apply_source_drag_mode()
 
         # Derecha: pestañas de procesamiento.
         self.preproc_panel = PreprocessingPanel(self)
@@ -1072,9 +1129,14 @@ class MainWindow(QMainWindow):
         return None
 
     def _on_source_selected(self, row: int) -> None:
-        if self.project is None or row < 0 or row >= len(self.project.sources):
+        if self.project is None or row < 0:
             return
-        sid = self.project.sources[row]["id"]
+        item = self.sources_list.item(row)
+        if item is None:
+            return
+        sid = item.data(Qt.ItemDataRole.UserRole)
+        if sid is None or self.project.get_source(sid) is None:
+            return
         self.current_source_id = sid
         src = self.project.get_source(sid)
         if src and not os.path.isfile(src["path"]):
@@ -1166,10 +1228,10 @@ class MainWindow(QMainWindow):
         """Marca en la lista de fuentes la que corresponde a la pestaña activa."""
         if not self.project:
             return
-        ids = [s["id"] for s in self.project.sources]
-        if sid in ids:
+        it = self._item_for_sid(sid)
+        if it is not None:
             self.sources_list.blockSignals(True)
-            self.sources_list.setCurrentRow(ids.index(sid))
+            self.sources_list.setCurrentItem(it)
             self.sources_list.blockSignals(False)
 
     def _refresh_source_tabs(self) -> None:
@@ -1941,11 +2003,13 @@ class MainWindow(QMainWindow):
     def _on_sources_menu(self, pos) -> None:
         if self.project is None:
             return
-        row = self.sources_list.indexAt(pos).row()
-        if row < 0 or row >= len(self.project.sources):
+        item = self.sources_list.itemAt(pos)
+        if item is None:
             return
-        self.sources_list.setCurrentRow(row)
-        sid = self.project.sources[row]["id"]
+        sid = item.data(Qt.ItemDataRole.UserRole)
+        if sid is None or self.project.get_source(sid) is None:
+            return
+        self.sources_list.setCurrentItem(item)
         menu = QMenu(self)
         menu.addAction("Abrir en ventana nueva", lambda: self.open_source_window(sid))
         menu.addAction("Renombrar…", lambda: self._rename_source_dialog(sid))
@@ -1960,10 +2024,10 @@ class MainWindow(QMainWindow):
         """Edición en el sitio de la lista de fuentes → renombra la señal."""
         if self.project is None:
             return
-        row = self.sources_list.row(item)
-        if row < 0 or row >= len(self.project.sources):
+        sid = item.data(Qt.ItemDataRole.UserRole)
+        if sid is None or self.project.get_source(sid) is None:
             return
-        self.rename_source(self.project.sources[row]["id"], item.text())
+        self.rename_source(sid, item.text())
 
     def _rename_source_dialog(self, source_id: str) -> None:
         src = self.project.get_source(source_id) if self.project else None
@@ -2061,21 +2125,175 @@ class MainWindow(QMainWindow):
         for win in list(self._signal_windows):
             win.reload()
 
+    # ---- Lista de fuentes: orden e indicadores de contenido -------------- #
+    _SORT_MODES = {
+        "custom":   "Orden propio",
+        "alpha":    "Alfabético (A→Z)",
+        "created":  "Fecha de creación",
+        "modified": "Última modificación",
+    }
+
+    def _segment_counts(self) -> dict[str, int]:
+        """Nº de segmentos etiquetados por fuente (barato, desde el estado)."""
+        counts: dict[str, int] = {}
+        if self.project:
+            for s in self.project.state["segments"]:
+                counts[s["source_id"]] = counts.get(s["source_id"], 0) + 1
+        return counts
+
+    def _sorted_sources(self) -> list[dict]:
+        """Fuentes en el orden de vista actual (no muta el orden del proyecto)."""
+        if not self.project:
+            return []
+        srcs = list(self.project.sources)
+        mode = self._source_sort
+        if mode == "alpha":
+            srcs.sort(key=lambda s: s.get("alias", "").lower())
+        elif mode in ("created", "modified"):
+            getter = os.path.getctime if mode == "created" else os.path.getmtime
+
+            def _stamp(s):
+                try:
+                    return getter(s.get("path", ""))
+                except OSError:
+                    return 0.0
+            srcs.sort(key=_stamp)            # más antiguo primero
+        return srcs                          # "custom" => tal cual el proyecto
+
+    def _decorate_source_item(self, item, n_seg: int, n_mark: int) -> None:
+        """Pinta el indicador de contenido de una fuente sin tocar su nombre.
+
+        Verde si tiene segmentos, ámbar si solo tiene marcadores; con un pequeño
+        recuadro de color al lado y un leve sombreado del fondo. El texto (alias)
+        queda intacto para no romper el renombrado en el sitio.
+        """
+        parts = []
+        if n_seg:
+            parts.append(f"{n_seg} segmento" + ("s" if n_seg != 1 else ""))
+        if n_mark:
+            parts.append(f"{n_mark} marcador" + ("es" if n_mark != 1 else ""))
+        if parts:
+            color = QColor(46, 204, 113) if n_seg else QColor(230, 160, 0)
+            item.setData(Qt.ItemDataRole.DecorationRole, color)
+            item.setData(Qt.ItemDataRole.BackgroundRole,
+                         QColor(color.red(), color.green(), color.blue(), 28))
+            item.setToolTip("Contiene " + " y ".join(parts) +
+                            ".  ·  Clic para renombrar (F2).")
+        else:
+            item.setData(Qt.ItemDataRole.DecorationRole, None)
+            item.setData(Qt.ItemDataRole.BackgroundRole, None)
+            item.setToolTip("Sin segmentos ni marcadores.  ·  Clic para renombrar (F2).")
+
     def _refresh_sources(self) -> None:
         self.sources_list.blockSignals(True)
         self.sources_list.clear()
         if self.project:
-            for src in self.project.sources:
+            seg_counts = self._segment_counts()
+            for src in self._sorted_sources():
+                sid = src["id"]
                 item = QListWidgetItem(src["alias"])
+                item.setData(Qt.ItemDataRole.UserRole, sid)
                 # Editable en el sitio para renombrar (clic izquierdo / F2).
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-                item.setToolTip("Clic para renombrar (o F2, o clic derecho → Renombrar).")
+                self._decorate_source_item(item, seg_counts.get(sid, 0),
+                                           self._src_event_counts.get(sid, 0))
                 self.sources_list.addItem(item)
             if self.current_source_id:
-                ids = [s["id"] for s in self.project.sources]
-                if self.current_source_id in ids:
-                    self.sources_list.setCurrentRow(ids.index(self.current_source_id))
+                it = self._item_for_sid(self.current_source_id)
+                if it is not None:
+                    self.sources_list.setCurrentRow(self.sources_list.row(it))
         self.sources_list.blockSignals(False)
+        self._scan_markers_async()
+
+    def _item_for_sid(self, sid: str):
+        for i in range(self.sources_list.count()):
+            it = self.sources_list.item(i)
+            if it.data(Qt.ItemDataRole.UserRole) == sid:
+                return it
+        return None
+
+    def _update_source_indicators(self) -> None:
+        """Repinta los indicadores de las fuentes ya listadas (sin reconstruir)."""
+        if not self.project:
+            return
+        seg_counts = self._segment_counts()
+        self.sources_list.blockSignals(True)
+        for i in range(self.sources_list.count()):
+            item = self.sources_list.item(i)
+            sid = item.data(Qt.ItemDataRole.UserRole)
+            self._decorate_source_item(item, seg_counts.get(sid, 0),
+                                       self._src_event_counts.get(sid, 0))
+        self.sources_list.blockSignals(False)
+
+    def _scan_markers_async(self) -> None:
+        """Cuenta los marcadores (Event Id) de cada fuente en segundo plano.
+
+        Carga las grabaciones que falten (una sola pasada, sin bloquear la GUI) y
+        cachea el resultado; al terminar, actualiza los indicadores. Las que fallen
+        se cuentan como 0 (no rompe). Usa un hilo *daemon* y una señal en cola: no
+        bloquea la GUI y no deja hilos vivos que estorben al cerrar."""
+        if not self.project or self._scanning_markers:
+            return
+        todo = [s["id"] for s in self.project.sources
+                if s["id"] not in self._src_event_counts]
+        if not todo:
+            return
+        proj = self.project
+        self._scanning_markers = True
+        self._scan_project = proj
+
+        def work():
+            out: dict[str, int] = {}
+            for sid in todo:
+                try:
+                    out[sid] = len(proj.get_recording(sid).events or [])
+                except Exception:                     # noqa: BLE001
+                    out[sid] = 0
+            self._markers_scanned.emit(out)           # se entrega en el hilo GUI
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_markers_scanned(self, result: dict) -> None:
+        self._scanning_markers = False
+        if self.project is not self._scan_project:    # cambió de proyecto entretanto
+            return
+        self._src_event_counts.update(result)
+        self._update_source_indicators()
+
+    def _apply_source_drag_mode(self) -> None:
+        """Habilita arrastrar para reordenar solo en modo «orden propio»."""
+        custom = self._source_sort == "custom"
+        if custom:
+            self.sources_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+            self.sources_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+            self.sources_list.setToolTip("Arrastra para reordenar (orden propio).")
+        else:
+            self.sources_list.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+            self.sources_list.setToolTip("Cambia a «Orden propio» para reordenar arrastrando.")
+
+    def _on_source_sort_changed(self, index: int) -> None:
+        mode = self.source_sort_combo.itemData(index)
+        if not mode or mode == self._source_sort:
+            return
+        self._source_sort = mode
+        self._settings().setValue("source_sort", mode)
+        self._apply_source_drag_mode()
+        self._refresh_sources()
+
+    def _on_sources_reordered(self, *args) -> None:
+        """Tras arrastrar en modo «orden propio»: persiste el nuevo orden."""
+        if self._reordering or self.project is None or self._source_sort != "custom":
+            return
+        ids = [self.sources_list.item(i).data(Qt.ItemDataRole.UserRole)
+               for i in range(self.sources_list.count())]
+        ids = [s for s in ids if s]
+        self._reordering = True
+        try:
+            changed = self.project.reorder_sources(ids)
+        finally:
+            self._reordering = False
+        if changed:
+            self._after_state_change()
 
     # Iconos por sección, para identificar de un vistazo el tipo de cambio.
     _HISTORY_ICONS = {
