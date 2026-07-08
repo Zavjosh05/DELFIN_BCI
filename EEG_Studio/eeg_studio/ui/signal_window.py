@@ -25,6 +25,7 @@ class SignalWindow(QMainWindow):
         # independiente de la fuente activa en la ventana principal).
         self.view.relabel_segment_requested.connect(controller.relabel_segment)
         self.view.delete_segment_requested.connect(controller.remove_segment)
+        self.view.generate_periodic_requested.connect(controller.generate_periodic_segments)
         self.setCentralWidget(self.view)
 
         src = controller.project.get_source(source_id) if controller.project else None

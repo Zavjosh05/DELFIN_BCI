@@ -13,12 +13,15 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDockWidget,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QSpinBox,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -1090,6 +1093,7 @@ class MainWindow(QMainWindow):
             view.delete_segments_requested.connect(self._on_delete_segments_in_selection)
             view.relabel_segment_requested.connect(self.relabel_segment)
             view.delete_segment_requested.connect(self.remove_segment)
+            view.generate_periodic_requested.connect(self.generate_periodic_segments)
             view.mode_changed.connect(self._update_signal_view)
             self._source_views[sid] = view
             src = self.project.get_source(sid) if self.project else None
@@ -1469,6 +1473,57 @@ class MainWindow(QMainWindow):
     def remove_segment(self, segment_id: str) -> None:
         self.project.remove_segment(segment_id)
         self._after_state_change()
+
+    def generate_periodic_segments(self, segment_id: str) -> None:
+        """Repite un segmento hacia adelante a intervalos regulares (protocolos
+        periódicos: p. ej. 5 s de tarea cada 15 s). Marcas el 1º y genera el resto."""
+        if not self._require_project():
+            return
+        seg = next((s for s in self.project.state["segments"] if s["id"] == segment_id), None)
+        if seg is None:
+            return
+        sid = seg["source_id"]
+        try:
+            rec = self.project.get_recording(sid)
+            n_samples, fs = rec.n_samples, rec.sample_rate
+        except Exception:  # noqa: BLE001
+            self.warn("No disponible", "No se pudo leer la grabación de este segmento.")
+            return
+        dur = seg["stop"] - seg["start"]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Generar segmentos periódicos")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(
+            f"Repite «{seg['label']}» ({dur / fs:.1f} s) hacia adelante, a intervalos "
+            f"regulares.\nSe crean con la misma duración y etiqueta."))
+        form = QFormLayout()
+        period_spin = QDoubleSpinBox()
+        period_spin.setRange(0.5, 600.0); period_spin.setValue(15.0)
+        period_spin.setDecimals(1); period_spin.setSuffix(" s")
+        period_spin.setToolTip("Tiempo entre INICIOS de segmentos (5 s tarea + 10 s reposo = 15 s).")
+        total_spin = QSpinBox()
+        total_spin.setRange(2, 200); total_spin.setValue(4)
+        total_spin.setToolTip("Nº TOTAL de segmentos (incluido el que ya marcaste).")
+        fill_chk = QCheckBox("Hasta el final de la señal")
+        form.addRow("Periodo entre inicios:", period_spin)
+        form.addRow("Nº total de segmentos:", total_spin)
+        lay.addLayout(form)
+        lay.addWidget(fill_chk)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        period = int(round(period_spin.value() * fs))
+        count = None if fill_chk.isChecked() else total_spin.value()
+        created = self.project.repeat_segment(segment_id, period, count, n_samples)
+        if created:
+            self._after_state_change()
+        self.statusBar().showMessage(
+            f"{created} segmento(s) «{seg['label']}» generado(s) cada {period_spin.value():g} s.")
 
     def clear_all_segments(self) -> None:
         """Elimina todos los segmentos de una vez (en vez de uno por uno)."""

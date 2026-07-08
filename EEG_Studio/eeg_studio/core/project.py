@@ -520,6 +520,39 @@ class Project:
             self._commit("segments", [], f"Eliminar todos los segmentos ({n})")
         return n
 
+    def repeat_segment(self, segment_id: str, period: int, count: int | None = None,
+                       n_samples: int | None = None) -> int:
+        """Repite un segmento hacia adelante cada ``period`` muestras (protocolos
+        periódicos). ``count`` = nº TOTAL (incluido el original); ``None`` = hasta
+        ``n_samples``. No duplica los que ya existan. Devuelve cuántos creó."""
+        seg = next((s for s in self.state["segments"] if s["id"] == segment_id), None)
+        if seg is None or period <= 0:
+            return 0
+        sid = seg["source_id"]
+        dur = seg["stop"] - seg["start"]
+        existing = {(s["start"], s["stop"]) for s in self.state["segments"]
+                    if s["source_id"] == sid}
+        new_segments = list(self.state["segments"])
+        created, i = 0, 1
+        while (count is None or i < count) and i <= 1000:
+            start = seg["start"] + i * period
+            stop = start + dur
+            if n_samples is not None and stop > n_samples:
+                break
+            if (start, stop) not in existing:
+                new_segments.append({
+                    "id": uuid.uuid4().hex[:8], "source_id": sid,
+                    "start": int(start), "stop": int(stop), "label": seg["label"],
+                    "channels": seg.get("channels"), "note": seg.get("note", ""),
+                })
+                existing.add((start, stop))
+                created += 1
+            i += 1
+        if created:
+            self._commit("segments", new_segments,
+                         f"Generar {created} segmento(s) «{seg['label']}»")
+        return created
+
     def remove_segments_in_range(self, source_id: str, start: int, stop: int) -> int:
         """Elimina los segmentos de ``source_id`` que se solapen con ``[start, stop)``."""
         a, b = sorted((int(start), int(stop)))

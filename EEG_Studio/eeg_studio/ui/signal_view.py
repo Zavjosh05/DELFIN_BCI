@@ -50,6 +50,7 @@ class SignalView(QWidget):
     delete_segments_requested = pyqtSignal(int, int)  # borrar segmentos de la selección
     relabel_segment_requested = pyqtSignal(str)   # reetiquetar un segmento (por id)
     delete_segment_requested = pyqtSignal(str)    # eliminar un segmento (por id)
+    generate_periodic_requested = pyqtSignal(str)  # repetir un segmento periódicamente
     mode_changed = pyqtSignal()               # cambió Cruda/Procesada
 
     def __init__(self, parent=None) -> None:
@@ -370,10 +371,13 @@ class SignalView(QWidget):
         seg_id, label = hit
         menu = QMenu()
         act_re = menu.addAction(f"Reetiquetar «{label}»…")
+        act_gen = menu.addAction("Repetir periódicamente… (generar segmentos)")
         act_del = menu.addAction(f"Eliminar segmento «{label}»")
         chosen = menu.exec(QCursor.pos())
         if chosen is act_re:
             self.relabel_segment_requested.emit(seg_id)
+        elif chosen is act_gen:
+            self.generate_periodic_requested.emit(seg_id)
         elif chosen is act_del:
             self.delete_segment_requested.emit(seg_id)
 
