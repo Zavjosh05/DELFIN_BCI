@@ -2,3 +2,34 @@
 /EEG/EEG de prueba
 /Proyectos_prueba
 /EEG
+# --- Python Virtual Environments ---
+venv/
+.venv/
+env/
+env.bak/
+venv.bak/
+
+# --- Python Bytecode & Cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+# --- IDE & Editor Artifacts ---
+.vscode/
+.idea/
+.history/
+.DS_Store
+
+# --- OS Specific ---
+.ipynb_checkpoints/
+Thumbs.db
+.directory
+Desktop.ini
+
+# --- Dependency Management ---
+# If you eventually use these tools, keep these lines
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
