@@ -58,6 +58,9 @@ cambios se agrupan por fecha de trabajo.
 - Los **datos de ejemplo** de las pruebas se movieron a **`data/raw/EEG/`**
   (siguiendo la nueva estructura), **gitignored** para no subir señales al repo.
 - El entorno virtual (`.venv`) vive ahora junto al código en **`src/EEG_Studio/`**.
+- Los **proyectos de prueba locales** se movieron bajo `data/`
+  (`data/Proyectos_prueba/`, `data/Prueba_interfaz/`), **gitignored** (no se suben
+  al repo). Incluye el proyecto recuperado `Señales_Delfin.eegproj`.
 - La **referencia técnica de desarrollo** (arquitectura, métodos, pruebas) se
   conserva en **`src/EEG_Studio/README_TECNICO.md`**, aparte del `README.md`
   oficial de la raíz.
