@@ -54,6 +54,14 @@ cambios se agrupan por fecha de trabajo.
   (`EEG_Studio/` → `src/EEG_Studio/`). Ahora la localizan subiendo por los
   directorios padre (`tests.data_dir()`), resistente a futuros cambios de nivel.
 
+### Organización del repositorio
+- Los **datos de ejemplo** de las pruebas se movieron a **`data/raw/EEG/`**
+  (siguiendo la nueva estructura), **gitignored** para no subir señales al repo.
+- El entorno virtual (`.venv`) vive ahora junto al código en **`src/EEG_Studio/`**.
+- La **referencia técnica de desarrollo** (arquitectura, métodos, pruebas) se
+  conserva en **`src/EEG_Studio/README_TECNICO.md`**, aparte del `README.md`
+  oficial de la raíz.
+
 ---
 
 ## [2026-07-01]

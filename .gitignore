@@ -1,7 +1,8 @@
 /.idea
-/EEG/EEG de prueba
 /Proyectos_prueba
-/EEG
+# --- Datos de ejemplo / proyectos de prueba (grandes, NO se suben) ---
+/data/raw/EEG/
+/data/projects/Prueba.eegproj/
 # --- Python Virtual Environments ---
 venv/
 .venv/

@@ -27,18 +27,20 @@ from eeg_studio.core.mat_loader import convert_bnci_mat, converted_csv_path
 from eeg_studio.core.project import Project
 
 def _find_eeg_dir(start: str) -> str:
-    """Localiza la carpeta ``EEG/`` subiendo por los directorios padre (resiste
-    cambios de profundidad del árbol, p. ej. ``EEG_Studio/`` → ``src/EEG_Studio/``)."""
+    """Localiza la carpeta de datos de ejemplo (``data/raw/EEG/`` en la raíz, con
+    respaldo a ``EEG/``) subiendo por los directorios padre; resiste cambios de
+    profundidad del árbol (p. ej. ``EEG_Studio/`` → ``src/EEG_Studio/``)."""
     d = start
     for _ in range(8):
-        cand = os.path.join(d, "EEG")
-        if os.path.isdir(cand):
-            return cand
+        for cand in (os.path.join(d, "data", "raw", "EEG"),
+                     os.path.join(d, "EEG")):
+            if os.path.isdir(cand):
+                return cand
         parent = os.path.dirname(d)
         if parent == d:
             break
         d = parent
-    return os.path.normpath(os.path.join(start, "..", "..", "EEG"))
+    return os.path.normpath(os.path.join(start, "..", "..", "..", "data", "raw", "EEG"))
 
 
 MAT_DIR = os.path.join(_find_eeg_dir(_HERE), "EEG de prueba")
