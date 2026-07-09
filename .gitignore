@@ -1,9 +1,12 @@
 /.idea
 # --- Datos de ejemplo / proyectos de prueba (grandes, NO se suben) ---
 /data/raw/EEG/
-/data/projects/Prueba.eegproj/
+/data/projects/*.eegproj/
+/data/projects/*.eegbundle
 /data/Proyectos_prueba/
 /data/Prueba_interfaz/
+# --- Proyecto de referencia (RNN): se conserva local, NO se sube ---
+/src/EEG_Studio/Proyecto_RNN/
 # --- Python Virtual Environments ---
 venv/
 .venv/

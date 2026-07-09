@@ -535,4 +535,5 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `arm_control_smoke` (control del brazo MaxArm por HTTP, sin hardware),
 `source_panel_smoke` (ordenar la lista de fuentes e indicadores de contenido),
 `signal_length_smoke` (fijar la longitud en tiempo de la selección del visor),
+`sim_arm_smoke` (brazo simulado 4DOF + perfiles del panel de Control),
 `e2e_smoke` (flujo completo de extremo a extremo).

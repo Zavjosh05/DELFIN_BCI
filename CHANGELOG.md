@@ -15,12 +15,32 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-09]
 
 ### Añadido
+- **Perfiles de control + brazo simulado** en la pestaña **Control**. El control del
+  actuador ahora es un **perfil** seleccionable: **«Brazo MaxArm (real)»** (el de
+  antes, por HTTP) y **«Brazo simulado»** (nuevo, sin hardware). El brazo simulado es
+  un **4DOF** (base, hombro, codo, muñeca) extraído/adaptado del proyecto de
+  referencia `Proyecto_RNN` (módulos de **construcción**, **cinemática directa** y
+  **control**; se omiten la cinemática inversa y las series temporales), dibujado en
+  **2D con pyqtgraph** (vista lateral + superior, sin dependencias nuevas). Se
+  controla con los **mismos 6 comandos**: arriba/abajo mueven el hombro,
+  izquierda/derecha giran la base (aquí sí funcionan), agarre/soltar la pinza. El
+  **D-pad** manual y el **clasificador en tiempo real** (nueva salida «Brazo
+  simulado») pueden moverlo — «controlar con la mente» sin necesidad del robot físico.
 - **Longitud de la selección por tiempo** en el visor de la señal: nuevo campo
   **«Long.»** (segundos) junto a la selección que fija la **duración exacta** de la
   región marcada, manteniendo el inicio (si no cabe hasta el final, corre el inicio
   hacia atrás). Se **sincroniza en ambos sentidos**: al arrastrar la región, el
   campo refleja su longitud; al escribir un valor, la región se ajusta. Útil para
   marcar ventanas de duración exacta (p. ej. tareas de 5 s del paradigma Delfin).
+
+### Verificado / reforzado
+- **Auditoría del guardado automático**: revisados todos los disparadores (cada
+  mutación del proyecto llama a `_after_state_change` → autosave con debounce de
+  800 ms, o a `_persist_now` inmediato para lo crítico como nuevas grabaciones),
+  el guardado atómico (`tmp`+`fsync`+`os.replace`), el reintento ante fallo, el
+  guardado de precaución al cerrar y el sidecar `.marks.json` de las grabaciones.
+  `autosave_smoke` ampliado con los casos de **fallo→reintento**, `_persist_now`
+  con fallo y guardado al cerrar. Sin cambios de código necesarios: está sólido.
 
 ---
 

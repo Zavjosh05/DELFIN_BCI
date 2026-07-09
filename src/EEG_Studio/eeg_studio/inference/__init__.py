@@ -13,6 +13,15 @@ from .arm import (
     ArmHttpSink,
 )
 from .online import PredictionSmoother, classify_window
+from .sim_arm import (
+    SIM_ARM_COMMAND_NAMES,
+    SIM_ARM_COMMANDS,
+    ArmSpec,
+    JointSpec,
+    SimArmSink,
+    SimulatedArm,
+    make_default_arm_spec,
+)
 from .sinks import (
     CommandSink,
     LogSink,
@@ -36,4 +45,11 @@ __all__ = [
     "ARM_COMMANDS",
     "ARM_COMMAND_NAMES",
     "ARM_DISABLED",
+    "SimulatedArm",
+    "SimArmSink",
+    "SIM_ARM_COMMANDS",
+    "SIM_ARM_COMMAND_NAMES",
+    "ArmSpec",
+    "JointSpec",
+    "make_default_arm_spec",
 ]

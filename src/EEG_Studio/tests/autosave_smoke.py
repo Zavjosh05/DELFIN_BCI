@@ -46,6 +46,41 @@ def main() -> int:
     assert len(Project.open(path).state["pipeline"]) == 3
     print("    guardado manual OK")
 
+    print("[5] Si el guardado FALLA, reintenta (reprograma) y NO pierde el cambio")
+    win.add_pipeline_step("bandpass")                  # 4º paso, en memoria
+
+    def _boom():
+        raise OSError("disco lleno (simulado)")
+    win.project.save = _boom                           # simula fallo de E/S
+    win._autosave_timer.stop()
+    win._autosave()                                    # falla
+    assert win._autosave_timer.isActive(), "tras fallar debe reprogramar el reintento"
+    assert win._dirty, "debe seguir marcado como «sin guardar» tras fallar"
+    assert len(Project.open(path).state["pipeline"]) == 3, "no debió persistir el fallo"
+    del win.project.save                               # «disco reparado»
+    win._autosave()                                    # el reintento persiste
+    assert not win._dirty
+    assert len(Project.open(path).state["pipeline"]) == 4, "el reintento no persistió"
+    print("    el cambio sobrevive al fallo y se guarda al reintentar")
+
+    print("[6] _persist_now: si falla, deja el autosave programado (blindaje)")
+    win.add_pipeline_step("notch")                     # 5º paso
+    win.project.save = _boom
+    win._autosave_timer.stop()
+    win._persist_now()                                 # falla -> request_autosave
+    assert win._autosave_timer.isActive() and win._dirty
+    del win.project.save
+    win._autosave()
+    assert len(Project.open(path).state["pipeline"]) == 5
+    print("    _persist_now no pierde el cambio aunque falle")
+
+    print("[7] Cerrar la app guarda lo pendiente (guardado de precaución)")
+    win.add_pipeline_step("reference")                 # 6º paso, pendiente
+    assert win._autosave_timer.isActive()
+    win.close()                                        # dispara closeEvent -> save
+    assert len(Project.open(path).state["pipeline"]) == 6, "closeEvent no guardó lo pendiente"
+    print("    al cerrar se guarda lo que quedaba pendiente")
+
     print("\nAUTOSAVE OK ✓")
     return 0
 

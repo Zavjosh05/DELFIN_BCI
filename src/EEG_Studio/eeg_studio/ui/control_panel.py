@@ -34,6 +34,8 @@ from ..inference.arm import (
     DEFAULT_PULSE_MS as ARM_PULSE,
     ArmClient,
 )
+from ..inference.sim_arm import SimArmSink, SimulatedArm
+from .sim_arm_view import SimArmView
 
 from ..config import (
     ONLINE_INTERVAL_MS,
@@ -56,6 +58,8 @@ class ControlPanel(QWidget):
         self._classes: list[str] = []
         self._n_commands = 0
         self._run_model = None     # modelo fijado al iniciar el control
+        self._sim_arm = SimulatedArm()             # brazo simulado (perfil sin hardware)
+        self._cmd_buttons: dict[str, QPushButton] = {}
 
         self._timer = QTimer(self)
         self._timer.setInterval(ONLINE_INTERVAL_MS)
@@ -79,8 +83,8 @@ class ControlPanel(QWidget):
         mform.addRow("Modelo:", self.model_combo)
         layout.addLayout(mform)
 
-        # Brazo robótico MaxArm: prueba manual de los comandos.
-        layout.addWidget(self._arm_section())
+        # Actuador a controlar (perfiles): brazo real MaxArm o brazo simulado.
+        layout.addWidget(self._actuator_section())
 
         # Parámetros de inferencia.
         cfg = QGroupBox("Inferencia")
@@ -115,6 +119,7 @@ class ControlPanel(QWidget):
         self.sink_combo = QComboBox()
         self.sink_combo.addItem("Registro (solo mostrar)", "log")
         self.sink_combo.addItem("Brazo MaxArm (HTTP)", "arm")
+        self.sink_combo.addItem("Brazo simulado", "sim")
         self.sink_combo.addItem("UDP (red)", "udp")
         self.sink_combo.addItem("Puerto serie (Arduino)", "serial")
         self.sink_combo.currentIndexChanged.connect(self._on_sink_changed)
@@ -123,6 +128,7 @@ class ControlPanel(QWidget):
         self.sink_params = QStackedWidget()
         self.sink_params.addWidget(self._log_params())
         self.sink_params.addWidget(self._arm_sink_params())
+        self.sink_params.addWidget(self._sim_sink_params())
         self.sink_params.addWidget(self._udp_params())
         self.sink_params.addWidget(self._serial_params())
         out_layout.addWidget(self.sink_params)
@@ -181,45 +187,48 @@ class ControlPanel(QWidget):
         w = QWidget()
         lay = QFormLayout(w)
         note = QLabel("Envía cada clase detectada al brazo MaxArm por HTTP.\n"
-                      "Usa la IP/puerto/pulso configurados en «Brazo robótico» arriba.")
+                      "Usa la IP/puerto/pulso del perfil «Brazo MaxArm» arriba.")
         note.setWordWrap(True)
         lay.addRow(note)
         return w
 
-    # --- Brazo robótico (MaxArm) ------------------------------------------
-    def _arm_section(self) -> QGroupBox:
-        box = QGroupBox("Brazo robótico (MaxArm) — prueba manual")
+    def _sim_sink_params(self) -> QWidget:
+        w = QWidget()
+        lay = QFormLayout(w)
+        note = QLabel("Mueve el brazo SIMULADO con cada clase detectada («controlar "
+                      "con la mente»). Al iniciar se muestra el perfil «Brazo simulado».")
+        note.setWordWrap(True)
+        lay.addRow(note)
+        return w
+
+    # --- Actuador: perfiles de control ------------------------------------
+    def _actuator_section(self) -> QGroupBox:
+        box = QGroupBox("Actuador — perfil de control")
         lay = QVBoxLayout(box)
 
-        conn = QFormLayout()
-        self.arm_host = QLineEdit(ARM_HOST)
-        self.arm_port = QSpinBox(); self.arm_port.setRange(1, 65535); self.arm_port.setValue(ARM_PORT)
-        self.arm_pulse = QSpinBox()
-        self.arm_pulse.setRange(50, 5000); self.arm_pulse.setValue(ARM_PULSE); self.arm_pulse.setSuffix(" ms")
-        self.arm_pulse.setToolTip("Cuánto dura cada pulsación de movimiento (comando discreto).")
-        conn.addRow("IP del brazo:", self.arm_host)
-        conn.addRow("Puerto:", self.arm_port)
-        conn.addRow("Pulso de movimiento:", self.arm_pulse)
-        lay.addLayout(conn)
+        pform = QFormLayout()
+        self.profile_combo = QComboBox()
+        self.profile_combo.addItem("Brazo MaxArm (real, HTTP)", "maxarm")
+        self.profile_combo.addItem("Brazo simulado", "sim")
+        self.profile_combo.setToolTip(
+            "Qué actuador controlan los botones y el clasificador. Podrás añadir "
+            "más perfiles (otros brazos, carritos…) en el futuro.")
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        pform.addRow("Perfil:", self.profile_combo)
+        lay.addLayout(pform)
 
-        row = QHBoxLayout()
-        test_btn = QPushButton("Probar conexión")
-        test_btn.clicked.connect(self._test_arm)
-        home_btn = QPushButton("HOME (posición inicial)")
-        home_btn.clicked.connect(lambda: self._arm_do("home"))
-        row.addWidget(test_btn); row.addWidget(home_btn)
-        lay.addLayout(row)
+        # Configuración específica de cada perfil (apilada).
+        self.profile_stack = QStackedWidget()
+        self.profile_stack.addWidget(self._maxarm_page())   # 0
+        self.profile_stack.addWidget(self._sim_page())      # 1
+        lay.addWidget(self.profile_stack)
 
-        self.arm_status = QLabel("Conecta el PC a la red WiFi «MaxArm_IPN» (clave: maxarm2024) "
-                                 "y prueba la conexión.")
+        self.arm_status = QLabel("Elige un perfil y prueba los comandos.")
         self.arm_status.setWordWrap(True)
         self.arm_status.setStyleSheet("color: #8a929b; font-size: 11px;")
         lay.addWidget(self.arm_status)
 
-        # Botones de los 6 comandos (estilo D-pad + pinza).
-        #   Arriba/Abajo -> Hombro (servo 1); Agarre/Soltar -> bomba de succión.
-        #   Izquierda/Derecha -> base giratoria (servo 2), sin servicio: se
-        #   muestran pero quedan inhabilitados.
+        # D-pad compartido de los 6 comandos: controla el perfil ACTIVO.
         grid = QGridLayout()
         grid.setSpacing(6)
         for text, cmd, r, c in (
@@ -232,14 +241,87 @@ class ControlPanel(QWidget):
         ):
             b = QPushButton(text)
             b.setMinimumHeight(34)
-            if cmd in ARM_DISABLED:
-                b.setEnabled(False)
-                b.setToolTip("Base giratoria (servo 2) sin servicio en el brazo.")
-            else:
-                b.clicked.connect(lambda _=False, cc=cmd: self._arm_do(cc))
+            b.clicked.connect(lambda _=False, cc=cmd: self._profile_do(cc))
+            self._cmd_buttons[cmd] = b
             grid.addWidget(b, r, c)
         lay.addLayout(grid)
+        self._update_dpad_enabled()
         return box
+
+    def _maxarm_page(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0)
+        conn = QFormLayout()
+        self.arm_host = QLineEdit(ARM_HOST)
+        self.arm_port = QSpinBox(); self.arm_port.setRange(1, 65535); self.arm_port.setValue(ARM_PORT)
+        self.arm_pulse = QSpinBox()
+        self.arm_pulse.setRange(50, 5000); self.arm_pulse.setValue(ARM_PULSE); self.arm_pulse.setSuffix(" ms")
+        self.arm_pulse.setToolTip("Cuánto dura cada pulsación de movimiento (comando discreto).")
+        conn.addRow("IP del brazo:", self.arm_host)
+        conn.addRow("Puerto:", self.arm_port)
+        conn.addRow("Pulso de movimiento:", self.arm_pulse)
+        lay.addLayout(conn)
+        row = QHBoxLayout()
+        test_btn = QPushButton("Probar conexión")
+        test_btn.clicked.connect(self._test_arm)
+        home_btn = QPushButton("HOME")
+        home_btn.clicked.connect(lambda: self._profile_do("home"))
+        row.addWidget(test_btn); row.addWidget(home_btn)
+        lay.addLayout(row)
+        hint = QLabel("Conecta el PC a la red WiFi «MaxArm_IPN» (clave: maxarm2024). "
+                      "Izquierda/Derecha no están disponibles (base del MaxArm sin servicio).")
+        hint.setWordWrap(True); hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+        lay.addWidget(hint)
+        return w
+
+    def _sim_page(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0)
+        self.sim_view = SimArmView(self._sim_arm)
+        lay.addWidget(self.sim_view)
+        row = QHBoxLayout()
+        home_btn = QPushButton("HOME (posición inicial)")
+        home_btn.clicked.connect(lambda: self._profile_do("home"))
+        row.addWidget(home_btn); row.addStretch(1)
+        lay.addLayout(row)
+        hint = QLabel("Brazo 4DOF simulado (sin hardware): arriba/abajo mueven el hombro, "
+                      "izquierda/derecha giran la base, agarre/soltar cierran/abren la pinza.")
+        hint.setWordWrap(True); hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+        lay.addWidget(hint)
+        return w
+
+    def _current_profile(self) -> str:
+        return self.profile_combo.currentData()
+
+    def _on_profile_changed(self, *_) -> None:
+        self.profile_stack.setCurrentIndex(self.profile_combo.currentIndex())
+        self._update_dpad_enabled()
+        self.arm_status.setText(f"Perfil activo: {self.profile_combo.currentText()}.")
+
+    def _update_dpad_enabled(self) -> None:
+        """En el MaxArm real, Izquierda/Derecha (base) están sin servicio; en el
+        simulado todos los comandos funcionan."""
+        maxarm = self._current_profile() == "maxarm"
+        for cmd, b in self._cmd_buttons.items():
+            off = maxarm and cmd in ARM_DISABLED
+            b.setEnabled(not off)
+            b.setToolTip("Base giratoria del MaxArm sin servicio." if off else "")
+
+    def _profile_do(self, command: str) -> None:
+        """Despacha un comando al actuador del perfil activo."""
+        if self._current_profile() == "sim":
+            self._sim_do(command)
+        else:
+            self._arm_do(command)
+
+    def _sim_do(self, command: str) -> None:
+        if command == "home":
+            self._sim_arm.reset()
+            self.arm_status.setText("Brazo simulado en HOME.")
+        else:
+            self._sim_arm.execute(command)
+            self.arm_status.setText(f"Comando «{command}» aplicado al brazo simulado.")
+        self.sim_view.refresh()
 
     def _arm_client(self) -> ArmClient:
         return ArmClient(self.arm_host.text().strip() or ARM_HOST, self.arm_port.value())
@@ -341,8 +423,14 @@ class ControlPanel(QWidget):
                 "Sin señal en vivo",
                 "Conecta una fuente en la pestaña «Tiempo real» antes de iniciar el control.")
             return
+        kind = self.sink_combo.currentData()
         try:
-            self.sink = make_sink(self.sink_combo.currentData(), **self._sink_kwargs())
+            if kind == "sim":
+                # Enlaza el clasificador al brazo simulado visible y activa su perfil.
+                self.profile_combo.setCurrentIndex(self.profile_combo.findData("sim"))
+                self.sink = SimArmSink(self._sim_arm, on_change=self.sim_view.refresh)
+            else:
+                self.sink = make_sink(kind, **self._sink_kwargs())
         except Exception as exc:  # noqa: BLE001
             self.controller.warn("Salida no disponible", str(exc))
             return
