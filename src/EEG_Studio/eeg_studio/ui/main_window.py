@@ -6,8 +6,8 @@ import threading
 import time
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSettings, QSize, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
+from PyQt6.QtCore import Qt, QPointF, QSettings, QSize, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QStackedWidget,
     QStyle,
+    QStyledItemDelegate,
     QTabWidget,
     QToolBar,
     QTreeWidget,
@@ -63,6 +64,12 @@ from .live_view import LiveSignalView
 from .panels import ClassificationPanel, DatasetPanel, PreprocessingPanel
 from .signal_view import SignalView
 from .signal_window import SignalWindow
+from .theme import ACCENT, BG, BORDER, ELEVATED, MUTED, SURFACE, TEXT
+
+# Indicador de contenido de una fuente: un punto pequeño y discreto a la derecha.
+_MARK_COLOR_ROLE = Qt.ItemDataRole.UserRole + 1
+COLOR_HAS_SEGMENTS = QColor("#57c98a")   # verde: tiene segmentos etiquetados
+COLOR_HAS_MARKERS = QColor("#d6a341")    # ámbar: solo tiene marcadores (Event Id)
 
 
 class _SourceListWidget(QListWidget):
@@ -77,6 +84,26 @@ class _SourceListWidget(QListWidget):
     def dropEvent(self, event) -> None:  # noqa: N802
         super().dropEvent(event)
         self.reordered.emit()
+
+
+class _SourceItemDelegate(QStyledItemDelegate):
+    """Pinta un punto pequeño a la derecha de la fila (indicador de contenido).
+
+    Va aparte del texto para no ocupar la columna del icono (así la fila conserva
+    su tamaño y el nombre no se indenta), y queda discreto."""
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802
+        super().paint(painter, option, index)
+        color = index.data(_MARK_COLOR_ROLE)
+        if not isinstance(color, QColor):
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        rect = option.rect
+        painter.drawEllipse(QPointF(rect.right() - 9, rect.center().y() + 1.0), 3.0, 3.0)
+        painter.restore()
 
 
 class MainWindow(QMainWindow):
@@ -275,6 +302,11 @@ class MainWindow(QMainWindow):
         self._markers_scanned.connect(self._on_markers_scanned)
 
         self.sources_list = _SourceListWidget()
+        self.sources_list.setObjectName("sourcesList")
+        self.sources_list.setItemDelegate(_SourceItemDelegate(self.sources_list))
+        self.sources_list.setAlternatingRowColors(False)   # plano, estilo PyCharm
+        self.sources_list.setFrameShape(QFrame.Shape.NoFrame)
+        self.sources_list.setUniformItemSizes(True)
         self.sources_list.currentRowChanged.connect(self._on_source_selected)
         # Renombrar con clic izquierdo sobre la señal ya seleccionada (o F2):
         # edición en el sitio. «Abrir en ventana nueva» pasa al menú contextual.
@@ -288,8 +320,9 @@ class MainWindow(QMainWindow):
         # Reordenar arrastrando (solo tiene efecto en modo «orden propio»).
         self.sources_list.reordered.connect(self._on_sources_reordered)
 
-        # Barra superior: selector de orden.
+        # Cabecera: selector de orden (barra discreta sobre la lista).
         self.source_sort_combo = QComboBox()
+        self.source_sort_combo.setObjectName("sourcesSortCombo")
         for key, label in self._SORT_MODES.items():
             self.source_sort_combo.addItem(label, key)
         self.source_sort_combo.setCurrentIndex(
@@ -297,17 +330,24 @@ class MainWindow(QMainWindow):
         self.source_sort_combo.setToolTip("Orden de la lista de fuentes.")
         self.source_sort_combo.currentIndexChanged.connect(self._on_source_sort_changed)
 
-        sort_bar = QHBoxLayout()
-        sort_bar.setContentsMargins(4, 2, 4, 2)
-        sort_bar.addWidget(QLabel("Orden:"))
-        sort_bar.addWidget(self.source_sort_combo, 1)
+        sort_label = QLabel("ORDEN")
+        sort_label.setObjectName("sourcesSortLabel")
+        sort_bar = QWidget()
+        sort_bar.setObjectName("sourcesHeader")
+        sort_lay = QHBoxLayout(sort_bar)
+        sort_lay.setContentsMargins(8, 4, 6, 4)
+        sort_lay.setSpacing(6)
+        sort_lay.addWidget(sort_label)
+        sort_lay.addWidget(self.source_sort_combo, 1)
 
         src_container = QWidget()
+        src_container.setObjectName("sourcesPanel")
         src_layout = QVBoxLayout(src_container)
         src_layout.setContentsMargins(0, 0, 0, 0)
-        src_layout.setSpacing(2)
-        src_layout.addLayout(sort_bar)
+        src_layout.setSpacing(0)
+        src_layout.addWidget(sort_bar)
         src_layout.addWidget(self.sources_list, 1)
+        src_container.setStyleSheet(self._sources_panel_qss())
 
         self.src_dock = QDockWidget("Fuentes (CSV)", self)
         self.src_dock.setWidget(src_container)
@@ -2160,11 +2200,35 @@ class MainWindow(QMainWindow):
             srcs.sort(key=_stamp)            # más antiguo primero
         return srcs                          # "custom" => tal cual el proyecto
 
-    def _decorate_source_item(self, item, n_seg: int, n_mark: int) -> None:
-        """Pinta el indicador de contenido de una fuente sin tocar su nombre.
+    def _sources_panel_qss(self) -> str:
+        """Estilo del panel de Fuentes, inspirado en el árbol de proyecto de PyCharm
+        (cabecera discreta, filas planas con selección redondeada y hover)."""
+        return f"""
+        #sourcesPanel {{ background: {SURFACE}; }}
+        #sourcesHeader {{ background: {BG}; border-bottom: 1px solid {BORDER}; }}
+        #sourcesSortLabel {{
+            color: {MUTED}; font-size: 10px; font-weight: 600; letter-spacing: 1px;
+        }}
+        #sourcesSortCombo {{
+            background: {SURFACE}; border: 1px solid {BORDER};
+            border-radius: 4px; padding: 2px 6px; min-height: 18px;
+        }}
+        #sourcesSortCombo:hover {{ border-color: {ACCENT}; }}
+        QListWidget#sourcesList {{
+            background: {SURFACE}; border: none; outline: 0; padding: 4px;
+        }}
+        QListWidget#sourcesList::item {{
+            color: {TEXT}; padding: 4px 8px; margin: 1px 4px; border-radius: 5px;
+        }}
+        QListWidget#sourcesList::item:hover {{ background: {ELEVATED}; }}
+        QListWidget#sourcesList::item:selected {{ background: {ACCENT}; color: #ffffff; }}
+        """
 
-        Verde si tiene segmentos, ámbar si solo tiene marcadores; con un pequeño
-        recuadro de color al lado y un leve sombreado del fondo. El texto (alias)
+    def _decorate_source_item(self, item, n_seg: int, n_mark: int) -> None:
+        """Fija el indicador de contenido de una fuente sin tocar su nombre.
+
+        Un punto pequeño y discreto a la derecha (lo pinta ``_SourceItemDelegate``):
+        verde si tiene segmentos, ámbar si solo tiene marcadores. El texto (alias)
         queda intacto para no romper el renombrado en el sitio.
         """
         parts = []
@@ -2173,15 +2237,12 @@ class MainWindow(QMainWindow):
         if n_mark:
             parts.append(f"{n_mark} marcador" + ("es" if n_mark != 1 else ""))
         if parts:
-            color = QColor(46, 204, 113) if n_seg else QColor(230, 160, 0)
-            item.setData(Qt.ItemDataRole.DecorationRole, color)
-            item.setData(Qt.ItemDataRole.BackgroundRole,
-                         QColor(color.red(), color.green(), color.blue(), 28))
+            item.setData(_MARK_COLOR_ROLE,
+                         COLOR_HAS_SEGMENTS if n_seg else COLOR_HAS_MARKERS)
             item.setToolTip("Contiene " + " y ".join(parts) +
                             ".  ·  Clic para renombrar (F2).")
         else:
-            item.setData(Qt.ItemDataRole.DecorationRole, None)
-            item.setData(Qt.ItemDataRole.BackgroundRole, None)
+            item.setData(_MARK_COLOR_ROLE, None)
             item.setToolTip("Sin segmentos ni marcadores.  ·  Clic para renombrar (F2).")
 
     def _refresh_sources(self) -> None:

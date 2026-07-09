@@ -26,10 +26,11 @@ from eeg_studio.acquisition.recorder import CSVRecorder  # noqa: E402
 from eeg_studio.config import RECORDINGS_DIR  # noqa: E402
 from eeg_studio.core.project import Project  # noqa: E402
 from eeg_studio.core.recording import Recording  # noqa: E402
+from eeg_studio.ui import main_window as mw  # noqa: E402
 from eeg_studio.ui.main_window import MainWindow  # noqa: E402
 
 _ROLE_ID = Qt.ItemDataRole.UserRole
-_ROLE_DECOR = Qt.ItemDataRole.DecorationRole
+_ROLE_MARK = mw._MARK_COLOR_ROLE          # punto indicador (delegate)
 
 
 def _csv(path):
@@ -113,22 +114,23 @@ def main() -> int:
     proj.undo()                                        # el reordenado es reversible
     assert [s["id"] for s in proj.sources] == [sid_beta, sid_alfa, sid_gamma]
 
-    print("[6] Indicador de segmentos: verde en la fuente con segmentos")
+    print("[6] Indicador de segmentos: punto (color) en la fuente con segmentos")
     proj.add_segment(sid_beta, 0, 10, "clase_1")
     win._source_sort = "custom"; win._refresh_sources()
     it_beta = win._item_for_sid(sid_beta)
-    col = it_beta.data(_ROLE_DECOR)
-    assert isinstance(col, QColor) and (col.red(), col.green(), col.blue()) == (46, 204, 113), col
+    col_seg = it_beta.data(_ROLE_MARK)
+    assert isinstance(col_seg, QColor) and col_seg == mw.COLOR_HAS_SEGMENTS, col_seg
     it_gamma = win._item_for_sid(sid_gamma)
-    assert it_gamma.data(_ROLE_DECOR) is None                    # sin nada
+    assert it_gamma.data(_ROLE_MARK) is None                     # sin nada, sin punto
 
-    print("[7] Escaneo de marcadores (2 º plano): «alfa» tiene 2 → indicador ámbar")
+    print("[7] Escaneo de marcadores (2 º plano): «alfa» tiene 2 → punto ámbar")
     _pump(app, win)
     assert win._src_event_counts.get(sid_alfa) == 2, win._src_event_counts
     win._update_source_indicators()
     it_alfa = win._item_for_sid(sid_alfa)
-    ca = it_alfa.data(_ROLE_DECOR)
-    assert isinstance(ca, QColor) and (ca.red(), ca.green(), ca.blue()) == (230, 160, 0), ca
+    col_mark = it_alfa.data(_ROLE_MARK)
+    assert isinstance(col_mark, QColor) and col_mark == mw.COLOR_HAS_MARKERS, col_mark
+    assert col_mark != col_seg                                   # distinto a segmentos
 
     print("[8] El renombrado sigue funcionando aunque la vista esté ordenada")
     win._source_sort = "alpha"; win._refresh_sources()
