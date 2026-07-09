@@ -15,6 +15,7 @@ from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -134,6 +135,23 @@ class SignalView(QWidget):
         controls.addStretch(1)
         self.sel_label = QLabel("Selección: —")
         controls.addWidget(self.sel_label)
+
+        # Longitud (en tiempo) de la región seleccionada: fijarla a un valor exacto.
+        self.len_spin = QDoubleSpinBox()
+        self.len_spin.setDecimals(2)
+        self.len_spin.setRange(0.05, 3600.0)
+        self.len_spin.setSingleStep(0.5)
+        self.len_spin.setValue(4.0)
+        self.len_spin.setSuffix(" s")
+        self.len_spin.setEnabled(False)
+        self.len_spin.setToolTip(
+            "Fija la longitud (en tiempo) de la región seleccionada. Se ajusta "
+            "manteniendo el inicio; útil para marcar ventanas de duración exacta."
+        )
+        self.len_spin.valueChanged.connect(self._on_length_changed)
+        controls.addWidget(QLabel("Long.:"))
+        controls.addWidget(self.len_spin)
+
         self.add_seg_btn = QPushButton("Crear segmento")
         self.add_seg_btn.setToolTip("Crea un segmento etiquetado a partir de la región seleccionada.")
         self.add_seg_btn.clicked.connect(self._emit_segment)
@@ -234,6 +252,7 @@ class SignalView(QWidget):
     def _set_edit_buttons(self, on: bool) -> None:
         for b in (self.add_seg_btn, self.del_seg_btn, self.cut_btn):
             b.setEnabled(on)
+        self.len_spin.setEnabled(on)
 
     def _gain(self) -> float:
         return float(self.gain_box.currentText().replace("x", ""))
@@ -302,6 +321,10 @@ class SignalView(QWidget):
     def _setup_region(self, total: float) -> None:
         """Coloca la región de selección y una ventana inicial legible."""
         self.plot.addItem(self.region)
+        # La longitud máxima ajustable es la duración total de la señal.
+        self.len_spin.blockSignals(True)
+        self.len_spin.setMaximum(max(0.1, round(total, 3)))
+        self.len_spin.blockSignals(False)
         # Si la grabación es larga y hay muchos marcadores, se muestra un tramo
         # en torno al primer marcador (no los ~45 min de golpe).
         if not self.region.isVisible():
@@ -496,6 +519,27 @@ class SignalView(QWidget):
         self.sel_label.setText(
             f"Selección: {lo:.2f}–{hi:.2f} s  ({s1 - s0} muestras)"
         )
+        # Refleja la longitud actual en el campo (sin re-disparar el cambio).
+        length = max(0.0, hi - lo)
+        self.len_spin.blockSignals(True)
+        self.len_spin.setValue(min(length, self.len_spin.maximum()))
+        self.len_spin.blockSignals(False)
+
+    def _on_length_changed(self, seconds: float) -> None:
+        """Fija la longitud (en tiempo) de la selección, manteniendo el inicio.
+
+        Si no cabe hasta el final de la señal, corre el inicio hacia atrás para
+        conservar la duración pedida."""
+        if self._data is None or seconds <= 0:
+            return
+        total = self._data.shape[1] / self._fs
+        lo, _hi = self.region.getRegion()
+        lo = max(0.0, min(lo, total))
+        hi = lo + seconds
+        if hi > total:                       # no cabe: recorta al final y corre el inicio
+            hi = total
+            lo = max(0.0, total - seconds)
+        self.region.setRegion((lo, hi))      # dispara _on_region_changed (etiqueta + campo)
 
     def selection_samples(self) -> tuple[int, int]:
         lo, hi = self.region.getRegion()

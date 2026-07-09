@@ -12,6 +12,18 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-09]
+
+### Añadido
+- **Longitud de la selección por tiempo** en el visor de la señal: nuevo campo
+  **«Long.»** (segundos) junto a la selección que fija la **duración exacta** de la
+  región marcada, manteniendo el inicio (si no cabe hasta el final, corre el inicio
+  hacia atrás). Se **sincroniza en ambos sentidos**: al arrastrar la región, el
+  campo refleja su longitud; al escribir un valor, la región se ajusta. Útil para
+  marcar ventanas de duración exacta (p. ej. tareas de 5 s del paradigma Delfin).
+
+---
+
 ## [2026-07-08]
 
 ### Añadido
