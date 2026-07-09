@@ -29,7 +29,22 @@ except Exception:  # noqa: BLE001
 from eeg_studio.core import classification, dataset as dataset_mod  # noqa: E402
 from eeg_studio.core.project import Project  # noqa: E402
 
-EEG_DIR = os.path.normpath(os.path.join(_HERE, "..", "..", "EEG"))
+def _find_eeg_dir(start: str) -> str:
+    """Localiza la carpeta ``EEG/`` subiendo por los directorios padre (resiste
+    cambios de profundidad del árbol, p. ej. ``EEG_Studio/`` → ``src/EEG_Studio/``)."""
+    d = start
+    for _ in range(8):
+        cand = os.path.join(d, "EEG")
+        if os.path.isdir(cand):
+            return cand
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return os.path.normpath(os.path.join(start, "..", "..", "EEG"))
+
+
+EEG_DIR = _find_eeg_dir(_HERE)
 EXAMPLE_CSVS = ["Prueba_001.csv", "Prueba_002.csv"]
 PROJECT_NAME = "Ejemplo"
 

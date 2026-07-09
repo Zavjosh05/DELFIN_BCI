@@ -19,7 +19,8 @@ from eeg_studio.core.project import Project
 from eeg_studio.ui.main_window import MainWindow
 from eeg_studio.ui.signal_view import segment_color
 
-EEG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "EEG")
+from tests import data_dir
+EEG_DIR = data_dir()
 
 
 def _texts(view):

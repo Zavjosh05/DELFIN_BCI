@@ -76,8 +76,9 @@ def main() -> int:
 
     print("[3] Capas de entrada/salida de la red")
     # Dos clases a partir de segmentos etiquetados.
+    from tests import data_dir
     src = proj.add_source(os.path.abspath(os.path.join(
-        os.path.dirname(__file__), "..", "..", "EEG", "Prueba_001.csv")))
+        data_dir(), "Prueba_001.csv")))
     rec = proj.get_recording(src["id"])
     for i, ep in enumerate(rec.epoch_ids[:4]):
         a, b = rec.epoch_range(ep)

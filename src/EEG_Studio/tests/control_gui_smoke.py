@@ -23,7 +23,8 @@ from eeg_studio.core import classification, dataset as dataset_mod
 from eeg_studio.core.project import Project
 from eeg_studio.ui.main_window import MainWindow
 
-EEG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "EEG")
+from tests import data_dir
+EEG_DIR = data_dir()
 
 
 def _pump(app, seconds):

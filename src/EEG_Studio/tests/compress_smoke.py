@@ -16,7 +16,8 @@ import numpy as np
 from eeg_studio.core.csv_loader import compress_csv, load_recording
 from eeg_studio.core.project import Project
 
-EEG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "EEG")
+from tests import data_dir
+EEG_DIR = data_dir()
 
 
 def main() -> int:

@@ -48,6 +48,11 @@ cambios se agrupan por fecha de trabajo.
   **sin servicio** en el firmware: sus botones siguen visibles pero **inhabilitados**
   (y el clasificador los ignora). Arriba/Abajo controlan el Hombro; Agarre/Soltar,
   la bomba.
+- **Ruta de los datos de ejemplo tras la reestructuración a `src/`**: las pruebas
+  y los generadores de ejemplo buscaban la carpeta `EEG/` con una ruta relativa
+  fija (`../../EEG`) que dejó de resolver al mover el árbol un nivel más adentro
+  (`EEG_Studio/` → `src/EEG_Studio/`). Ahora la localizan subiendo por los
+  directorios padre (`tests.data_dir()`), resistente a futuros cambios de nivel.
 
 ---
 

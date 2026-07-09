@@ -25,7 +25,8 @@ from eeg_studio.core.dataset import fit_window
 from eeg_studio.core.processing import extract_feature_vector
 from eeg_studio.core.project import Project
 
-EEG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "EEG")
+from tests import data_dir
+EEG_DIR = data_dir()
 
 
 def _md5(path):

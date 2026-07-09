@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import QApplication
 from eeg_studio.core.project import Project
 from eeg_studio.ui.main_window import MainWindow
 
-EEG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "EEG")
+from tests import data_dir
+EEG_DIR = data_dir()
 
 
 def main() -> int:
