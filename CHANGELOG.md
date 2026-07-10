@@ -45,6 +45,10 @@ cambios se agrupan por fecha de trabajo.
     (a pantalla completa); la interfaz principal se queda en la suya. Lista los
     monitores conectados (con un botón para actualizarla) y recuerda la elección; por
     defecto usa un monitor externo si lo hay.
+  - **Vista previa del frame en la línea de tiempo**: al moverte por la barra (o al
+    cargar el video) la vista muestra el **frame correspondiente** a esa posición, y
+    un campo **«Ir a (s)»** manda el cursor a un **instante exacto** (escribes el
+    segundo y pulsas Ir/Enter); el campo también refleja el tiempo actual.
 - **Perfiles de control + brazo simulado** en la pestaña **Control**. El control del
   actuador ahora es un **perfil** seleccionable: **«Brazo MaxArm (real)»** (el de
   antes, por HTTP) y **«Brazo simulado»** (nuevo, sin hardware). El brazo simulado es
@@ -78,6 +82,11 @@ cambios se agrupan por fecha de trabajo.
   las fuentes que no reportan batería ocultan el medidor.
 
 ### Corregido
+- **Crash al recolocar/flotar el panel «Herramientas»**: la vista 3D del brazo
+  (`GLViewWidget`) se reparenta al mover el dock y su contexto OpenGL se recreaba,
+  lo que hacía **crashear la app**. Se activan **contextos OpenGL compartidos**
+  (`AA_ShareOpenGLContexts`) antes de crear la aplicación, así el widget 3D sobrevive
+  a la reubicación del panel.
 - **Crash al cancelar la línea de tiempo de un estímulo**: al pulsar Cancelar, el
   reproductor de video (`QMediaPlayer`) quedaba vivo al destruir el diálogo y la
   interfaz se caía. Ahora se **libera el video** (stop + soltar salida) tanto al

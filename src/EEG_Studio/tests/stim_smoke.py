@@ -78,6 +78,10 @@ def main() -> int:
     assert dlg.duration_ms() > 0
     dlg.timeline.resize(1000, 52); dlg.timeline.set_duration(60000)
     assert abs(dlg.timeline._ms_at(500) - 30000) < 100     # el instante bajo el cursor
+    # campo «Ir a (s)»: manda el reproductor a un instante exacto
+    dlg.goto_spin.setValue(12.5); dlg._goto()
+    _pump(app, 200)
+    assert abs(dlg.player.position() - 12500) < 1500        # buscó ~12.5 s (muestra el frame)
     assert any(e["kind"] == "segment" for e in dlg.result_events())
     dlg.reject()                                            # CANCELAR (antes crasheaba)
     assert dlg._cleaned                                     # el player quedó limpio

@@ -7,7 +7,7 @@ clases se toman de las que ya existen en el proyecto. Devuelve los eventos en ms
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -119,6 +120,7 @@ class StimTimelineDialog(QDialog):
         self._duration = 0
         self._seg_start: int | None = None
         self._cleaned = False
+        self._frame_shown = False
         self._events: list[dict] = [dict(e) for e in (events or [])]
         self._prefilled = bool(self._events)
 
@@ -134,6 +136,7 @@ class StimTimelineDialog(QDialog):
         self.player.setVideoOutput(self.video)
         self.player.durationChanged.connect(self._on_duration)
         self.player.positionChanged.connect(self._on_position)
+        self.player.mediaStatusChanged.connect(self._on_media_status)
         self.player.setSource(QUrl.fromLocalFile(video_path))
 
         # --- Transporte + barra de tiempo (editor) ---
@@ -143,11 +146,26 @@ class StimTimelineDialog(QDialog):
         row.addWidget(self.play_btn)
         self.timeline = _TimelineBar()
         self.timeline.set_events(self._events)
-        self.timeline.seekRequested.connect(self.player.setPosition)
+        self.timeline.seekRequested.connect(self._seek)   # busca Y muestra el frame
         row.addWidget(self.timeline, 1)
         self.time_lbl = QLabel("0:00.000 / 0:00.000")
         row.addWidget(self.time_lbl)
         lay.addLayout(row)
+
+        # --- Ir a un instante exacto ---
+        goto = QHBoxLayout()
+        goto.addWidget(QLabel("Ir a (s):"))
+        self.goto_spin = QDoubleSpinBox()
+        self.goto_spin.setDecimals(3); self.goto_spin.setRange(0.0, 3600.0)
+        self.goto_spin.setSingleStep(0.5)
+        self.goto_spin.setToolTip("Escribe el segundo exacto y pulsa «Ir» (o Enter).")
+        self.goto_spin.editingFinished.connect(self._goto)
+        goto.addWidget(self.goto_spin)
+        goto_btn = QPushButton("Ir"); goto_btn.setFixedWidth(40)
+        goto_btn.clicked.connect(self._goto)
+        goto.addWidget(goto_btn)
+        goto.addStretch(1)
+        lay.addLayout(goto)
 
         # --- Clase + captura ---
         cap = QHBoxLayout()
@@ -195,6 +213,7 @@ class StimTimelineDialog(QDialog):
     def _on_duration(self, d: int) -> None:
         self._duration = d
         self.timeline.set_duration(d)
+        self.goto_spin.setMaximum(max(0.0, d / 1000.0))
         self.time_lbl.setText(f"{_fmt(0)} / {_fmt(d)}")
         if not self._prefilled and d > 0 and not self._events:
             from ..core.stim import default_events
@@ -205,6 +224,40 @@ class StimTimelineDialog(QDialog):
     def _on_position(self, p: int) -> None:
         self.timeline.set_position(p)
         self.time_lbl.setText(f"{_fmt(p)} / {_fmt(self._duration)}")
+        if not self.goto_spin.hasFocus():          # refleja el instante actual (editable)
+            self.goto_spin.blockSignals(True)
+            self.goto_spin.setValue(p / 1000.0)
+            self.goto_spin.blockSignals(False)
+
+    def _on_media_status(self, status) -> None:
+        # Al cargar, muestra el primer frame (play+pause breve) para que la vista
+        # previa tenga imagen sin darle a reproducir.
+        if not self._frame_shown and status in (
+                QMediaPlayer.MediaStatus.LoadedMedia,
+                QMediaPlayer.MediaStatus.BufferedMedia):
+            self._frame_shown = True
+            self.player.play()
+            QTimer.singleShot(60, self._preview_pause)
+
+    def _preview_pause(self) -> None:
+        if self._cleaned:
+            return
+        try:
+            self.player.pause(); self.play_btn.setText("▶")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _seek(self, ms: int) -> None:
+        """Busca a ``ms`` y deja el frame visible aunque el video esté pausado."""
+        ms = max(0, int(ms))
+        if self._duration:
+            ms = min(ms, self._duration)
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.StoppedState:
+            self.player.play(); self.player.pause(); self.play_btn.setText("▶")
+        self.player.setPosition(ms)
+
+    def _goto(self) -> None:
+        self._seek(int(round(self.goto_spin.value() * 1000)))
 
     def _toggle_play(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
