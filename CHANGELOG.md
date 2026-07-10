@@ -15,6 +15,21 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-09]
 
 ### Añadido
+- **Estimulación sincronizada** (nuevo módulo en «Tiempo real», bajo la grabación):
+  reproducir un **video de estímulo** dispara **automáticamente** la grabación EEG y
+  coloca **segmentos exactos** en los tiempos definidos — elimina el error humano al
+  etiquetar. Los 6 videos de `data/videos` se **mapean solos** a las 6 clases Delfin
+  (arriba/abajo/izquierda/derecha/agarre/soltar). Al configurar un video se abre una
+  **línea de tiempo** (con vista previa) para fijar las **marcas** (instantes) y los
+  **segmentos** (lapsos); la configuración **se guarda en el proyecto**. Los estímulos
+  ya configurados aparecen en la sección con **▶ Reproducir**: solo pide el nombre de
+  la grabación y procede solo. El reproductor se lanza **a pantalla completa en un
+  monitor externo** (si lo hay; si no, en la principal, sin cerrar la interfaz) y, al
+  terminar, se **asegura de guardar todo** y coloca los segmentos exactos (calculados
+  desde la línea de tiempo, descontando el desfase inicio-grabación/video). Los videos
+  se referencian desde `data/videos` (no hay `ffmpeg` para comprimir, así que se toman
+  del origen). No sustituye la grabación manual existente. Requiere QtMultimedia
+  (incluido en PyQt6); si falta, la sección se muestra deshabilitada.
 - **Perfiles de control + brazo simulado** en la pestaña **Control**. El control del
   actuador ahora es un **perfil** seleccionable: **«Brazo MaxArm (real)»** (el de
   antes, por HTTP) y **«Brazo simulado»** (nuevo, sin hardware). El brazo simulado es

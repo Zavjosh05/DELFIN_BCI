@@ -70,6 +70,7 @@ def _default_state() -> dict:
         "excluded_channels": [], # nombres de canal excluidos
         "cuts": {},              # source_id -> [[inicio, fin], ...] tramos eliminados
         "dataset": {"use_bands": True, "use_time": True},
+        "stim_videos": [],       # estímulos configurados (video -> marcas/segmentos en tiempo)
     }
 
 
@@ -542,6 +543,36 @@ class Project:
         if n:
             self._commit("segments", [], f"Eliminar todos los segmentos ({n})")
         return n
+
+    # ------------------------------------------------------------------ #
+    # Estímulos sincronizados (video -> marcas/segmentos en el tiempo)
+    # ------------------------------------------------------------------ #
+    def stim_videos(self) -> list[dict]:
+        """Configuraciones de estímulo guardadas en el proyecto."""
+        return list(self.state.get("stim_videos", []))
+
+    def save_stim_video(self, config: dict) -> dict:
+        """Añade o actualiza (por ``id``) la configuración de un video de estímulo.
+
+        La configuración lleva la ruta del video, su clase y los eventos definidos
+        en tiempo (marcas y segmentos). Devuelve la config guardada (con ``id``)."""
+        cfg = dict(config)
+        if not cfg.get("id"):
+            cfg["id"] = uuid.uuid4().hex[:8]
+        videos = [dict(v) for v in self.state.get("stim_videos", [])]
+        for i, v in enumerate(videos):
+            if v.get("id") == cfg["id"]:
+                videos[i] = cfg
+                break
+        else:
+            videos.append(cfg)
+        self._commit("stim_videos", videos,
+                     f"Configurar estímulo «{cfg.get('label', '')}»")
+        return cfg
+
+    def remove_stim_video(self, video_id: str) -> None:
+        keep = [v for v in self.state.get("stim_videos", []) if v.get("id") != video_id]
+        self._commit("stim_videos", keep, "Quitar estímulo")
 
     def repeat_segment(self, segment_id: str, period: int, count: int | None = None,
                        n_samples: int | None = None) -> int:

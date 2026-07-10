@@ -2009,6 +2009,7 @@ class MainWindow(QMainWindow):
         self.preproc_panel.refresh()
         self.dataset_panel.refresh()
         self.clf_panel.refresh()
+        self.acq_panel.refresh_stim()
         self._update_actions()
         self._update_title()
         self._update_center()

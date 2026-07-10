@@ -15,12 +15,17 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -40,7 +45,16 @@ from ..acquisition import (
 )
 from ..acquisition.emotiv import quick_diagnose
 from ..acquisition.recorder import CSVRecorder
-from ..core import marks_sidecar
+from ..core import marks_sidecar, stim as stim_core
+
+try:                                    # la estimulación por video requiere QtMultimedia
+    from .stim_player import StimSession
+    from .stim_timeline import StimTimelineDialog
+    _STIM_OK = True
+except Exception:                       # noqa: BLE001
+    StimSession = None
+    StimTimelineDialog = None
+    _STIM_OK = False
 from ..config import (
     CYKIT_CHANNEL_START,
     CYKIT_HOST,
@@ -202,6 +216,8 @@ class AcquisitionPanel(QWidget):
         mk_hint.setStyleSheet("color: #8a929b; font-size: 11px;")
         rec_layout.addWidget(mk_hint)
         layout.addWidget(rec_box)
+
+        layout.addWidget(self._stim_section())
         layout.addStretch(1)
 
         # Atajos de teclado para marcar sin soltar el ratón del casco/tarea.
@@ -650,6 +666,159 @@ class AcquisitionPanel(QWidget):
         # La grabación se añade como fuente del proyecto AUTOMÁTICAMENTE (sin preguntar),
         # con su nombre y segmentos. Se guarda enseguida (no se pierde al cerrar).
         self.controller.add_recording_as_source(path, segments, alias)
+
+    # --- Estimulación sincronizada ---------------------------------------
+    def _stim_section(self) -> QGroupBox:
+        box = QGroupBox("Estimulación sincronizada")
+        v = QVBoxLayout(box)
+        if not _STIM_OK:
+            note = QLabel("Requiere QtMultimedia (reproducción de video). No disponible "
+                          "en esta instalación de PyQt6.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #8a929b; font-size: 11px;")
+            v.addWidget(note)
+            self.stim_list = QListWidget()          # placeholder (evita atributos ausentes)
+            self.stim_list.setVisible(False)
+            v.addWidget(self.stim_list)
+            self._stim_session = None
+            return box
+        v.addWidget(QLabel("Reproduce un video de estímulo: graba y coloca los "
+                           "segmentos solo (sin error humano)."))
+        self.stim_list = QListWidget()
+        self.stim_list.setMaximumHeight(110)
+        self.stim_list.itemDoubleClicked.connect(self._configure_stim_item)
+        v.addWidget(self.stim_list)
+        row = QHBoxLayout()
+        add_btn = QPushButton("＋ Añadir / configurar…")
+        add_btn.clicked.connect(self._add_stim)
+        self.stim_play_btn = QPushButton("▶ Reproducir")
+        self.stim_play_btn.clicked.connect(self._play_stim)
+        rm_btn = QPushButton("Quitar")
+        rm_btn.clicked.connect(self._remove_stim)
+        row.addWidget(add_btn); row.addWidget(self.stim_play_btn); row.addWidget(rm_btn)
+        v.addLayout(row)
+        self._stim_session = None
+        self.refresh_stim()
+        return box
+
+    def refresh_stim(self) -> None:
+        """Repuebla la lista de estímulos configurados desde el proyecto."""
+        self.stim_list.clear()
+        proj = self.controller.project
+        if proj is None:
+            return
+        for cfg in proj.stim_videos():
+            n_seg = sum(1 for e in cfg.get("events", []) if e.get("kind") == "segment")
+            it = QListWidgetItem(f"🎬 {cfg.get('label', '?')} — {cfg.get('name', '')}"
+                                 f"  ({n_seg} segmento{'s' if n_seg != 1 else ''})")
+            it.setData(Qt.ItemDataRole.UserRole, cfg.get("id"))
+            self.stim_list.addItem(it)
+
+    def _add_stim(self) -> None:
+        """Elige uno de los videos de data/videos y abre su línea de tiempo."""
+        if not self.controller._require_project():
+            return
+        videos = stim_core.discover_videos()
+        if not videos:
+            self.controller.warn(
+                "Sin videos de estímulo",
+                "No se encontró la carpeta «data/videos» con los videos de estímulo.")
+            return
+        names = [f"{v['label'] or '¿?'} — {v['name']}" for v in videos]
+        choice, ok = QInputDialog.getItem(self, "Video de estímulo",
+                                          "Elige el video a configurar:", names, 0, False)
+        if not ok:
+            return
+        vid = videos[names.index(choice)]
+        self._open_timeline(vid["path"], vid["label"], None, vid["name"])
+
+    def _configure_stim_item(self, item) -> None:
+        cfg = self._stim_config(item.data(Qt.ItemDataRole.UserRole))
+        if cfg:
+            self._open_timeline(cfg.get("path", ""), cfg.get("label"),
+                                cfg, cfg.get("name", ""), cfg.get("id"))
+
+    def _open_timeline(self, path, label, existing, name, vid_id=None) -> None:
+        events = existing.get("events") if existing else None
+        dlg = StimTimelineDialog(path, label, events, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        cfg = {"id": vid_id, "path": path, "name": name,
+               "label": dlg.label_combo.currentText(),
+               "duration_ms": dlg.duration_ms(), "events": dlg.result_events()}
+        self.controller.project.save_stim_video(cfg)
+        self.controller.request_autosave()
+        self.refresh_stim()
+
+    def _stim_config(self, vid_id):
+        proj = self.controller.project
+        if proj is None:
+            return None
+        return next((c for c in proj.stim_videos() if c.get("id") == vid_id), None)
+
+    def _remove_stim(self) -> None:
+        item = self.stim_list.currentItem()
+        if item is None or self.controller.project is None:
+            return
+        self.controller.project.remove_stim_video(item.data(Qt.ItemDataRole.UserRole))
+        self.controller.request_autosave()
+        self.refresh_stim()
+
+    def _play_stim(self) -> None:
+        item = self.stim_list.currentItem()
+        if item is None:
+            self.controller.info("Sin estímulo", "Selecciona un estímulo configurado.")
+            return
+        cfg = self._stim_config(item.data(Qt.ItemDataRole.UserRole))
+        if cfg is None:
+            return
+        if not self.stim_is_ready():
+            self.controller.info(
+                "Sin señal en vivo",
+                "Conecta una fuente en «Tiempo real» y espera muestras antes de "
+                "reproducir el estímulo (la grabación necesita señal).")
+            return
+        default_name = f"{cfg.get('label', 'estimulo')}_{time.strftime('%H%M%S')}"
+        name, ok = QInputDialog.getText(self, "Nombre de la grabación",
+                                        "Nombre:", text=default_name)
+        if not ok:
+            return
+        self._stim_session = StimSession(self.controller, cfg, name.strip() or default_name,
+                                         on_done=self._on_stim_done)
+        self._stim_session.start()
+
+    def _on_stim_done(self, ok: bool) -> None:
+        self._stim_session = None
+        self.refresh_stim()
+        self.status.setText("Estímulo reproducido y grabación guardada." if ok
+                            else "Estímulo cancelado.")
+
+    # --- API usada por StimSession ----------------------------------------
+    def stim_is_ready(self) -> bool:
+        return (self.source is not None and self._configured and self.recorder is None)
+
+    def stim_start(self, name: str) -> bool:
+        if self.recorder is not None:
+            return False
+        self.name_edit.setText(name)
+        self._start_recording()
+        return self.recorder is not None
+
+    def stim_samples(self) -> int:
+        return self.recorder.n_samples if self.recorder is not None else 0
+
+    def stim_marker(self, label: str) -> None:
+        if self.recorder is not None:
+            self.recorder.add_marker(str(label))
+
+    def stim_finish(self, segments) -> None:
+        """Termina la grabación colocando ``segments`` (lista de ``(inicio, fin,
+        etiqueta)`` en MUESTRAS) — los segmentos EXACTOS del estímulo."""
+        if self.recorder is None:
+            return
+        self._rec_segments = [(int(s), int(e), str(lbl)) for (s, e, lbl) in segments]
+        self._seg_active = False
+        self._stop_recording()
 
     def _insert_marker(self) -> None:
         if self.recorder is None:
