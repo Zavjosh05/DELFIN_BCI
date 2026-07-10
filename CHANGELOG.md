@@ -15,6 +15,9 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-10]
 
 ### Añadido
+- **Barra de paneles a la izquierda (estilo PyCharm)**: una barra vertical con un
+  **botón por panel** (Fuentes, Herramientas, Historial) que lo **despliega o
+  colapsa** con un clic; el botón queda marcado cuando el panel está visible.
 - **Escalas de los ejes en el visor de señales**: nuevo apartado «Ejes» para fijar
   a mano el **rango X** (tiempo: «desde» + «ventana») y el **rango Y** (amplitud:
   min/max), más un botón **Auto (ajustar)**. Los campos reflejan el rango actual al
@@ -39,6 +42,10 @@ cambios se agrupan por fecha de trabajo.
   mano en la línea de tiempo.
 
 ### Corregido / reforzado
+- **El visor de señal ya no impone un ancho mínimo enorme**: las dos filas de
+  controles van ahora en un desplazamiento horizontal, así el visor **se puede
+  encoger** (antes su ancho mínimo aplastaba los demás paneles). Su ancho mínimo pasó
+  de ~900 px a ~76 px.
 - **Filtros pasa-banda/altas/bajas + notch blindados**: verificado que atenúan las
   frecuencias correctas (respuesta en frecuencia). Además, ya **no revientan** con
   parámetros inválidos (p. ej. `low > high` en el pasa-banda, `cutoff ≤ 0`) ni con

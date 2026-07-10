@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         self._build_docks()
         self._build_menu()
         self._build_toolbar()
+        self._build_activity_bar()
         self._build_statusbar()
         self._update_actions()
         self._update_title()
@@ -515,6 +516,29 @@ class MainWindow(QMainWindow):
                 tb.addAction(a)
             tb.addSeparator()
         self.addToolBar(tb)
+
+    def _build_activity_bar(self) -> None:
+        """Barra vertical a la izquierda (estilo PyCharm): un botón por panel que lo
+        **despliega/colapsa**. Reutiliza el ``toggleViewAction`` de cada dock, así el
+        botón queda marcado cuando el panel está visible."""
+        bar = QToolBar("Paneles", self)
+        bar.setObjectName("activityBar")
+        bar.setMovable(False)
+        bar.setIconSize(QSize(22, 22))
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        st = self.style()
+        specs = (
+            (self.src_dock, QStyle.StandardPixmap.SP_DirIcon),
+            (self.right_dock, QStyle.StandardPixmap.SP_FileDialogListView),
+            (self.log_dock, QStyle.StandardPixmap.SP_FileDialogInfoView),
+        )
+        for dock, icon in specs:
+            act = dock.toggleViewAction()          # checkable: refleja visible/oculto
+            act.setIcon(st.standardIcon(icon))
+            act.setToolTip(f"Mostrar/ocultar «{dock.windowTitle()}»")
+            bar.addAction(act)
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, bar)
+        self._activity_bar = bar
 
     def _update_title(self) -> None:
         if self.project is None:

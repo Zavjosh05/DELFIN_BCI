@@ -16,10 +16,12 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -171,7 +173,6 @@ class SignalView(QWidget):
         self.cut_btn.clicked.connect(self._emit_cut)
         self.cut_btn.setEnabled(False)
         controls.addWidget(self.cut_btn)
-        layout.addLayout(controls)
 
         # --- Escalas de los ejes (rango X en tiempo, rango Y en amplitud) ---
         axes = QHBoxLayout()
@@ -203,7 +204,24 @@ class SignalView(QWidget):
         self.autoscale_btn.clicked.connect(self._autoscale_axes)
         axes.addWidget(self.autoscale_btn)
         axes.addStretch(1)
-        layout.addLayout(axes)
+
+        # Las dos filas de controles van dentro de un scroll HORIZONTAL: así su ancho
+        # mínimo (muchos widgets) NO fuerza un tamaño mínimo enorme del visor, que
+        # antes impedía encogerlo y aplastaba los demás paneles. Si no caben, aparece
+        # una barra de desplazamiento en vez de agrandar el visor.
+        controls_host = QWidget()
+        ch = QVBoxLayout(controls_host)
+        ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(2)
+        ch.addLayout(controls); ch.addLayout(axes)
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        controls_scroll.setWidget(controls_host)
+        controls_scroll.setMinimumWidth(0)
+        controls_scroll.setMaximumHeight(controls_host.sizeHint().height() + 18)
+        layout.addWidget(controls_scroll)
 
         # Fila de medidas del canal aislado (rango de variación de la señal).
         self.stats_label = QLabel("")
@@ -212,6 +230,7 @@ class SignalView(QWidget):
         layout.addWidget(self.stats_label)
 
         self.plot = pg.PlotWidget()
+        self.plot.setMinimumSize(60, 40)          # que el visor se pueda encoger
         self.plot.setLabel("bottom", "Tiempo", units="s")
         self.plot.setMenuEnabled(False)
         self.plot.showGrid(x=True, y=False, alpha=0.2)

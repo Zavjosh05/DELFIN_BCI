@@ -538,4 +538,5 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `sim_arm_smoke` (brazo simulado 4DOF + perfiles del panel de Control),
 `recording_robust_smoke` (grabación en el hilo productor + fsync + batería),
 `stim_smoke` (estimulación sincronizada: núcleo, config, línea de tiempo, grabación),
+`dock_toggle_smoke` (visor encogible + barra de paneles estilo PyCharm),
 `e2e_smoke` (flujo completo de extremo a extremo).
