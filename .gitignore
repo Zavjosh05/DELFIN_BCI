@@ -38,3 +38,4 @@ Desktop.ini
 *.egg-info/
 build/
 dist/
+/data/videos
