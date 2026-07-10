@@ -75,6 +75,25 @@ def main() -> int:
         assert co < 0.35 and co < base_co / 2, (design, co)
     print("    notch IIR y FIR atenúan la red eléctrica ✓")
 
+    print("[7] Robustez: parámetros inválidos y segmentos cortos NO revientan")
+    short = np.random.randn(4, 8)
+    big = np.random.randn(4, 1000)
+    assert P.bandpass(big, fs, 30.0, 8.0).shape == big.shape        # low > high (desordenado)
+    assert P.lowpass(big, fs, 0.0).shape == big.shape               # cutoff <= 0
+    assert P.bandpass(short, fs, 8.0, 30.0).shape == short.shape     # más corta que padlen
+    assert P.highpass(short, fs, 10.0, design="fir").shape == short.shape
+    assert P.lowpass(short, fs, 20.0).shape == short.shape
+    assert P.notch(short, fs, 60.0).shape == short.shape
+    # y el pasa-banda normal sigue atenuando fuera de banda
+    s2 = (np.sin(2 * np.pi * 5 * t) + np.sin(2 * np.pi * 40 * t))[None, :]
+
+    def _pw(x, f):
+        X = np.abs(np.fft.rfft(x[0])); fr = np.fft.rfftfreq(n, 1 / fs)
+        return X[np.argmin(np.abs(fr - f))]
+    bp2 = P.bandpass(s2, fs, 8.0, 30.0)
+    assert _pw(bp2, 5) / _pw(s2, 5) < 0.1 and _pw(bp2, 40) / _pw(s2, 40) < 0.1
+    print("    parámetros inválidos / señales cortas OK; sigue filtrando bien")
+
     print("\nDISEÑO DE FILTROS (Butterworth / FIR, incl. notch) OK ✓")
     return 0
 

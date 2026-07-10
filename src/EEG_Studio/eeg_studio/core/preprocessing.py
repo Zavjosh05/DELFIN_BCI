@@ -34,42 +34,71 @@ def _odd_numtaps(numtaps: int, n_samples: int) -> int:
     return min(numtaps, max_taps)
 
 
+def _sosfiltfilt(sos, data: np.ndarray) -> np.ndarray:
+    """``sosfiltfilt`` robusto: en señales muy cortas reduce el ``padlen`` para no
+    fallar (``The length of the input vector x must be greater than padlen``)."""
+    n = int(data.shape[1])
+    if n < 2:
+        return np.asarray(data, dtype=float).copy()
+    try:
+        return sp_signal.sosfiltfilt(sos, data, axis=1)
+    except ValueError:
+        return sp_signal.sosfiltfilt(sos, data, axis=1, padlen=n - 1)
+
+
+def _filtfilt(b, a, data: np.ndarray) -> np.ndarray:
+    """``filtfilt`` (FIR/IIR) robusto, con la misma protección para señales cortas."""
+    n = int(data.shape[1])
+    if n < 2:
+        return np.asarray(data, dtype=float).copy()
+    try:
+        return sp_signal.filtfilt(b, a, data, axis=1)
+    except ValueError:
+        return sp_signal.filtfilt(b, a, data, axis=1, padlen=n - 1)
+
+
 def bandpass(data: np.ndarray, fs: float, low: float, high: float, order: int = 4,
              design: str = "butter", numtaps: int = 101) -> np.ndarray:
-    """Pasa-banda en fase cero. ``design``: 'butter' (IIR) o 'fir' (FIR ventaneado)."""
+    """Pasa-banda en fase cero. ``design``: 'butter' (IIR) o 'fir' (FIR ventaneado).
+
+    Tolera ``low``/``high`` desordenados y rangos inválidos (si no queda banda,
+    devuelve la señal sin filtrar en vez de reventar)."""
     nyq = fs / 2.0
+    low, high = sorted((float(low), float(high)))      # tolera low > high
     low = max(low, 1e-6)
     high = min(high, nyq - 1e-6)
+    if low >= high:                                    # rango inválido: no filtra
+        return np.asarray(data, dtype=float).copy()
     if design == "fir":
         taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), [low, high],
                                 pass_zero=False, fs=fs)
-        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
+        return _filtfilt(taps, [1.0], data)
     sos = sp_signal.butter(order, [low / nyq, high / nyq], btype="band", output="sos")
-    return sp_signal.sosfiltfilt(sos, data, axis=1)
+    return _sosfiltfilt(sos, data)
 
 
 def highpass(data: np.ndarray, fs: float, cutoff: float, order: int = 4,
              design: str = "butter", numtaps: int = 101) -> np.ndarray:
     nyq = fs / 2.0
-    cutoff = min(max(cutoff, 1e-6), nyq - 1e-6)
+    cutoff = min(max(float(cutoff), 1e-6), nyq - 1e-6)
     if design == "fir":
         taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), cutoff,
                                 pass_zero=False, fs=fs)
-        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
+        return _filtfilt(taps, [1.0], data)
     sos = sp_signal.butter(order, cutoff / nyq, btype="high", output="sos")
-    return sp_signal.sosfiltfilt(sos, data, axis=1)
+    return _sosfiltfilt(sos, data)
 
 
 def lowpass(data: np.ndarray, fs: float, cutoff: float, order: int = 4,
             design: str = "butter", numtaps: int = 101) -> np.ndarray:
     nyq = fs / 2.0
-    cutoff = min(cutoff, nyq - 1e-6)
+    cutoff = min(max(float(cutoff), 1e-6), nyq - 1e-6)   # acota a (0, nyq)
     if design == "fir":
         taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), cutoff,
                                 pass_zero=True, fs=fs)
-        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
+        return _filtfilt(taps, [1.0], data)
     sos = sp_signal.butter(order, cutoff / nyq, btype="low", output="sos")
-    return sp_signal.sosfiltfilt(sos, data, axis=1)
+    return _sosfiltfilt(sos, data)
 
 
 def notch(data: np.ndarray, fs: float, freq: float = 60.0, q: float = 30.0,
@@ -95,9 +124,9 @@ def notch(data: np.ndarray, fs: float, freq: float = 60.0, q: float = 30.0,
         hi = min(freq + bw / 2.0, nyq - 1e-6)
         taps = sp_signal.firwin(_odd_numtaps(numtaps, data.shape[1]), [lo, hi],
                                 pass_zero=True, fs=fs)   # pass_zero=True => band-stop
-        return sp_signal.filtfilt(taps, [1.0], data, axis=1)
+        return _filtfilt(taps, [1.0], data)
     b, a = sp_signal.iirnotch(freq / nyq, q)
-    return sp_signal.filtfilt(b, a, data, axis=1)
+    return _filtfilt(b, a, data)
 
 
 def common_average_reference(data: np.ndarray) -> np.ndarray:

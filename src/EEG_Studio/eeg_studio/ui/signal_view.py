@@ -173,6 +173,38 @@ class SignalView(QWidget):
         controls.addWidget(self.cut_btn)
         layout.addLayout(controls)
 
+        # --- Escalas de los ejes (rango X en tiempo, rango Y en amplitud) ---
+        axes = QHBoxLayout()
+        axes.addWidget(QLabel("Ejes  ·  X:"))
+        self.xstart_spin = QDoubleSpinBox()
+        self.xstart_spin.setRange(0.0, 1e7); self.xstart_spin.setDecimals(2)
+        self.xstart_spin.setSuffix(" s"); self.xstart_spin.setToolTip("Inicio de la ventana de tiempo visible.")
+        self.xstart_spin.valueChanged.connect(self._apply_x_range)
+        axes.addWidget(QLabel("desde")); axes.addWidget(self.xstart_spin)
+        self.xwin_spin = QDoubleSpinBox()
+        self.xwin_spin.setRange(0.05, 1e7); self.xwin_spin.setDecimals(2)
+        self.xwin_spin.setValue(10.0); self.xwin_spin.setSuffix(" s")
+        self.xwin_spin.setToolTip("Ancho de la ventana de tiempo (zoom horizontal).")
+        self.xwin_spin.valueChanged.connect(self._apply_x_range)
+        axes.addWidget(QLabel("ventana")); axes.addWidget(self.xwin_spin)
+        axes.addSpacing(14)
+        axes.addWidget(QLabel("Y:"))
+        self.ymin_spin = QDoubleSpinBox()
+        self.ymin_spin.setRange(-1e9, 1e9); self.ymin_spin.setDecimals(2)
+        self.ymin_spin.setToolTip("Límite inferior del eje de amplitud.")
+        self.ymin_spin.valueChanged.connect(self._apply_y_range)
+        self.ymax_spin = QDoubleSpinBox()
+        self.ymax_spin.setRange(-1e9, 1e9); self.ymax_spin.setDecimals(2)
+        self.ymax_spin.setToolTip("Límite superior del eje de amplitud.")
+        self.ymax_spin.valueChanged.connect(self._apply_y_range)
+        axes.addWidget(self.ymin_spin); axes.addWidget(QLabel("a")); axes.addWidget(self.ymax_spin)
+        self.autoscale_btn = QPushButton("Auto (ajustar)")
+        self.autoscale_btn.setToolTip("Ajusta X e Y automáticamente para ver toda la señal.")
+        self.autoscale_btn.clicked.connect(self._autoscale_axes)
+        axes.addWidget(self.autoscale_btn)
+        axes.addStretch(1)
+        layout.addLayout(axes)
+
         # Fila de medidas del canal aislado (rango de variación de la señal).
         self.stats_label = QLabel("")
         self.stats_label.setStyleSheet("color: #9be7c4; font-size: 11px;")
@@ -187,6 +219,8 @@ class SignalView(QWidget):
         self.plot.setClipToView(True)
         # Redibuja solo los marcadores/segmentos visibles al hacer pan/zoom.
         self.plot.getViewBox().sigXRangeChanged.connect(self._on_xrange_changed)
+        # Refleja el rango actual en los campos de escala (al hacer pan/zoom con el ratón).
+        self.plot.getViewBox().sigRangeChanged.connect(self._sync_axis_spins)
         # Clic derecho sobre un segmento: reetiquetar / eliminar.
         self.plot.scene().sigMouseClicked.connect(self._on_scene_clicked)
         layout.addWidget(self.plot, 1)
@@ -366,6 +400,44 @@ class SignalView(QWidget):
     def _on_xrange_changed(self, *_):
         if not self._drawing and self._data is not None:
             self._overlay_timer.start()          # agrupa redibujos del overlay
+
+    # --- Escalas de los ejes ---------------------------------------------
+    def _apply_x_range(self, *_):
+        """Fija el rango del eje X (tiempo) desde los campos «desde/ventana»."""
+        if self._data is None or self._drawing:
+            return
+        x0 = self.xstart_spin.value()
+        w = max(self.xwin_spin.value(), 1e-3)
+        self.plot.setXRange(x0, x0 + w, padding=0.0)
+
+    def _apply_y_range(self, *_):
+        """Fija el rango del eje Y (amplitud) desde los campos «min/max»."""
+        if self._data is None or self._drawing:
+            return
+        lo, hi = self.ymin_spin.value(), self.ymax_spin.value()
+        if hi > lo:
+            self.plot.setYRange(lo, hi, padding=0.0)
+
+    def _autoscale_axes(self):
+        """Ajusta ambos ejes para ver toda la señal."""
+        if self._data is None:
+            return
+        total = max(1e-3, self._data.shape[1] / self._fs)
+        self.plot.getViewBox().autoRange()               # Y (y X) a los datos
+        self.plot.setXRange(0.0, total, padding=0.02)    # X a toda la señal (determinista)
+        self._sync_axis_spins()
+
+    def _sync_axis_spins(self, *_):
+        """Refleja el rango visible actual en los campos (sin re-disparar cambios)."""
+        try:
+            (x0, x1), (y0, y1) = self.plot.getViewBox().viewRange()
+        except Exception:  # noqa: BLE001
+            return
+        for sp, val in ((self.xstart_spin, x0), (self.xwin_spin, x1 - x0),
+                        (self.ymin_spin, y0), (self.ymax_spin, y1)):
+            sp.blockSignals(True)
+            sp.setValue(float(val))
+            sp.blockSignals(False)
 
     def _segment_at(self, sample: int):
         """Segmento cuyo ``[inicio, fin)`` contiene ``sample`` (el más específico).

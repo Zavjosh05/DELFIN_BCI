@@ -132,6 +132,20 @@ def main() -> int:
     assert win.project.state["segments"][0]["label"] == "arriba"
     panel._disconnect(); panel.shutdown()
 
+    print("[9] Indicador de segmento en el reproductor + detección por tiempo")
+    from eeg_studio.ui.stim_player import StimPlayerWindow, StimSession
+    pw = StimPlayerWindow(vp)
+    pw.set_segment("arriba")
+    assert not pw.seg_label.isHidden() and "arriba" in pw.seg_label.text()
+    pw.set_segment(None); assert pw.seg_label.isHidden()
+    pw.close(); app.processEvents()
+    # la sesión detecta el segmento activo según la posición del video
+    cfg = {"path": vp, "events": [{"kind": "segment", "start": 2000, "stop": 6000,
+                                   "label": "abajo"}]}
+    ses = StimSession(win, cfg, "x")
+    assert next((l for a, b, l in ses._segments if a <= 4000 < b), None) == "abajo"
+    assert next((l for a, b, l in ses._segments if a <= 8000 < b), None) is None
+
     print("\nESTIMULACIÓN SINCRONIZADA (GENERAL) OK ✓")
     return 0
 

@@ -45,6 +45,12 @@ class StimPlayerWindow(QWidget):
         self._hint = QLabel("Esc para cancelar", self)
         self._hint.setStyleSheet("color: rgba(255,255,255,90); font-size: 12px;")
         self._hint.move(12, 8)
+        # Indicador: se resalta cuando el instante actual cae dentro de un segmento.
+        self.seg_label = QLabel("", self)
+        self.seg_label.setStyleSheet(
+            "background: rgba(220,60,60,210); color: white; font-size: 22px; "
+            "font-weight: bold; padding: 6px 18px; border-radius: 10px;")
+        self.seg_label.hide()
 
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
@@ -84,6 +90,24 @@ class StimPlayerWindow(QWidget):
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._finish()
 
+    def set_segment(self, label) -> None:
+        """Muestra/oculta el indicador de que el video está dentro de un segmento."""
+        if label:
+            self.seg_label.setText(f"●  SEGMENTO: {label}")
+            self.seg_label.adjustSize()
+            self._place_seg_label()
+            self.seg_label.show()
+            self.seg_label.raise_()
+        else:
+            self.seg_label.hide()
+
+    def _place_seg_label(self) -> None:
+        self.seg_label.move(max(0, (self.width() - self.seg_label.width()) // 2), 24)
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self._place_seg_label()
+
     def keyPressEvent(self, event):  # noqa: N802
         if event.key() == Qt.Key.Key_Escape:
             self._finish()
@@ -122,7 +146,10 @@ class StimSession:
         self._on_done = on_done
         self._events = config.get("events", [])
         self._markers = markers_in_order(self._events)
+        self._segments = [(int(e["start"]), int(e["stop"]), str(e.get("label", "")))
+                          for e in self._events if e.get("kind") == "segment"]
         self._fired = 0
+        self._seg_active = 0                 # centinela distinto de None
         self._base: int | None = None
         self.window: StimPlayerWindow | None = None
 
@@ -153,6 +180,17 @@ class StimSession:
         while self._fired < len(self._markers) and self._markers[self._fired]["t"] <= pos:
             self.acq.stim_marker(self._markers[self._fired].get("label", ""))
             self._fired += 1
+        # Indicador de segmento activo (video dentro de un lapso etiquetado).
+        active = next((lbl for (a, b, lbl) in self._segments if a <= pos < b), None)
+        if active != self._seg_active:
+            self._seg_active = active
+            if self.window is not None:
+                self.window.set_segment(active)
+            try:
+                self.acq.status.setText(f"● Grabando segmento: {active}" if active
+                                        else "Reproduciendo estímulo…")
+            except Exception:  # noqa: BLE001
+                pass
 
     def _on_finished(self) -> None:
         # Blindaje: pase lo que pase, se cierra la grabación (no se pierde nada).

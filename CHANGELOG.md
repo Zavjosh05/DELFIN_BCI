@@ -15,6 +15,14 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-10]
 
 ### Añadido
+- **Escalas de los ejes en el visor de señales**: nuevo apartado «Ejes» para fijar
+  a mano el **rango X** (tiempo: «desde» + «ventana») y el **rango Y** (amplitud:
+  min/max), más un botón **Auto (ajustar)**. Los campos reflejan el rango actual al
+  hacer pan/zoom con el ratón.
+- **Indicador de segmento durante el estímulo**: mientras se reproduce el video, se
+  resalta un aviso (**«● SEGMENTO: ‹clase›»**) sobre el reproductor a pantalla
+  completa —y en el estado de la interfaz— cada vez que el instante actual cae dentro
+  de un segmento etiquetado.
 - **Brazo simulado**: las **vistas laterales 2D** (lateral + superior) ahora son
   **colapsables** (botón para ocultarlas y ganar espacio para el 3D), y un botón
   **⛶ Pantalla completa** abre **solo el brazo** a pantalla completa para mejor
@@ -29,6 +37,13 @@ cambios se agrupan por fecha de trabajo.
 - **Estímulo: un video nuevo empieza SIN marcas/segmentos automáticos** (antes se
   prellenaban una marca y un segmento por defecto). Ahora el usuario coloca todo a
   mano en la línea de tiempo.
+
+### Corregido / reforzado
+- **Filtros pasa-banda/altas/bajas + notch blindados**: verificado que atenúan las
+  frecuencias correctas (respuesta en frecuencia). Además, ya **no revientan** con
+  parámetros inválidos (p. ej. `low > high` en el pasa-banda, `cutoff ≤ 0`) ni con
+  **segmentos muy cortos** (se ajusta el `padlen` de `filtfilt`/`sosfiltfilt`; antes
+  lanzaban `ValueError`).
 
 ---
 

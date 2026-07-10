@@ -50,6 +50,19 @@ def main() -> int:
     assert "4200" in view.stats_label.text(), view.stats_label.text()
     print(f"    canal aislado centrado (media≈{float(y.mean()):.1f}) · medidas reales OK")
 
+    print("[3] Apartado de escalas: fijar rango X (tiempo) e Y (amplitud) manualmente")
+    view.channel_box.setCurrentIndex(0)          # vuelve a multicanal
+    view.xstart_spin.setValue(1.0); view.xwin_spin.setValue(3.0)   # ventana [1, 4] s
+    (x0, x1), _ = view.plot.getViewBox().viewRange()
+    assert abs(x0 - 1.0) < 0.05 and abs(x1 - 4.0) < 0.05, (x0, x1)
+    view.ymin_spin.setValue(-10.0); view.ymax_spin.setValue(20.0)  # rango Y [-10, 20]
+    _, (y0, y1) = view.plot.getViewBox().viewRange()
+    assert abs(y0 + 10.0) < 0.1 and abs(y1 - 20.0) < 0.1, (y0, y1)
+    view._autoscale_axes()                                        # auto: cubre toda la señal
+    dur = view._data.shape[1] / fs                                # ~3.9 s
+    assert view.xwin_spin.value() > dur * 0.9    # la ventana pasa a cubrir toda la señal
+    print("    rango X/Y manual y auto-ajuste OK")
+
     print("\nESCALA DEL VISOR CSV (SIN OFFSET DC) OK ✓")
     return 0
 
