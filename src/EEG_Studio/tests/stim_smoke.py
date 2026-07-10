@@ -84,16 +84,17 @@ def main() -> int:
     dlg.player.setPosition(2000); _pump(app, 200); dlg._segment_click()
     dlg.player.setPosition(6000); _pump(app, 200); dlg._segment_click()
     assert len([e for e in dlg._events if e["kind"] == "segment"]) == 1, dlg._events
-    # repetir periódicamente (diálogos simulados): +3 copias
+    # repetir periódicamente (diálogos simulados): periodo 20 s, 5 reps — solo caben 2
+    # (ejercita también la rama «no cabía en el video», que antes crasheaba).
     class _FakeInput:
         @staticmethod
-        def getDouble(*a, **k): return (10.0, True)
+        def getDouble(*a, **k): return (20.0, True)
         @staticmethod
-        def getInt(*a, **k): return (3, True)
+        def getInt(*a, **k): return (5, True)
     orig = stl.QInputDialog; stl.QInputDialog = _FakeInput
     dlg.table.selectRow(0); dlg._repeat_segment()
     stl.QInputDialog = orig
-    assert len([e for e in dlg._events if e["kind"] == "segment"]) == 4, dlg._events
+    assert len([e for e in dlg._events if e["kind"] == "segment"]) == 3, dlg._events
     # campo «Ir a (s)»
     dlg.goto_spin.setValue(12.5); dlg._goto(); _pump(app, 200)
     assert abs(dlg.player.position() - 12500) < 1500

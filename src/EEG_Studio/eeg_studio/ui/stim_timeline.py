@@ -206,10 +206,11 @@ class StimTimelineDialog(QDialog):
         trow.addWidget(rm); trow.addWidget(rep); trow.addStretch(1)
         lay.addLayout(trow)
 
-        hint = QLabel("Muévete por la barra (indica el instante bajo el cursor) y fija ahí "
-                      "la marca o el segmento (F6 = inicio/fin). Se guardan en el proyecto.")
-        hint.setWordWrap(True); hint.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
-        lay.addWidget(hint)
+        self.hint = QLabel("Muévete por la barra (indica el instante bajo el cursor) y fija "
+                           "ahí la marca o el segmento (F6 = inicio/fin). Se guardan en el proyecto.")
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        lay.addWidget(self.hint)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                               | QDialogButtonBox.StandardButton.Cancel)
