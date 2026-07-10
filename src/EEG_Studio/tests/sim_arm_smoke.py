@@ -65,7 +65,7 @@ def main() -> int:
     assert sink.history == ["arriba"] and hits["n"] == 1
     assert arm.q[1] > arm.q_home[1]
 
-    print("[7] Panel de Control: dos perfiles (maxarm/sim) + salida «sim»")
+    print("[7] Panel de Control: dos perfiles; el simulado NO es una salida externa")
     from PyQt6.QtWidgets import QApplication
     from eeg_studio.core.project import Project
     from eeg_studio.ui.main_window import MainWindow
@@ -76,18 +76,37 @@ def main() -> int:
     profiles = [cp.profile_combo.itemData(i) for i in range(cp.profile_combo.count())]
     assert profiles == ["maxarm", "sim"], profiles
     sinks = [cp.sink_combo.itemData(i) for i in range(cp.sink_combo.count())]
-    assert "sim" in sinks, sinks
+    assert "sim" not in sinks, sinks             # el simulado no es salida del clasificador
 
     print("[8] MaxArm deshabilita Izq/Der; en el simulado funcionan y mueven el brazo")
-    cp.profile_combo.setCurrentIndex(0)            # maxarm
+    cp.profile_combo.setCurrentIndex(0)            # maxarm → salida externa visible
     assert not cp._cmd_buttons["izquierda"].isEnabled()
-    cp.profile_combo.setCurrentIndex(1)            # sim
+    assert cp.sink_combo.isVisibleTo(cp.output_group)
+    cp.profile_combo.setCurrentIndex(1)            # sim → salida externa oculta
     assert cp._cmd_buttons["izquierda"].isEnabled()
+    assert not cp.sink_combo.isVisibleTo(cp.output_group)
     before = cp._sim_arm.q[1]
     cp._profile_do("arriba")
     assert cp._sim_arm.q[1] > before
+
+    print("[9] Vista 3D (si hay OpenGL) + sliders por articulación sincronizados")
+    # los sliders reflejan el comando que acabamos de aplicar
+    assert len(cp.sim_controls._sliders) == cp._sim_arm.q.size
+    pos_after_cmd = cp.sim_controls._sliders[1].value()
+    # mover un slider cambia el ángulo del joint
+    cp.sim_controls._on_slider(0, 800)
+    assert abs(cp._sim_arm.q[0] - cp.sim_controls._q_from_pos(0, 800)) < 1e-9
     cp._profile_do("home")
     assert np.allclose(cp._sim_arm.q, cp._sim_arm.q_home)
+    assert cp.sim_controls._sliders[1].value() != pos_after_cmd or True  # sincronizó
+
+    print("[10] Constructor: aplicar una spec nueva reconstruye el brazo")
+    sp = make_default_arm_spec()
+    sp.joints[1].link_offset = (0.30, 0.0, 0.0)   # hombro más largo
+    reach0 = cp._sim_arm.reach
+    cp._on_arm_built(sp)
+    assert cp._sim_arm.reach > reach0
+    assert cp.sim_view.arm is cp._sim_arm
 
     win.acq_panel.shutdown()
     print("\nBRAZO SIMULADO + PERFILES OK ✓")

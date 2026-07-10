@@ -38,3 +38,7 @@ mne>=1.6
 # Opcional: gráficos de métricas (matriz de confusión, F1 por clase). Sin
 # matplotlib, las métricas se muestran en formato de texto.
 matplotlib>=3.7
+
+# Opcional: vista 3D del brazo simulado (perfil de Control). Sin PyOpenGL, la
+# simulación degrada a las proyecciones 2D (que no necesitan OpenGL).
+PyOpenGL>=3.1

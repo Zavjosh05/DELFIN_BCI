@@ -24,8 +24,17 @@ cambios se agrupan por fecha de trabajo.
   **2D con pyqtgraph** (vista lateral + superior, sin dependencias nuevas). Se
   controla con los **mismos 6 comandos**: arriba/abajo mueven el hombro,
   izquierda/derecha giran la base (aquí sí funcionan), agarre/soltar la pinza. El
-  **D-pad** manual y el **clasificador en tiempo real** (nueva salida «Brazo
-  simulado») pueden moverlo — «controlar con la mente» sin necesidad del robot físico.
+  **D-pad** manual y el **clasificador en tiempo real** pueden moverlo — «controlar
+  con la mente» sin necesidad del robot físico. El perfil simulado **no usa salida
+  externa**: al iniciar el control, el clasificador mueve el brazo directamente.
+  - **Vista 3D** del brazo (OpenGL vía `pyqtgraph.opengl`) además de las 2D; si no
+    hay **PyOpenGL**, degrada con elegancia a solo las proyecciones 2D.
+  - **Control por articulación**: un **slider por joint** (base/hombro/codo/muñeca)
+    con la lectura del ángulo y un botón de **HOME**; se sincroniza con los comandos.
+  - **Constructor de brazo**: pestaña «Construir brazo» con **preset** y una **tabla**
+    de joints (nombre, eje, eslabón LinkX/Y/Z, masa, límites) para **elegir o construir
+    el brazo desde cero**; al aplicar, reconstruye la cinemática (FK general para
+    cualquier cadena de joints). Extraído/adaptado de `Proyecto_RNN`.
 - **Longitud de la selección por tiempo** en el visor de la señal: nuevo campo
   **«Long.»** (segundos) junto a la selección que fija la **duración exacta** de la
   región marcada, manteniendo el inicio (si no cabe hasta el final, corre el inicio

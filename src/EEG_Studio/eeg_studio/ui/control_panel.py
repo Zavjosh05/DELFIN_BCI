@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QStackedWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +36,8 @@ from ..inference.arm import (
     ArmClient,
 )
 from ..inference.sim_arm import SimArmSink, SimulatedArm
+from .arm_builder import ArmBuilderWidget
+from .sim_arm_controls import SimArmControls
 from .sim_arm_view import SimArmView
 
 from ..config import (
@@ -113,13 +116,13 @@ class ControlPanel(QWidget):
         self.map_form = QFormLayout(self.map_box)
         layout.addWidget(self.map_box)
 
-        # Salida hacia el controlador.
-        out = QGroupBox("Salida al controlador")
-        out_layout = QVBoxLayout(out)
+        # Salida hacia el controlador (solo perfiles con actuador EXTERNO, p. ej.
+        # el MaxArm real). El brazo simulado no necesita salida: se mueve directo.
+        self.output_group = QGroupBox("Salida al controlador")
+        out_layout = QVBoxLayout(self.output_group)
         self.sink_combo = QComboBox()
         self.sink_combo.addItem("Registro (solo mostrar)", "log")
         self.sink_combo.addItem("Brazo MaxArm (HTTP)", "arm")
-        self.sink_combo.addItem("Brazo simulado", "sim")
         self.sink_combo.addItem("UDP (red)", "udp")
         self.sink_combo.addItem("Puerto serie (Arduino)", "serial")
         self.sink_combo.currentIndexChanged.connect(self._on_sink_changed)
@@ -128,11 +131,16 @@ class ControlPanel(QWidget):
         self.sink_params = QStackedWidget()
         self.sink_params.addWidget(self._log_params())
         self.sink_params.addWidget(self._arm_sink_params())
-        self.sink_params.addWidget(self._sim_sink_params())
         self.sink_params.addWidget(self._udp_params())
         self.sink_params.addWidget(self._serial_params())
         out_layout.addWidget(self.sink_params)
-        layout.addWidget(out)
+        self.sim_output_note = QLabel(
+            "El brazo simulado se controla directamente (sin salida externa).")
+        self.sim_output_note.setWordWrap(True)
+        self.sim_output_note.setStyleSheet("color: #8a929b; font-size: 11px;")
+        self.sim_output_note.setVisible(False)
+        out_layout.addWidget(self.sim_output_note)
+        layout.addWidget(self.output_group)
 
         self.start_btn = QPushButton("Iniciar control")
         self.start_btn.clicked.connect(self.toggle)
@@ -188,15 +196,6 @@ class ControlPanel(QWidget):
         lay = QFormLayout(w)
         note = QLabel("Envía cada clase detectada al brazo MaxArm por HTTP.\n"
                       "Usa la IP/puerto/pulso del perfil «Brazo MaxArm» arriba.")
-        note.setWordWrap(True)
-        lay.addRow(note)
-        return w
-
-    def _sim_sink_params(self) -> QWidget:
-        w = QWidget()
-        lay = QFormLayout(w)
-        note = QLabel("Mueve el brazo SIMULADO con cada clase detectada («controlar "
-                      "con la mente»). Al iniciar se muestra el perfil «Brazo simulado».")
         note.setWordWrap(True)
         lay.addRow(note)
         return w
@@ -275,20 +274,41 @@ class ControlPanel(QWidget):
         return w
 
     def _sim_page(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0)
+        tabs = QTabWidget()
+
+        # Pestaña 1: simulación (3D + 2D).
+        sim_tab = QWidget()
+        sl = QVBoxLayout(sim_tab); sl.setContentsMargins(0, 0, 0, 0)
         self.sim_view = SimArmView(self._sim_arm)
-        lay.addWidget(self.sim_view)
-        row = QHBoxLayout()
-        home_btn = QPushButton("HOME (posición inicial)")
-        home_btn.clicked.connect(lambda: self._profile_do("home"))
-        row.addWidget(home_btn); row.addStretch(1)
-        lay.addLayout(row)
+        sl.addWidget(self.sim_view)
         hint = QLabel("Brazo 4DOF simulado (sin hardware): arriba/abajo mueven el hombro, "
-                      "izquierda/derecha giran la base, agarre/soltar cierran/abren la pinza.")
+                      "izquierda/derecha giran la base, agarre/soltar la pinza.")
         hint.setWordWrap(True); hint.setStyleSheet("color: #8a929b; font-size: 11px;")
-        lay.addWidget(hint)
-        return w
+        sl.addWidget(hint)
+        tabs.addTab(sim_tab, "Simulación")
+
+        # Pestaña 2: control por articulación (sliders).
+        self.sim_controls = SimArmControls(self._sim_arm, on_change=self._sim_refresh)
+        tabs.addTab(self.sim_controls, "Articulaciones")
+
+        # Pestaña 3: construir / elegir el brazo.
+        self.arm_builder = ArmBuilderWidget()
+        self.arm_builder.applied.connect(self._on_arm_built)
+        tabs.addTab(self.arm_builder, "Construir brazo")
+        return tabs
+
+    def _sim_refresh(self) -> None:
+        """Redibuja la vista del brazo simulado y sincroniza los sliders."""
+        self.sim_view.refresh()
+        self.sim_controls.sync()
+
+    def _on_arm_built(self, spec) -> None:
+        """Reconstruye el brazo simulado con la spec del constructor."""
+        self._sim_arm.apply_spec(spec)
+        self.sim_view.set_arm(self._sim_arm)
+        self.sim_controls.rebuild()
+        self._sim_refresh()
+        self.arm_status.setText(f"Brazo simulado reconstruido: «{spec.name}».")
 
     def _current_profile(self) -> str:
         return self.profile_combo.currentData()
@@ -296,6 +316,11 @@ class ControlPanel(QWidget):
     def _on_profile_changed(self, *_) -> None:
         self.profile_stack.setCurrentIndex(self.profile_combo.currentIndex())
         self._update_dpad_enabled()
+        # El brazo simulado no usa salida externa: se oculta el selector de salida.
+        sim = self._current_profile() == "sim"
+        self.sink_combo.setVisible(not sim)
+        self.sink_params.setVisible(not sim)
+        self.sim_output_note.setVisible(sim)
         self.arm_status.setText(f"Perfil activo: {self.profile_combo.currentText()}.")
 
     def _update_dpad_enabled(self) -> None:
@@ -321,7 +346,7 @@ class ControlPanel(QWidget):
         else:
             self._sim_arm.execute(command)
             self.arm_status.setText(f"Comando «{command}» aplicado al brazo simulado.")
-        self.sim_view.refresh()
+        self._sim_refresh()
 
     def _arm_client(self) -> ArmClient:
         return ArmClient(self.arm_host.text().strip() or ARM_HOST, self.arm_port.value())
@@ -423,14 +448,13 @@ class ControlPanel(QWidget):
                 "Sin señal en vivo",
                 "Conecta una fuente en la pestaña «Tiempo real» antes de iniciar el control.")
             return
-        kind = self.sink_combo.currentData()
         try:
-            if kind == "sim":
-                # Enlaza el clasificador al brazo simulado visible y activa su perfil.
-                self.profile_combo.setCurrentIndex(self.profile_combo.findData("sim"))
-                self.sink = SimArmSink(self._sim_arm, on_change=self.sim_view.refresh)
+            if self._current_profile() == "sim":
+                # El perfil simulado NO usa salida externa: el clasificador mueve
+                # directamente el brazo simulado visible.
+                self.sink = SimArmSink(self._sim_arm, on_change=self._sim_refresh)
             else:
-                self.sink = make_sink(kind, **self._sink_kwargs())
+                self.sink = make_sink(self.sink_combo.currentData(), **self._sink_kwargs())
         except Exception as exc:  # noqa: BLE001
             self.controller.warn("Salida no disponible", str(exc))
             return
@@ -464,7 +488,8 @@ class ControlPanel(QWidget):
         return {}
 
     def _set_inputs_enabled(self, enabled: bool) -> None:
-        for w in (self.window, self.interval, self.smooth_k, self.sink_combo, self.map_box):
+        for w in (self.window, self.interval, self.smooth_k, self.sink_combo,
+                  self.map_box, self.profile_combo):
             w.setEnabled(enabled)
 
     # --- Bucle de inferencia (hilo principal vía QTimer) ------------------

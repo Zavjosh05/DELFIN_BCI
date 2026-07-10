@@ -21,6 +21,26 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+
+def _rot(axis, theta: float) -> np.ndarray:
+    """Matriz de rotación (Rodrigues) con la **convención histórica** del
+    proyecto: ``R(+y, +θ)`` lleva ``+x`` hacia ``+z`` (un ángulo positivo
+    «levanta» el brazo). Equivale a negar el seno respecto a la regla estándar."""
+    a = np.asarray(axis, dtype=float)
+    n = np.linalg.norm(a)
+    if n < 1e-12:
+        return np.eye(3)
+    a = a / n
+    c = math.cos(theta)
+    s = -math.sin(theta)          # seno negado (convención histórica)
+    C = 1.0 - c
+    x, y, z = a
+    return np.array([
+        [c + x * x * C,     x * y * C - z * s, x * z * C + y * s],
+        [y * x * C + z * s, c + y * y * C,     y * z * C - x * s],
+        [z * x * C - y * s, z * y * C + x * s, c + z * z * C],
+    ])
+
 # Comando (clase del clasificador) -> acción del brazo simulado.
 #   ("joint", indice, signo): empuja el ángulo del joint en esa dirección
 #   ("gripper", bool):        abre (False) / cierra (True) la pinza
@@ -45,6 +65,7 @@ class JointSpec:
     link_offset: tuple = (0.0, 0.0, 0.0)   # eslabón que sigue al joint
     q_min: float = -math.pi
     q_max: float = +math.pi
+    mass: float = 0.0                      # masa del eslabón (informativa)
 
 
 @dataclass
@@ -70,13 +91,13 @@ def make_default_arm_spec() -> ArmSpec:
         description="Base yaw + 3 joints en plano vertical (hombro, codo, muñeca).",
         joints=[
             JointSpec("base_yaw", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0),
-                      -math.pi, math.pi),
+                      -math.pi, math.pi, 0.0),
             JointSpec("shoulder", (0.0, 1.0, 0.0), (L, 0.0, 0.0),
-                      -0.1, math.pi * 0.9),
+                      -0.1, math.pi * 0.9, 2.5),
             JointSpec("elbow", (0.0, 1.0, 0.0), (L, 0.0, 0.0),
-                      -math.pi * 0.9, math.pi * 0.9),
+                      -math.pi * 0.9, math.pi * 0.9, 1.8),
             JointSpec("wrist", (0.0, 1.0, 0.0), (L, 0.0, 0.0),
-                      -math.pi * 0.9, math.pi * 0.9),
+                      -math.pi * 0.9, math.pi * 0.9, 1.0),
         ],
         q_home=(0.0, 0.6, -0.4, 0.0),
         floor_z=0.0,
@@ -104,43 +125,61 @@ class SimulatedArm:
     y control por comandos discretos (jog de articulaciones + pinza)."""
 
     def __init__(self, spec: ArmSpec | None = None, step: float = DEFAULT_STEP) -> None:
-        self.spec = spec or make_default_arm_spec()
         self.step = float(step)
-        offs = np.array([j.link_offset for j in self.spec.joints], dtype=float)
-        self._link_lengths = np.linalg.norm(offs, axis=1)
-        self.reach = float(np.sum(self._link_lengths)) or 0.54
-        # Longitudes de los 3 eslabones móviles (hombro, codo, muñeca).
-        self.L2, self.L3, self.L4 = (float(self._link_lengths[i])
-                                     if i < len(self._link_lengths) else 0.18
-                                     for i in (1, 2, 3))
-        self.q_min = np.array([j.q_min for j in self.spec.joints], dtype=float)
-        self.q_max = np.array([j.q_max for j in self.spec.joints], dtype=float)
-        self.q_home = np.array(self.spec.q_home, dtype=float)
-        if self.q_home.size != self.spec.n_joints:
-            self.q_home = np.zeros(self.spec.n_joints)
-        self.q = self.q_home.copy()
         self.gripper_closed = False
-        self.FLOOR = self.spec.floor_z
         self._floor_margin = 1e-3
+        self.apply_spec(spec or make_default_arm_spec())
 
-    # --- Cinemática directa (forma cerrada 4DOF) --------------------------
+    def apply_spec(self, spec: ArmSpec) -> None:
+        """(Re)construye el brazo desde una ``ArmSpec`` y lo lleva a HOME.
+
+        Permite «construir un brazo desde cero»: cambiar joints/límites/eslabones
+        y refrescar toda la cinemática."""
+        self.spec = spec
+        offs = np.array([j.link_offset for j in spec.joints], dtype=float)
+        self._link_lengths = np.linalg.norm(offs, axis=1) if len(offs) else np.zeros(0)
+        self.reach = float(np.sum(self._link_lengths)) or 0.54
+        self.q_min = np.array([j.q_min for j in spec.joints], dtype=float)
+        self.q_max = np.array([j.q_max for j in spec.joints], dtype=float)
+        self.q_home = np.array(spec.q_home, dtype=float)
+        if self.q_home.size != spec.n_joints:
+            self.q_home = np.zeros(spec.n_joints)
+        self.q = self.q_home.copy()
+        self.FLOOR = spec.floor_z
+
+    @property
+    def joint_names(self) -> list[str]:
+        pretty = {"base_yaw": "q₁ Base (yaw)", "shoulder": "q₂ Hombro",
+                  "elbow": "q₃ Codo", "wrist": "q₄ Muñeca"}
+        return [pretty.get(j.name, f"q{i + 1} {j.name}")
+                for i, j in enumerate(self.spec.joints)]
+
+    def set_q(self, idx: int, value: float) -> None:
+        """Fija el ángulo de un joint (control manual por slider), acotado a sus
+        límites articulares."""
+        if 0 <= idx < self.q.size:
+            self.q[idx] = float(np.clip(value, self.q_min[idx], self.q_max[idx]))
+
+    # --- Cinemática directa (cadena general de transformaciones) ----------
     def fk(self, q=None) -> np.ndarray:
-        """Puntos ``(base, hombro, codo, efector)`` como array (4, 3)."""
+        """Puntos de la cadena (base + final de cada eslabón) como array (M, 3).
+
+        Cadena genérica: soporta cualquier nº de joints revolutos con ejes y
+        eslabones arbitrarios (para el constructor). Los eslabones de longitud
+        cero (p. ej. la base yaw) no añaden un punto propio."""
         q = self.q if q is None else np.asarray(q)
-        phi = q[0]
-        cx, cy = math.cos(phi), math.sin(phi)
-        t2 = q[1]
-        t23 = t2 + q[2]
-        t234 = t23 + q[3]
-        x1 = self.L2 * math.cos(t2);  z1 = self.L2 * math.sin(t2)
-        x2 = x1 + self.L3 * math.cos(t23); z2 = z1 + self.L3 * math.sin(t23)
-        x3 = x2 + self.L4 * math.cos(t234); z3 = z2 + self.L4 * math.sin(t234)
-        return np.array([
-            [0.0, 0.0, 0.0],
-            [x1 * cx, x1 * cy, z1],
-            [x2 * cx, x2 * cy, z2],
-            [x3 * cx, x3 * cy, z3],
-        ])
+        R = np.eye(3)
+        p = np.zeros(3)
+        pts = [p.copy()]
+        n = len(self.spec.joints)
+        for i, j in enumerate(self.spec.joints):
+            ang = float(q[i]) if i < len(q) else 0.0
+            R = R @ _rot(j.axis, ang)
+            off = np.asarray(j.link_offset, dtype=float)
+            p = p + R @ off
+            if np.linalg.norm(off) > 1e-9 or i == n - 1:
+                pts.append(p.copy())
+        return np.array(pts)
 
     def ee(self, q=None) -> np.ndarray:
         """Posición del efector (end-effector)."""
