@@ -34,16 +34,24 @@ _CURVE_COLORS = [
     "#FF8A65", "#90A4AE",
 ]
 
-# Código de colores por REGIÓN del cuero cabelludo (Emotiv EPOC+):
-#   azul = frontal · rojo = fronto-central/temporal · verde = parieto-occipital.
-_REGION_BLUE = "#4a86e8"
-_REGION_RED = "#e0574f"
-_REGION_GREEN = "#4caf68"
+# Código de colores por REGIÓN del cuero cabelludo (Emotiv EPOC+), con DOS TONOS
+# por zona como el gorro de referencia:
+#   AZUL frontal   → AF3/AF4 más fuerte, F7/F8 más claro
+#   ROJO central   → F3/F4 oscuro (vino), FC5/FC6/T7/T8 salmón
+#   VERDE post.    → P7/P8 más claro, O1/O2 más oscuro
+_C_AF = "#1f5fd6"     # azul fuerte (AF3/AF4)
+_C_F = "#5b9bf0"      # azul claro (F7/F8)
+_C_F34 = "#a51d1d"    # rojo oscuro/vino (F3/F4)
+_C_FCT = "#e46b60"    # rojo salmón (FC5/FC6/T7/T8)
+_C_P = "#5cc274"      # verde claro (P7/P8)
+_C_O = "#2e8f4f"      # verde oscuro (O1/O2)
 _REGION_COLOR = {
-    "AF3": _REGION_BLUE, "AF4": _REGION_BLUE, "F7": _REGION_BLUE, "F8": _REGION_BLUE,
-    "F3": _REGION_RED, "F4": _REGION_RED, "FC5": _REGION_RED, "FC6": _REGION_RED,
-    "T7": _REGION_RED, "T8": _REGION_RED,
-    "P7": _REGION_GREEN, "P8": _REGION_GREEN, "O1": _REGION_GREEN, "O2": _REGION_GREEN,
+    "AF3": _C_AF, "AF4": _C_AF,
+    "F7": _C_F, "F8": _C_F,
+    "F3": _C_F34, "F4": _C_F34,
+    "FC5": _C_FCT, "FC6": _C_FCT, "T7": _C_FCT, "T8": _C_FCT,
+    "P7": _C_P, "P8": _C_P,
+    "O1": _C_O, "O2": _C_O,
 }
 
 

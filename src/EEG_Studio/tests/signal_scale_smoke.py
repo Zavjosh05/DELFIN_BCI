@@ -63,14 +63,17 @@ def main() -> int:
     assert view.xwin_spin.value() > dur * 0.9    # la ventana pasa a cubrir toda la señal
     print("    rango X/Y manual y auto-ajuste OK")
 
-    print("[4] Código de colores por región del cuero cabelludo (EPOC+)")
-    from eeg_studio.ui.signal_view import (channel_color, _REGION_BLUE,
-                                           _REGION_RED, _REGION_GREEN)
-    assert channel_color("AF3", 0) == _REGION_BLUE and channel_color("F8", 9) == _REGION_BLUE
-    assert channel_color("T7", 4) == _REGION_RED and channel_color("FC6", 1) == _REGION_RED
-    assert channel_color("O1", 6) == _REGION_GREEN and channel_color("P8", 8) == _REGION_GREEN
-    assert channel_color("EEG-Fz", 0) not in (_REGION_BLUE, _REGION_RED, _REGION_GREEN)  # desconocido → paleta
-    print("    frontal=azul · central/temporal=rojo · parieto-occipital=verde")
+    print("[4] Código de colores por región CON TONOS (EPOC+)")
+    from eeg_studio.ui.signal_view import channel_color, _REGION_COLOR
+    # mismo tono dentro de un par, distinto entre pares de la misma región
+    assert channel_color("AF3", 0) == channel_color("AF4", 0)      # AF: azul fuerte
+    assert channel_color("F7", 1) == channel_color("F8", 1)        # F: azul claro
+    assert channel_color("AF3", 0) != channel_color("F7", 1)       # tonos de azul distintos
+    assert channel_color("F3", 2) != channel_color("FC5", 3)       # rojo oscuro vs salmón
+    assert channel_color("T7", 4) == channel_color("FC6", 5)       # T y FC comparten salmón
+    assert channel_color("O1", 6) != channel_color("P7", 7)        # verde oscuro vs claro
+    assert channel_color("EEG-Fz", 0) not in _REGION_COLOR.values()  # desconocido → paleta
+    print("    AF>F azul · F3/F4>FC/T rojo · O>P verde (dos tonos por zona)")
 
     print("\nESCALA DEL VISOR CSV (SIN OFFSET DC) OK ✓")
     return 0

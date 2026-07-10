@@ -19,10 +19,11 @@ cambios se agrupan por fecha de trabajo.
   (deja de llegar) o su tasa efectiva cae muy por debajo de la nominal —típico del
   EPOC+ con la batería baja—, se muestra una **advertencia** (estado en rojo + barra
   de estado), sin bloquear ni interrumpir la grabación.
-- **Código de colores por región en el visor de señales**: cada canal EPOC+ se
-  dibuja según su zona del cuero cabelludo —**azul** frontal (AF3/AF4/F7/F8),
-  **rojo** central/temporal (F3/F4/FC5/FC6/T7/T8), **verde** parieto-occipital
-  (P7/P8/O1/O2)—; los canales con nombres desconocidos usan la paleta cíclica.
+- **Código de colores por región en el visor de señales**, con **dos tonos por
+  zona** (como el gorro EPOC+): **azul** frontal (AF3/AF4 más fuerte, F7/F8 más
+  claro), **rojo** central/temporal (F3/F4 vino, FC5/FC6/T7/T8 salmón) y **verde**
+  parieto-occipital (P7/P8 claro, O1/O2 oscuro). Los canales con nombres desconocidos
+  usan la paleta cíclica.
 - **Barra de paneles a la izquierda (estilo PyCharm)**: una barra vertical con un
   **botón por panel** (Fuentes, Herramientas, Historial) que lo **despliega o
   colapsa** con un clic; el botón queda marcado cuando el panel está visible.
