@@ -536,4 +536,5 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `source_panel_smoke` (ordenar la lista de fuentes e indicadores de contenido),
 `signal_length_smoke` (fijar la longitud en tiempo de la selección del visor),
 `sim_arm_smoke` (brazo simulado 4DOF + perfiles del panel de Control),
+`recording_robust_smoke` (grabación en el hilo productor + fsync + batería),
 `e2e_smoke` (flujo completo de extremo a extremo).

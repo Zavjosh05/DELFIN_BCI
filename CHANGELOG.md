@@ -41,8 +41,31 @@ cambios se agrupan por fecha de trabajo.
   hacia atrás). Se **sincroniza en ambos sentidos**: al arrastrar la región, el
   campo refleja su longitud; al escribir un valor, la región se ajusta. Útil para
   marcar ventanas de duración exacta (p. ej. tareas de 5 s del paradigma Delfin).
+- **Medidor de batería de la diadema** (Emotiv) en «Tiempo real»: muestra el % de
+  batería y **avisa cuando baja de un umbral configurable** (por defecto **70%**,
+  porque la diadema vieja suele fallar por debajo). El umbral se ajusta en la propia
+  interfaz y se recuerda entre sesiones. Se decodifica del propio flujo del casco;
+  las fuentes que no reportan batería ocultan el medidor.
+
+### Corregido
+- **Bug gráfico de la vista 3D del brazo simulado**: se dibujaba cada eslabón como
+  un item OpenGL suelto (líneas erráticas) y el efector se solapaba con las
+  articulaciones (mancha blanca). Ahora el brazo es **una sola polilínea**, con las
+  articulaciones y el efector como marcadores aparte, y la cámara se ajusta al alcance.
+- **Distribución del perfil «Brazo simulado»** reorganizada: antes el control estaba
+  repartido en pestañas (vista / sliders / constructor) y era difícil de manejar.
+  Ahora la **simulación (3D + 2D) y los sliders por articulación están juntos** en
+  una sola vista (se ve el brazo mientras se controla), y el constructor pasa a un
+  **diálogo** («Construir / elegir brazo…»).
 
 ### Verificado / reforzado
+- **Recepción en segundo plano (dos monitores) y blindaje de la grabación**: la
+  grabación ya **no depende del temporizador de la GUI** (que Windows estrangula
+  cuando la app no tiene el foco, lo que truncaba grabaciones). Ahora se escribe en
+  el **hilo productor** (un «tap» sobre el flujo de muestras), con **flush + fsync
+  periódico** (cada ~1 s) para que un cierre o fallo no pierda lo grabado; el timer
+  de la vista en vivo pasa a `PreciseTimer`. Prueba `recording_robust_smoke` (captura
+  completa sin consumir la cola, volcado a disco, aviso de batería).
 - **Auditoría del guardado automático**: revisados todos los disparadores (cada
   mutación del proyecto llama a `_after_state_change` → autosave con debounce de
   800 ms, o a `_persist_now` inmediato para lo crítico como nuevas grabaciones),

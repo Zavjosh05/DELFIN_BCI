@@ -76,55 +76,50 @@ class _ArmProjection(pg.PlotWidget):
 
 
 if _GL_OK:
-    _LINK_RAMP = [(0.37, 0.92, 0.83, 1.0), (0.24, 0.75, 0.95, 1.0),
-                  (0.30, 0.80, 0.55, 1.0), (0.95, 0.65, 0.30, 1.0)]
 
     class _ArmView3D(gl.GLViewWidget):
-        """Vista 3D del brazo con OpenGL (grid + ejes + eslabones + joints)."""
+        """Vista 3D del brazo con OpenGL.
+
+        El brazo se dibuja como **una sola polilínea** (line_strip) por todos los
+        puntos de la cadena — más limpio y sin los artefactos de dibujar cada
+        eslabón como un item GL suelto. Las articulaciones y el efector son
+        *scatters* aparte."""
 
         def __init__(self, arm: SimulatedArm, parent=None) -> None:
             super().__init__(parent)
             self.arm = arm
-            self.setCameraPosition(distance=arm.reach * 2.2, elevation=22, azimuth=-60)
-            grid = gl.GLGridItem()
-            grid.setSize(x=arm.reach * 2, y=arm.reach * 2)
-            grid.setSpacing(x=0.1, y=0.1)
-            grid.setColor((80, 100, 130, 90))
-            self.addItem(grid)
-            axis = gl.GLAxisItem()
-            axis.setSize(x=0.18, y=0.18, z=0.18)
-            self.addItem(axis)
-            self._links: list = []
-            self.joints = gl.GLScatterPlotItem(pos=np.zeros((1, 3)),
-                                               color=(0.85, 0.88, 0.92, 1.0),
-                                               size=12, pxMode=True)
+            self.setBackgroundColor(pg.mkColor(SURFACE))
+            self.grid = gl.GLGridItem()
+            self.grid.setColor((90, 110, 140, 70))
+            self.addItem(self.grid)
+            self.arm_line = gl.GLLinePlotItem(
+                pos=np.zeros((2, 3)), width=4.0, antialias=True,
+                color=(0.37, 0.92, 0.83, 1.0), mode="line_strip")
+            self.addItem(self.arm_line)
+            self.joints = gl.GLScatterPlotItem(
+                pos=np.zeros((1, 3)), color=(0.82, 0.86, 0.92, 1.0),
+                size=8.0, pxMode=True)
             self.addItem(self.joints)
-            self.ee = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), size=20, pxMode=True)
+            self.ee = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), size=13.0, pxMode=True)
             self.addItem(self.ee)
-            self.rebuild()
+            self._fit()
+            self.refresh()
+
+        def _fit(self) -> None:
+            s = max(0.4, self.arm.reach * 1.6)
+            self.grid.setSize(x=s, y=s)
+            self.grid.setSpacing(x=0.1, y=0.1)
+            self.setCameraPosition(distance=max(0.6, self.arm.reach * 2.6),
+                                   elevation=22, azimuth=-55)
 
         def rebuild(self) -> None:
-            for ln in self._links:
-                try:
-                    self.removeItem(ln)
-                except Exception:      # noqa: BLE001
-                    pass
-            self._links = []
-            n_seg = max(1, len(self.arm.fk()) - 1)
-            for i in range(n_seg):
-                ln = gl.GLLinePlotItem(pos=np.zeros((2, 3)), width=7, antialias=True,
-                                       color=_LINK_RAMP[i % len(_LINK_RAMP)])
-                self.addItem(ln)
-                self._links.append(ln)
+            self._fit()
             self.refresh()
 
         def refresh(self) -> None:
-            pts = self.arm.fk()
-            if len(pts) - 1 != len(self._links):
-                self.rebuild(); return
-            for i in range(len(pts) - 1):
-                self._links[i].setData(pos=np.array([pts[i], pts[i + 1]]))
-            self.joints.setData(pos=pts)
+            pts = np.asarray(self.arm.fk(), dtype=float)
+            self.arm_line.setData(pos=pts)
+            self.joints.setData(pos=pts[:-1] if len(pts) > 1 else pts)
             col = ((1.0, 0.42, 0.42, 1.0) if self.arm.gripper_closed
                    else (0.24, 0.53, 0.80, 1.0))
             self.ee.setData(pos=pts[-1].reshape(1, 3), color=col)

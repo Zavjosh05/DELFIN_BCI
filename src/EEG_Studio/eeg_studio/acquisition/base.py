@@ -31,6 +31,11 @@ class StreamSource:
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
         self._error: str | None = None
+        # «Tap» opcional llamado en el HILO PRODUCTOR con cada bloque emitido
+        # (p. ej. la grabación): así capturar a disco NO depende del temporizador
+        # de la GUI, que se estrangula cuando la app está en segundo plano.
+        self._tap = None
+        self._battery: int | None = None       # % de batería (si la fuente lo reporta)
 
     # --- Propiedades ------------------------------------------------------
     @property
@@ -48,6 +53,17 @@ class StreamSource:
     @property
     def error(self) -> str | None:
         return self._error
+
+    @property
+    def battery(self) -> int | None:
+        """Nivel de batería (0–100) si la fuente lo reporta; si no, ``None``."""
+        return self._battery
+
+    def set_tap(self, fn) -> None:
+        """Registra (o quita, con ``None``) un consumidor llamado en el hilo
+        productor con cada bloque emitido. Pensado para la grabación: que escribir
+        a disco no dependa del temporizador de la GUI."""
+        self._tap = fn
 
     def is_running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
@@ -70,8 +86,19 @@ class StreamSource:
 
     # --- Comunicación productor -> consumidor -----------------------------
     def _emit(self, chunk: np.ndarray) -> None:
-        """Encola un bloque ``(n_canales, k)`` de muestras nuevas."""
-        self._queue.put(np.ascontiguousarray(chunk, dtype=np.float64))
+        """Encola un bloque ``(n_canales, k)`` de muestras nuevas.
+
+        Antes de encolar (para la GUI), lo entrega al ``tap`` si hay uno (p. ej. la
+        grabación), de modo que capturar a disco ocurra en este hilo productor y no
+        se pierdan muestras si la GUI va lenta o está en segundo plano."""
+        arr = np.ascontiguousarray(chunk, dtype=np.float64)
+        tap = self._tap
+        if tap is not None:
+            try:
+                tap(arr)
+            except Exception:  # noqa: BLE001 - el tap nunca debe tumbar el productor
+                pass
+        self._queue.put(arr)
 
     def read(self) -> np.ndarray | None:
         """Devuelve todas las muestras acumuladas ``(n_canales, k)`` o ``None``."""

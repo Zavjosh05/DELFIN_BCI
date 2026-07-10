@@ -14,6 +14,7 @@ import threading
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -23,7 +24,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QStackedWidget,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -274,28 +274,44 @@ class ControlPanel(QWidget):
         return w
 
     def _sim_page(self) -> QWidget:
-        tabs = QTabWidget()
-
-        # Pestaña 1: simulación (3D + 2D).
-        sim_tab = QWidget()
-        sl = QVBoxLayout(sim_tab); sl.setContentsMargins(0, 0, 0, 0)
+        """Todo el control del brazo simulado en una sola vista: la simulación
+        arriba (3D + 2D) y los sliders por articulación justo debajo, para verlo
+        moverse mientras se controla. El constructor va en un diálogo aparte."""
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(6)
         self.sim_view = SimArmView(self._sim_arm)
-        sl.addWidget(self.sim_view)
-        hint = QLabel("Brazo 4DOF simulado (sin hardware): arriba/abajo mueven el hombro, "
-                      "izquierda/derecha giran la base, agarre/soltar la pinza.")
-        hint.setWordWrap(True); hint.setStyleSheet("color: #8a929b; font-size: 11px;")
-        sl.addWidget(hint)
-        tabs.addTab(sim_tab, "Simulación")
+        lay.addWidget(self.sim_view)
 
-        # Pestaña 2: control por articulación (sliders).
         self.sim_controls = SimArmControls(self._sim_arm, on_change=self._sim_refresh)
-        tabs.addTab(self.sim_controls, "Articulaciones")
+        sc_box = QGroupBox("Control por articulación")
+        scl = QVBoxLayout(sc_box); scl.setContentsMargins(6, 6, 6, 6)
+        scl.addWidget(self.sim_controls)
+        lay.addWidget(sc_box)
 
-        # Pestaña 3: construir / elegir el brazo.
-        self.arm_builder = ArmBuilderWidget()
-        self.arm_builder.applied.connect(self._on_arm_built)
-        tabs.addTab(self.arm_builder, "Construir brazo")
-        return tabs
+        build_btn = QPushButton("Construir / elegir brazo…")
+        build_btn.setToolTip("Elige un preset o construye el brazo (joints, ejes, longitudes).")
+        build_btn.clicked.connect(self._open_builder)
+        lay.addWidget(build_btn)
+
+        hint = QLabel("Muévelo con el D-pad de abajo o con los sliders; se ve arriba en 3D y 2D. "
+                      "Arriba/abajo = hombro, izquierda/derecha = base, agarre/soltar = pinza.")
+        hint.setWordWrap(True); hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+        lay.addWidget(hint)
+        return w
+
+    def _open_builder(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Construir / elegir brazo simulado")
+        dlg.resize(720, 500)
+        v = QVBoxLayout(dlg)
+        builder = ArmBuilderWidget()
+
+        def _apply(spec):
+            self._on_arm_built(spec)
+            dlg.accept()
+        builder.applied.connect(_apply)
+        v.addWidget(builder)
+        dlg.exec()
 
     def _sim_refresh(self) -> None:
         """Redibuja la vista del brazo simulado y sincroniza los sliders."""

@@ -73,8 +73,10 @@ class AcquisitionPanel(QWidget):
         self._roll: np.ndarray | None = None    # buffer circular para inferencia
         self._roll_filled = 0
         self._quality_tick = 0                   # para refrescar la calidad cada N ticks
+        self._battery_warned = False             # aviso de batería baja (una sola vez)
 
         self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)   # menos estrangulamiento en 2º plano
         self._timer.setInterval(LIVE_REFRESH_MS)
         self._timer.timeout.connect(self._tick)
 
@@ -116,6 +118,27 @@ class AcquisitionPanel(QWidget):
         self.quality_label = QLabel("")
         self.quality_label.setWordWrap(True)
         layout.addWidget(self.quality_label)
+
+        # Batería de la diadema (solo si la fuente la reporta, p. ej. Emotiv) +
+        # umbral de advertencia configurable (por defecto 70%).
+        self.battery_row = QWidget()
+        bat_lay = QHBoxLayout(self.battery_row)
+        bat_lay.setContentsMargins(0, 0, 0, 0)
+        self.battery_label = QLabel("")
+        bat_lay.addWidget(self.battery_label, 1)
+        bat_lay.addWidget(QLabel("Avisar por debajo de:"))
+        self.battery_thresh = QSpinBox()
+        self.battery_thresh.setRange(0, 100)
+        self.battery_thresh.setSuffix(" %")
+        self.battery_thresh.setValue(
+            int(self.controller._settings().value("battery_warn_pct", 70, type=int)))
+        self.battery_thresh.setToolTip(
+            "Avisa cuando la batería de la diadema baje de este porcentaje "
+            "(la diadema vieja suele fallar por debajo).")
+        self.battery_thresh.valueChanged.connect(self._on_battery_thresh)
+        bat_lay.addWidget(self.battery_thresh)
+        self.battery_row.setVisible(False)
+        layout.addWidget(self.battery_row)
 
         # --- Grabación --------------------------------------------------------
         rec_box = QGroupBox("Grabación")
@@ -391,13 +414,48 @@ class AcquisitionPanel(QWidget):
             self._configured = True
         self.controller.live_view.append(chunk)
         self._push_buffer(chunk)
-        if self.recorder is not None and not self._paused:   # en pausa no se escribe
-            self.recorder.write(chunk)
+        # La grabación ya se escribe en el HILO PRODUCTOR (tap), NO aquí: así no se
+        # pierde nada aunque este temporizador se estrangule en segundo plano (dos
+        # monitores / app sin foco).
         self._n_samples += chunk.shape[1]
         self._update_status()
+        self._update_battery()
         self._quality_tick = (self._quality_tick + 1) % 8
         if self._quality_tick == 0:              # ~4 Hz: evita parpadeo
             self._update_quality()
+
+    def _record_tap(self, chunk) -> None:
+        """Escribe un bloque a la grabación. Se llama en el HILO PRODUCTOR (no en la
+        GUI), así capturar a disco no depende del temporizador. Respeta la pausa."""
+        rec = self.recorder
+        if rec is not None and not self._paused:
+            rec.write(chunk)
+
+    def _on_battery_thresh(self, value: int) -> None:
+        self.controller._settings().setValue("battery_warn_pct", int(value))
+        self._battery_warned = False             # reevaluar con el nuevo umbral
+        self._update_battery()
+
+    def _update_battery(self) -> None:
+        pct = self.source.battery if self.source is not None else None
+        self.battery_row.setVisible(pct is not None)
+        if pct is None:
+            return
+        thr = self.battery_thresh.value()
+        if pct < thr:
+            self.battery_label.setText(f"🔋 Batería: {pct}%   ⚠ BAJA (por debajo de {thr}%)")
+            self.battery_label.setStyleSheet("color: #ff6b6b; font-weight: 600;")
+            if not self._battery_warned:
+                self._battery_warned = True
+                self.controller.warn(
+                    "Batería baja de la diadema",
+                    f"La batería del Emotiv está al {pct}% (por debajo del {thr}%).\n\n"
+                    "Con esta diadema, por debajo de ese nivel la señal suele fallar; "
+                    "conviene cargarla. Puedes ajustar el umbral en «Avisar por debajo de».")
+        else:
+            self.battery_label.setText(f"🔋 Batería: {pct}%")
+            self.battery_label.setStyleSheet("color: #7fd1b9; font-weight: 600;")
+            self._battery_warned = False
 
     def _push_buffer(self, chunk) -> None:
         """Mantiene el buffer circular con las últimas muestras (para inferencia)."""
@@ -479,6 +537,7 @@ class AcquisitionPanel(QWidget):
         self._rec_alias = raw_name or os.path.splitext(os.path.basename(path))[0]
         self.recorder = CSVRecorder(path, self.source.n_channels, self.source.sample_rate)
         self._rec_path = path
+        self.source.set_tap(self._record_tap)   # graba en el hilo productor (blindaje)
         # Reinicia el estado de esta grabación.
         self._rec_segments = []
         self._seg_active = False
@@ -522,6 +581,8 @@ class AcquisitionPanel(QWidget):
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         path = self._rec_path
+        if self.source is not None:
+            self.source.set_tap(None)        # deja de escribir en el hilo productor
         try:
             self.recorder.close()
         except Exception:  # noqa: BLE001
@@ -562,6 +623,8 @@ class AcquisitionPanel(QWidget):
     def _stop_recording(self) -> None:
         if self.recorder is None:
             return
+        if self.source is not None:
+            self.source.set_tap(None)        # deja de escribir en el hilo productor
         # Cierra un segmento que quedara abierto (fin = última muestra grabada).
         if self._seg_active:
             stop = self.recorder.n_samples
@@ -660,8 +723,10 @@ class AcquisitionPanel(QWidget):
         """Cierre limpio al salir de la aplicación."""
         self._timer.stop()
         if self.recorder is not None:
+            if self.source is not None:
+                self.source.set_tap(None)
             self._flush_sidecar()        # deja las marcas en disco (recuperables al reabrir)
-            self.recorder.close()
+            self.recorder.close()        # flush + fsync: todo lo grabado queda en disco
             self.recorder = None
         if self.source is not None:
             self.source.stop()

@@ -108,6 +108,24 @@ def convert_frame(frame: bytes) -> np.ndarray:
     return np.asarray(vals, dtype=np.float64)
 
 
+# El byte contador (frame[0]) cicla 0..127; periódicamente el casco envía en su
+# lugar el nivel de batería (valores 224..255). Tabla de emokit (byte -> %).
+_BATTERY_TABLE = {
+    255: 100, 254: 100, 253: 100, 252: 100, 251: 100, 250: 100, 249: 100, 248: 100,
+    247: 99, 246: 97, 245: 93, 244: 89, 243: 85, 242: 82, 241: 77, 240: 72,
+    239: 66, 238: 62, 237: 55, 236: 46, 235: 32, 234: 20, 233: 12, 232: 6,
+    231: 4, 230: 3, 229: 2, 228: 2, 227: 2, 226: 1, 225: 0, 224: 0,
+}
+
+
+def battery_from_frame(frame: bytes) -> int | None:
+    """Nivel de batería (0–100) si este frame lo trae en ``frame[0]``, si no ``None``."""
+    b0 = frame[0]
+    if b0 > 127:
+        return _BATTERY_TABLE.get(b0)
+    return None
+
+
 def quick_diagnose(serial: str | None = None, max_reports: int = 80) -> dict:
     """Diagnóstico rápido del dongle (no lanza excepciones).
 
@@ -291,6 +309,9 @@ class EmotivDongleSource(StreamSource):
                 if block is None:
                     continue
                 frame = cipher.decrypt(block)
+                bat = battery_from_frame(frame)
+                if bat is not None:
+                    self._battery = bat
                 if self._skip_gyro and frame[1] == 32:
                     continue
                 self._emit(convert_frame(frame).reshape(self.n_channels, 1))

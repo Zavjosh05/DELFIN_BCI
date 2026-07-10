@@ -7,6 +7,7 @@ CSV exportados por OpenViBE: ``Time:128Hz,Epoch,Channel 1..N,Event Id,...``).
 """
 from __future__ import annotations
 
+import os
 import threading
 
 import numpy as np
@@ -23,7 +24,12 @@ class CSVRecorder:
         self._pending_marker: str | None = None
         self._lock = threading.Lock()
         self._fh = open(path, "w", encoding="utf-8", newline="")
+        # Volcado a disco (flush + fsync) cada ~1 s de muestras: si la app se cierra
+        # o falla, en el archivo queda todo salvo, como mucho, el último segundo.
+        self._sync_every = max(1, int(sample_rate))
+        self._since_sync = 0
         self._write_header()
+        self._sync_locked()                  # cabecera en disco desde ya
 
     def _write_header(self) -> None:
         channels = ",".join(f"Channel {i + 1}" for i in range(self._n))
@@ -42,6 +48,8 @@ class CSVRecorder:
             return 0
         k = chunk.shape[1]
         with self._lock:
+            if self._fh.closed:              # ya se cerró (carrera con el cierre)
+                return 0
             lines = []
             for j in range(k):
                 t = self._sample / self._fs
@@ -55,7 +63,25 @@ class CSVRecorder:
                 lines.append(f"{t:.10f},{epoch},{values},{ev}")
                 self._sample += 1
             self._fh.write("\n".join(lines) + "\n")
+            self._since_sync += k
+            if self._since_sync >= self._sync_every:
+                self._sync_locked()
+                self._since_sync = 0
         return k
+
+    def _sync_locked(self) -> None:
+        """Fuerza el volcado a disco (asume el lock tomado)."""
+        try:
+            if self._fh and not self._fh.closed:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+        except Exception:  # noqa: BLE001 - un fallo de fsync no debe tumbar la grabación
+            pass
+
+    def flush(self) -> None:
+        """Vuelca a disco lo pendiente (seguro de llamar en cualquier momento)."""
+        with self._lock:
+            self._sync_locked()
 
     @property
     def n_samples(self) -> int:
@@ -64,5 +90,5 @@ class CSVRecorder:
     def close(self) -> None:
         with self._lock:
             if self._fh and not self._fh.closed:
-                self._fh.flush()
+                self._sync_locked()          # asegura TODO en disco antes de cerrar
                 self._fh.close()
