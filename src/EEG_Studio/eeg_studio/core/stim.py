@@ -86,6 +86,36 @@ def markers_in_order(events) -> list[dict]:
     return sorted(ms, key=lambda e: float(e.get("t", 0)))
 
 
+def project_classes(project) -> list[str]:
+    """Clases disponibles en el proyecto: de los segmentos ya etiquetados y de los
+    estímulos configurados. General — NO hardcodea las clases de Delfin (esas solo
+    se usan para autodetectar la clase por el nombre del archivo)."""
+    classes: set[str] = set()
+    if project is not None:
+        try:
+            classes.update(project.labels())
+        except Exception:  # noqa: BLE001
+            pass
+        for c in project.stim_videos():
+            for e in c.get("events", []):
+                if e.get("label"):
+                    classes.add(str(e["label"]))
+    return sorted(classes)
+
+
+def relocate_video(path: str, search_dir: str | None) -> str | None:
+    """Ruta válida del video: la original si existe, o una con el MISMO nombre
+    dentro de ``search_dir`` (para reubicar al importar en otro equipo/proyecto).
+    Devuelve ``None`` si no se encuentra."""
+    if path and os.path.isfile(path):
+        return path
+    if search_dir and path:
+        cand = os.path.join(search_dir, os.path.basename(path))
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
 def default_events(label: str, duration_ms: int) -> list[dict]:
     """Configuración inicial razonable: una marca al inicio del movimiento y un
     segmento cubriendo el grueso del video (el usuario lo ajusta en la línea de

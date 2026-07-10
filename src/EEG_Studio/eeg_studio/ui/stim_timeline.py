@@ -1,12 +1,14 @@
-"""Editor de línea de tiempo de un video de estímulo.
+"""Editor de línea de tiempo de un video de estímulo (estilo editor de video).
 
-Reproduce el video en una vista previa y permite fijar, en el momento exacto, las
-**marcas** (instantes) y los **segmentos** (lapsos) que se registrarán en la
-grabación sincronizada. Devuelve la lista de eventos en milisegundos.
+Muestra el video con una **barra de tiempo** en la que puedes moverte a un punto
+exacto (indica el instante bajo el cursor), y ahí fijar **marcas** (instantes) o
+**segmentos** (lapsos), cada uno con su **clase** (varias clases por video). Las
+clases se toman de las que ya existen en el proyecto. Devuelve los eventos en ms.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
@@ -17,74 +19,153 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
-    QSlider,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
-from ..core.stim import DELFIN_CLASSES, default_events
+from .signal_view import segment_color
+from .theme import BORDER, MUTED, SURFACE, TEXT
 
 
 def _fmt(ms: int) -> str:
-    s = max(0, ms) / 1000.0
+    s = max(0, int(ms)) / 1000.0
     return f"{int(s // 60)}:{s % 60:06.3f}"
+
+
+class _TimelineBar(QWidget):
+    """Barra de tiempo: playhead, marcas/segmentos dibujados y hover con el instante."""
+
+    seekRequested = pyqtSignal(int)   # ms
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setMinimumHeight(52)
+        self.setMouseTracking(True)
+        self._duration = 0
+        self._position = 0
+        self._events: list[dict] = []
+        self._hover: int | None = None
+
+    def set_duration(self, d: int) -> None:
+        self._duration = max(0, int(d)); self.update()
+
+    def set_position(self, p: int) -> None:
+        self._position = max(0, int(p)); self.update()
+
+    def set_events(self, events: list[dict]) -> None:
+        self._events = events; self.update()
+
+    def _ms_at(self, x: float) -> int:
+        w = max(1, self.width())
+        return int(max(0.0, min(1.0, x / w)) * self._duration)
+
+    def _x_of(self, ms: float) -> int:
+        if self._duration <= 0:
+            return 0
+        return int(self.width() * ms / self._duration)
+
+    def mousePressEvent(self, e):  # noqa: N802
+        self.seekRequested.emit(self._ms_at(e.position().x()))
+
+    def mouseMoveEvent(self, e):  # noqa: N802
+        self._hover = self._ms_at(e.position().x())
+        if e.buttons() & Qt.MouseButton.LeftButton:
+            self.seekRequested.emit(self._hover)
+        self.update()
+
+    def leaveEvent(self, e):  # noqa: N802
+        self._hover = None; self.update()
+
+    def paintEvent(self, e):  # noqa: N802
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        top, th = 4, h - 22
+        p.fillRect(0, top, w, th, QColor(SURFACE))
+        p.setPen(QColor(BORDER)); p.drawRect(0, top, w - 1, th - 1)
+        if self._duration <= 0:
+            p.end(); return
+        for ev in self._events:                       # segmentos (bloques)
+            if ev.get("kind") == "segment":
+                x0, x1 = self._x_of(ev["start"]), self._x_of(ev["stop"])
+                c = QColor(segment_color(ev.get("label", ""))); c.setAlpha(90)
+                p.fillRect(x0, top, max(2, x1 - x0), th, c)
+        for ev in self._events:                       # marcas (líneas)
+            if ev.get("kind") == "marker":
+                x = self._x_of(ev["t"])
+                p.setPen(QPen(QColor(segment_color(ev.get("label", ""))), 2))
+                p.drawLine(x, top, x, top + th)
+        xp = self._x_of(self._position)               # playhead
+        p.setPen(QPen(QColor("#ffd54f"), 2))
+        p.drawLine(xp, top - 3, xp, top + th + 3)
+        if self._hover is not None:                   # hover + instante
+            xh = self._x_of(self._hover)
+            p.setPen(QPen(QColor(MUTED), 1, Qt.PenStyle.DashLine))
+            p.drawLine(xh, top, xh, top + th)
+            p.setPen(QColor(TEXT))
+            tx = max(2, min(xh + 4, w - 74))
+            p.drawText(tx, h - 5, _fmt(self._hover))
+        p.end()
 
 
 class StimTimelineDialog(QDialog):
     def __init__(self, video_path: str, label: str | None,
-                 events: list[dict] | None = None, parent=None) -> None:
+                 events: list[dict] | None = None,
+                 classes: list[str] | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Línea de tiempo del estímulo")
-        self.resize(760, 620)
-        self._label = label or (DELFIN_CLASSES[0])
+        self.resize(820, 640)
         self._duration = 0
         self._seg_start: int | None = None
+        self._cleaned = False
+        self._events: list[dict] = [dict(e) for e in (events or [])]
+        self._prefilled = bool(self._events)
 
         lay = QVBoxLayout(self)
 
-        # --- Vista previa del video ---
+        # --- Vista previa ---
         self.video = QVideoWidget()
-        self.video.setMinimumHeight(280)
+        self.video.setMinimumHeight(300)
         lay.addWidget(self.video, 1)
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.video)
-        self.player.setSource(QUrl.fromLocalFile(video_path))
         self.player.durationChanged.connect(self._on_duration)
         self.player.positionChanged.connect(self._on_position)
+        self.player.setSource(QUrl.fromLocalFile(video_path))
 
-        # --- Transporte (play/seek) ---
+        # --- Transporte + barra de tiempo (editor) ---
         row = QHBoxLayout()
-        self.play_btn = QPushButton("▶")
-        self.play_btn.setFixedWidth(40)
+        self.play_btn = QPushButton("▶"); self.play_btn.setFixedWidth(40)
         self.play_btn.clicked.connect(self._toggle_play)
         row.addWidget(self.play_btn)
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 0)
-        self.slider.sliderMoved.connect(self.player.setPosition)
-        row.addWidget(self.slider, 1)
+        self.timeline = _TimelineBar()
+        self.timeline.set_events(self._events)
+        self.timeline.seekRequested.connect(self.player.setPosition)
+        row.addWidget(self.timeline, 1)
         self.time_lbl = QLabel("0:00.000 / 0:00.000")
         row.addWidget(self.time_lbl)
         lay.addLayout(row)
 
-        # --- Etiqueta (clase) + captura de eventos ---
+        # --- Clase + captura ---
         cap = QHBoxLayout()
         cap.addWidget(QLabel("Clase:"))
         self.label_combo = QComboBox()
-        self.label_combo.addItems(DELFIN_CLASSES)
-        if self._label in DELFIN_CLASSES:
-            self.label_combo.setCurrentText(self._label)
         self.label_combo.setEditable(True)
-        cap.addWidget(self.label_combo)
-        cap.addStretch(1)
+        for c in (classes or []):
+            self.label_combo.addItem(c)
+        default_label = label or (classes[0] if classes else "clase_1")
+        if self.label_combo.findText(default_label) < 0:
+            self.label_combo.addItem(default_label)
+        self.label_combo.setCurrentText(default_label)
+        self.label_combo.setToolTip("Clase del evento. Puedes usar varias en un mismo video.")
+        cap.addWidget(self.label_combo, 1)
         mark_btn = QPushButton("＋ Marca aquí")
-        mark_btn.setToolTip("Registra una marca (instante) en la posición actual.")
         mark_btn.clicked.connect(self._add_marker)
         cap.addWidget(mark_btn)
         self.seg_btn = QPushButton("Inicio de segmento aquí")
-        self.seg_btn.setToolTip("Marca el inicio; vuelve a pulsar en el fin para crear el segmento.")
         self.seg_btn.clicked.connect(self._segment_click)
         cap.addWidget(self.seg_btn)
         lay.addLayout(cap)
@@ -93,36 +174,36 @@ class StimTimelineDialog(QDialog):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Tipo", "Inicio (s)", "Fin (s)", "Clase"])
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        lay.addWidget(self.table, 1)
-        rm = QPushButton("Quitar seleccionado")
-        rm.clicked.connect(self._remove_selected)
+        self.table.setMaximumHeight(160)
+        lay.addWidget(self.table)
+        rm = QPushButton("Quitar seleccionado"); rm.clicked.connect(self._remove_selected)
         lay.addWidget(rm)
 
-        self.hint = QLabel("Coloca marcas/segmentos con el video; se guardan en el proyecto "
-                           "y se registran automáticamente al grabar.")
-        self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: #8a929b; font-size: 11px;")
-        lay.addWidget(self.hint)
+        hint = QLabel("Muévete por la barra (indica el instante bajo el cursor) y fija ahí "
+                      "la marca o el segmento. Se guardan en el proyecto.")
+        hint.setWordWrap(True); hint.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        lay.addWidget(hint)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                               | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
-
-        for e in (events if events is not None else []):
-            self._add_row(e)
+        self._rebuild_table()
 
     # --- Reproducción -----------------------------------------------------
     def _on_duration(self, d: int) -> None:
         self._duration = d
-        self.slider.setRange(0, d)
-        if not self.table.rowCount() and d > 0:      # config nueva: prellenar
-            for e in default_events(self.label_combo.currentText(), d):
-                self._add_row(e)
+        self.timeline.set_duration(d)
+        self.time_lbl.setText(f"{_fmt(0)} / {_fmt(d)}")
+        if not self._prefilled and d > 0 and not self._events:
+            from ..core.stim import default_events
+            self._events = default_events(self.label_combo.currentText(), d)
+            self._prefilled = True
+            self._sync()
 
     def _on_position(self, p: int) -> None:
-        self.slider.setValue(p)
+        self.timeline.set_position(p)
         self.time_lbl.setText(f"{_fmt(p)} / {_fmt(self._duration)}")
 
     def _toggle_play(self) -> None:
@@ -133,8 +214,9 @@ class StimTimelineDialog(QDialog):
 
     # --- Eventos ----------------------------------------------------------
     def _add_marker(self) -> None:
-        self._add_row({"kind": "marker", "t": self.player.position(),
-                       "label": self.label_combo.currentText()})
+        self._events.append({"kind": "marker", "t": self.player.position(),
+                             "label": self.label_combo.currentText().strip() or "clase"})
+        self._sync()
 
     def _segment_click(self) -> None:
         pos = self.player.position()
@@ -146,60 +228,58 @@ class StimTimelineDialog(QDialog):
             self._seg_start = None
             self.seg_btn.setText("Inicio de segmento aquí")
             if b - a >= 1:
-                self._add_row({"kind": "segment", "start": a, "stop": b,
-                               "label": self.label_combo.currentText()})
-
-    def _add_row(self, e: dict) -> None:
-        r = self.table.rowCount()
-        self.table.insertRow(r)
-        kind = e.get("kind", "segment")
-        if kind == "marker":
-            start = e.get("t", 0); stop = None
-        else:
-            start = e.get("start", 0); stop = e.get("stop", 0)
-        self.table.setItem(r, 0, QTableWidgetItem("marca" if kind == "marker" else "segmento"))
-        si = QTableWidgetItem(f"{start / 1000.0:.3f}")
-        self.table.setItem(r, 1, si)
-        self.table.setItem(r, 2, QTableWidgetItem("" if stop is None else f"{stop / 1000.0:.3f}"))
-        self.table.setItem(r, 3, QTableWidgetItem(str(e.get("label", ""))))
+                self._events.append({"kind": "segment", "start": a, "stop": b,
+                                     "label": self.label_combo.currentText().strip() or "clase"})
+                self._sync()
 
     def _remove_selected(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
         for r in rows:
-            self.table.removeRow(r)
+            if 0 <= r < len(self._events):
+                self._events.pop(r)
+        self._sync()
 
-    def _cell(self, r: int, c: int) -> str:
-        it = self.table.item(r, c)
-        return it.text().strip() if it else ""
+    def _sync(self) -> None:
+        self._events.sort(key=lambda e: e.get("t", e.get("start", 0)))
+        self._rebuild_table()
+        self.timeline.set_events(self._events)
 
-    # --- Resultado --------------------------------------------------------
+    def _rebuild_table(self) -> None:
+        self.table.setRowCount(0)
+        for e in self._events:
+            r = self.table.rowCount(); self.table.insertRow(r)
+            marker = e.get("kind") == "marker"
+            start = e.get("t", 0) if marker else e.get("start", 0)
+            stop = "" if marker else f"{e.get('stop', 0) / 1000.0:.3f}"
+            self.table.setItem(r, 0, QTableWidgetItem("marca" if marker else "segmento"))
+            self.table.setItem(r, 1, QTableWidgetItem(f"{start / 1000.0:.3f}"))
+            self.table.setItem(r, 2, QTableWidgetItem(stop))
+            self.table.setItem(r, 3, QTableWidgetItem(str(e.get("label", ""))))
+
+    # --- Resultado / limpieza --------------------------------------------
     def result_events(self) -> list[dict]:
-        out = []
-        for r in range(self.table.rowCount()):
-            kind = "marker" if self._cell(r, 0).startswith("marca") else "segment"
-            label = self._cell(r, 3) or self.label_combo.currentText()
-            try:
-                start = int(round(float(self._cell(r, 1)) * 1000))
-            except ValueError:
-                continue
-            if kind == "marker":
-                out.append({"kind": "marker", "t": start, "label": label})
-            else:
-                try:
-                    stop = int(round(float(self._cell(r, 2)) * 1000))
-                except ValueError:
-                    continue
-                a, b = sorted((start, stop))
-                if b - a >= 1:
-                    out.append({"kind": "segment", "start": a, "stop": b, "label": label})
-        return out
+        return [dict(e) for e in self._events]
 
     def duration_ms(self) -> int:
         return int(self._duration)
 
-    def closeEvent(self, event):  # noqa: N802
-        try:
+    def _cleanup(self) -> None:
+        if self._cleaned:
+            return
+        self._cleaned = True
+        try:                                  # detener y soltar el video ANTES de destruir
             self.player.stop()
+            self.player.setVideoOutput(None)
+            self.player.setSource(QUrl())
         except Exception:  # noqa: BLE001
             pass
+
+    def done(self, result: int) -> None:  # noqa: N802
+        # Se llama tanto en Aceptar como en Cancelar: limpia el player para no
+        # dejarlo vivo al destruir el diálogo (causaba un crash al cancelar).
+        self._cleanup()
+        super().done(result)
+
+    def closeEvent(self, event):  # noqa: N802
+        self._cleanup()
         super().closeEvent(event)

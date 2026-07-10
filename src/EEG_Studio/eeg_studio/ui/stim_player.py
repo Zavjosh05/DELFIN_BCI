@@ -92,8 +92,10 @@ class StimPlayerWindow(QWidget):
         if self._done:
             return
         self._done = True
-        try:
+        try:                                  # soltar el video antes de destruir (evita crash)
             self.player.stop()
+            self.player.setVideoOutput(None)
+            self.player.setSource(QUrl())
         except Exception:  # noqa: BLE001
             pass
         self.finished.emit()
@@ -145,10 +147,13 @@ class StimSession:
             self._fired += 1
 
     def _on_finished(self) -> None:
-        fs = self.acq.source.sample_rate if self.acq.source else 128.0
-        base = self._base if self._base is not None else 0
-        n = self.acq.stim_samples()
-        segments = compute_segments(self._events, fs, base_sample=base, n_samples=n)
-        self.acq.stim_finish(segments)       # guarda + añade como fuente con segmentos
-        if self._on_done is not None:
-            self._on_done(True)
+        # Blindaje: pase lo que pase, se cierra la grabación (no se pierde nada).
+        try:
+            fs = self.acq.source.sample_rate if self.acq.source else 128.0
+            base = self._base if self._base is not None else 0
+            n = self.acq.stim_samples()
+            segments = compute_segments(self._events, fs, base_sample=base, n_samples=n)
+            self.acq.stim_finish(segments)   # guarda + añade como fuente con segmentos
+        finally:
+            if self._on_done is not None:
+                self._on_done(True)

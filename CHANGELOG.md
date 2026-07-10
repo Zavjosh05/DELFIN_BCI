@@ -30,6 +30,17 @@ cambios se agrupan por fecha de trabajo.
   se referencian desde `data/videos` (no hay `ffmpeg` para comprimir, así que se toman
   del origen). No sustituye la grabación manual existente. Requiere QtMultimedia
   (incluido en PyQt6); si falta, la sección se muestra deshabilitada.
+  - **General (cualquier proyecto)**: al añadir un estímulo se abre un **explorador
+    de archivos** (arranca en `data/videos` pero sirve para videos en cualquier
+    ubicación). Las **clases se toman del proyecto** (segmentos ya etiquetados +
+    estímulos), no de una lista fija; el nombre Delfin solo autodetecta la clase por
+    el archivo. Un video puede llevar **varias clases** (marca/segmento con su clase).
+  - **Línea de tiempo estilo editor de video**: barra con *playhead*, marcas y
+    segmentos dibujados, y el **instante exacto bajo el cursor** al pasar el ratón;
+    clic/arrastre para moverse a un punto y fijar ahí la marca o el segmento.
+  - **Exportar / importar** la configuración de estímulos (JSON). Al importar en otro
+    proyecto/equipo, si no encuentra un video **pregunta su ubicación** y reubica por
+    nombre.
 - **Perfiles de control + brazo simulado** en la pestaña **Control**. El control del
   actuador ahora es un **perfil** seleccionable: **«Brazo MaxArm (real)»** (el de
   antes, por HTTP) y **«Brazo simulado»** (nuevo, sin hardware). El brazo simulado es
@@ -63,6 +74,10 @@ cambios se agrupan por fecha de trabajo.
   las fuentes que no reportan batería ocultan el medidor.
 
 ### Corregido
+- **Crash al cancelar la línea de tiempo de un estímulo**: al pulsar Cancelar, el
+  reproductor de video (`QMediaPlayer`) quedaba vivo al destruir el diálogo y la
+  interfaz se caía. Ahora se **libera el video** (stop + soltar salida) tanto al
+  aceptar como al cancelar (y también en el reproductor a pantalla completa).
 - **Bug gráfico de la vista 3D del brazo simulado**: se dibujaba cada eslabón como
   un item OpenGL suelto (líneas erráticas) y el efector se solapaba con las
   articulaciones (mancha blanca). Ahora el brazo es **una sola polilínea**, con las

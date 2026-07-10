@@ -6,6 +6,7 @@ marcadores. La interfaz funciona sin este panel: la captura es opcional.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -16,6 +17,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -697,6 +699,11 @@ class AcquisitionPanel(QWidget):
         rm_btn.clicked.connect(self._remove_stim)
         row.addWidget(add_btn); row.addWidget(self.stim_play_btn); row.addWidget(rm_btn)
         v.addLayout(row)
+        row2 = QHBoxLayout()
+        exp_btn = QPushButton("Exportar configuración…"); exp_btn.clicked.connect(self._export_stim)
+        imp_btn = QPushButton("Importar…"); imp_btn.clicked.connect(self._import_stim)
+        row2.addWidget(exp_btn); row2.addWidget(imp_btn); row2.addStretch(1)
+        v.addLayout(row2)
         self._stim_session = None
         self.refresh_stim()
         return box
@@ -708,29 +715,31 @@ class AcquisitionPanel(QWidget):
         if proj is None:
             return
         for cfg in proj.stim_videos():
-            n_seg = sum(1 for e in cfg.get("events", []) if e.get("kind") == "segment")
-            it = QListWidgetItem(f"🎬 {cfg.get('label', '?')} — {cfg.get('name', '')}"
-                                 f"  ({n_seg} segmento{'s' if n_seg != 1 else ''})")
+            events = cfg.get("events", [])
+            n_seg = sum(1 for e in events if e.get("kind") == "segment")
+            cls = sorted({str(e.get("label", "")) for e in events if e.get("label")})
+            cls_txt = ", ".join(cls) if cls else str(cfg.get("label", "?"))
+            missing = "" if os.path.isfile(cfg.get("path", "")) else "  ⚠ video no encontrado"
+            it = QListWidgetItem(f"🎬 {cfg.get('name', '')} — [{cls_txt}]"
+                                 f"  ({n_seg} seg){missing}")
             it.setData(Qt.ItemDataRole.UserRole, cfg.get("id"))
             self.stim_list.addItem(it)
 
     def _add_stim(self) -> None:
-        """Elige uno de los videos de data/videos y abre su línea de tiempo."""
+        """Explora una carpeta para elegir el video y abre su línea de tiempo.
+
+        Por defecto arranca en ``data/videos`` (Delfin), pero sirve para videos en
+        cualquier ubicación (otros proyectos)."""
         if not self.controller._require_project():
             return
-        videos = stim_core.discover_videos()
-        if not videos:
-            self.controller.warn(
-                "Sin videos de estímulo",
-                "No se encontró la carpeta «data/videos» con los videos de estímulo.")
+        start_dir = stim_core.find_videos_dir() or ""
+        path, _f = QFileDialog.getOpenFileName(
+            self, "Elegir video de estímulo", start_dir,
+            "Videos (*.mp4 *.mov *.avi *.mkv *.webm *.m4v);;Todos los archivos (*)")
+        if not path:
             return
-        names = [f"{v['label'] or '¿?'} — {v['name']}" for v in videos]
-        choice, ok = QInputDialog.getItem(self, "Video de estímulo",
-                                          "Elige el video a configurar:", names, 0, False)
-        if not ok:
-            return
-        vid = videos[names.index(choice)]
-        self._open_timeline(vid["path"], vid["label"], None, vid["name"])
+        self._open_timeline(path, stim_core.class_from_filename(path),
+                            None, os.path.basename(path))
 
     def _configure_stim_item(self, item) -> None:
         cfg = self._stim_config(item.data(Qt.ItemDataRole.UserRole))
@@ -740,7 +749,8 @@ class AcquisitionPanel(QWidget):
 
     def _open_timeline(self, path, label, existing, name, vid_id=None) -> None:
         events = existing.get("events") if existing else None
-        dlg = StimTimelineDialog(path, label, events, self)
+        classes = stim_core.project_classes(self.controller.project)
+        dlg = StimTimelineDialog(path, label, events, classes, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         cfg = {"id": vid_id, "path": path, "name": name,
@@ -749,6 +759,53 @@ class AcquisitionPanel(QWidget):
         self.controller.project.save_stim_video(cfg)
         self.controller.request_autosave()
         self.refresh_stim()
+
+    def _export_stim(self) -> None:
+        proj = self.controller.project
+        if proj is None or not proj.stim_videos():
+            self.controller.info("Sin estímulos", "No hay estímulos configurados para exportar.")
+            return
+        path, _f = QFileDialog.getSaveFileName(self, "Exportar configuración de estímulos",
+                                               "estimulos.json", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"stim_videos": proj.stim_videos()}, fh, indent=2, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001
+            self.controller.warn("No se pudo exportar", str(exc)); return
+        self.status.setText(f"Estímulos exportados a {os.path.basename(path)}.")
+
+    def _import_stim(self) -> None:
+        if not self.controller._require_project():
+            return
+        path, _f = QFileDialog.getOpenFileName(self, "Importar configuración de estímulos",
+                                               "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            self.controller.warn("No se pudo importar", str(exc)); return
+        configs = data.get("stim_videos", data) if isinstance(data, dict) else data
+        search_dir, n = None, 0
+        for cfg in (configs or []):
+            vp = cfg.get("path", "")
+            resolved = stim_core.relocate_video(vp, search_dir)
+            if resolved is None:               # no se encuentra: pregunta la ubicación
+                folder = QFileDialog.getExistingDirectory(
+                    self, f"¿Dónde están los videos? (falta «{os.path.basename(vp)}»)")
+                if folder:
+                    search_dir = folder
+                    resolved = stim_core.relocate_video(vp, search_dir)
+            new_cfg = dict(cfg); new_cfg["id"] = None      # id nuevo (no pisa los existentes)
+            new_cfg["path"] = resolved or vp               # deja la original si no se ubicó
+            self.controller.project.save_stim_video(new_cfg)
+            n += 1
+        self.controller.request_autosave()
+        self.refresh_stim()
+        self.status.setText(f"{n} estímulo(s) importado(s).")
 
     def _stim_config(self, vid_id):
         proj = self.controller.project
