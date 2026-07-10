@@ -1,0 +1,202 @@
+{
+  "stim_videos": [
+    {
+      "id": "72149bc4",
+      "path": "C:/Users/josh/Documents/GitHub/DELFIN_BCI/data/videos/Estimulo_BCI_Abajo.mp4",
+      "name": "Estimulo_BCI_Abajo.mp4",
+      "label": "abajo",
+      "duration_ms": 60000,
+      "events": [
+        {
+          "kind": "segment",
+          "start": 10000,
+          "stop": 15000,
+          "label": "abajo"
+        },
+        {
+          "kind": "segment",
+          "start": 25000,
+          "stop": 30000,
+          "label": "abajo"
+        },
+        {
+          "kind": "segment",
+          "start": 40000,
+          "stop": 45000,
+          "label": "abajo"
+        },
+        {
+          "kind": "segment",
+          "start": 55000,
+          "stop": 60000,
+          "label": "abajo"
+        }
+      ]
+    },
+    {
+      "id": "114afce6",
+      "path": "C:/Users/josh/Documents/GitHub/DELFIN_BCI/data/videos/Estimulo_BCI_Agarre.mp4",
+      "name": "Estimulo_BCI_Agarre.mp4",
+      "label": "agarre",
+      "duration_ms": 60000,
+      "events": [
+        {
+          "kind": "segment",
+          "start": 10000,
+          "stop": 15000,
+          "label": "agarre"
+        },
+        {
+          "kind": "segment",
+          "start": 25000,
+          "stop": 30000,
+          "label": "agarre"
+        },
+        {
+          "kind": "segment",
+          "start": 40000,
+          "stop": 45000,
+          "label": "agarre"
+        },
+        {
+          "kind": "segment",
+          "start": 55000,
+          "stop": 60000,
+          "label": "agarre"
+        }
+      ]
+    },
+    {
+      "id": "e9ec8576",
+      "path": "C:/Users/josh/Documents/GitHub/DELFIN_BCI/data/videos/Estimulo_BCI_Arriba.mp4",
+      "name": "Estimulo_BCI_Arriba.mp4",
+      "label": "arriba",
+      "duration_ms": 60000,
+      "events": [
+        {
+          "kind": "segment",
+          "start": 10000,
+          "stop": 15000,
+          "label": "arriba"
+        },
+        {
+          "kind": "segment",
+          "start": 25000,
+          "stop": 30000,
+          "label": "arriba"
+        },
+        {
+          "kind": "segment",
+          "start": 40000,
+          "stop": 45000,
+          "label": "arriba"
+        },
+        {
+          "kind": "segment",
+          "start": 55000,
+          "stop": 60000,
+          "label": "arriba"
+        }
+      ]
+    },
+    {
+      "id": "1ec81418",
+      "path": "C:/Users/josh/Documents/GitHub/DELFIN_BCI/data/videos/Estimulo_BCI_Derecha.mp4",
+      "name": "Estimulo_BCI_Derecha.mp4",
+      "label": "derecha",
+      "duration_ms": 60033,
+      "events": [
+        {
+          "kind": "segment",
+          "start": 10000,
+          "stop": 15000,
+          "label": "derecha"
+        },
+        {
+          "kind": "segment",
+          "start": 25000,
+          "stop": 30000,
+          "label": "derecha"
+        },
+        {
+          "kind": "segment",
+          "start": 40000,
+          "stop": 45000,
+          "label": "derecha"
+        },
+        {
+          "kind": "segment",
+          "start": 55000,
+          "stop": 60000,
+          "label": "derecha"
+        }
+      ]
+    },
+    {
+      "id": "16a66e62",
+      "path": "C:/Users/josh/Documents/GitHub/DELFIN_BCI/data/videos/Estimulo_BCI_Izquierda.mp4",
+      "name": "Estimulo_BCI_Izquierda.mp4",
+      "label": "izquierda",
+      "duration_ms": 60000,
+      "events": [
+        {
+          "kind": "segment",
+          "start": 10000,
+          "stop": 15000,
+          "label": "izquierda"
+        },
+        {
+          "kind": "segment",
+          "start": 25000,
+          "stop": 30000,
+          "label": "izquierda"
+        },
+        {
+          "kind": "segment",
+          "start": 40000,
+          "stop": 45000,
+          "label": "izquierda"
+        },
+        {
+          "kind": "segment",
+          "start": 55000,
+          "stop": 60000,
+          "label": "izquierda"
+        }
+      ]
+    },
+    {
+      "id": "8ce7440f",
+      "path": "C:/Users/josh/Documents/GitHub/DELFIN_BCI/data/videos/Estimulo_BCI_Soltar.mp4",
+      "name": "Estimulo_BCI_Soltar.mp4",
+      "label": "soltar",
+      "duration_ms": 60000,
+      "events": [
+        {
+          "kind": "segment",
+          "start": 10000,
+          "stop": 15000,
+          "label": "soltar"
+        },
+        {
+          "kind": "segment",
+          "start": 25000,
+          "stop": 30000,
+          "label": "soltar"
+        },
+        {
+          "kind": "segment",
+          "start": 40000,
+          "stop": 45000,
+          "label": "soltar"
+        },
+        {
+          "kind": "segment",
+          "start": 55000,
+          "stop": 60000,
+          "label": "soltar"
+        }
+      ]
+    }
+  ]
+}

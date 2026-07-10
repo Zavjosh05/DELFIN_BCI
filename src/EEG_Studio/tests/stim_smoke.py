@@ -71,21 +71,33 @@ def main() -> int:
     assert len(proj2.stim_videos()) == 1
     assert proj2.stim_videos()[0]["events"][1]["label"] == "abajo"
 
-    print("[6] Editor de línea de tiempo: carga video, barra de tiempo, y CANCELAR limpia")
+    print("[6] Editor: video nuevo SIN marcas auto, F6 segmento, repetir periódico, Ir a")
+    import eeg_studio.ui.stim_timeline as stl
     from eeg_studio.ui.stim_timeline import StimTimelineDialog
     dlg = StimTimelineDialog(vp, "arriba", None, ["arriba", "abajo"])
     _pump(app, 1500)
     assert dlg.duration_ms() > 0
+    assert dlg.result_events() == []                       # video nuevo empieza VACÍO
     dlg.timeline.resize(1000, 52); dlg.timeline.set_duration(60000)
-    assert abs(dlg.timeline._ms_at(500) - 30000) < 100     # el instante bajo el cursor
-    # campo «Ir a (s)»: manda el reproductor a un instante exacto
-    dlg.goto_spin.setValue(12.5); dlg._goto()
-    _pump(app, 200)
-    assert abs(dlg.player.position() - 12500) < 1500        # buscó ~12.5 s (muestra el frame)
-    assert any(e["kind"] == "segment" for e in dlg.result_events())
-    dlg.reject()                                            # CANCELAR (antes crasheaba)
-    assert dlg._cleaned                                     # el player quedó limpio
-    _pump(app, 150)
+    assert abs(dlg.timeline._ms_at(500) - 30000) < 100     # instante bajo el cursor
+    # F6 = inicio/fin de segmento
+    dlg.player.setPosition(2000); _pump(app, 200); dlg._segment_click()
+    dlg.player.setPosition(6000); _pump(app, 200); dlg._segment_click()
+    assert len([e for e in dlg._events if e["kind"] == "segment"]) == 1, dlg._events
+    # repetir periódicamente (diálogos simulados): +3 copias
+    class _FakeInput:
+        @staticmethod
+        def getDouble(*a, **k): return (10.0, True)
+        @staticmethod
+        def getInt(*a, **k): return (3, True)
+    orig = stl.QInputDialog; stl.QInputDialog = _FakeInput
+    dlg.table.selectRow(0); dlg._repeat_segment()
+    stl.QInputDialog = orig
+    assert len([e for e in dlg._events if e["kind"] == "segment"]) == 4, dlg._events
+    # campo «Ir a (s)»
+    dlg.goto_spin.setValue(12.5); dlg._goto(); _pump(app, 200)
+    assert abs(dlg.player.position() - 12500) < 1500
+    dlg.reject(); assert dlg._cleaned; _pump(app, 150)     # cancelar limpia (no crashea)
 
     print("[7] Panel: explorador de archivos general + lista con clases")
     from eeg_studio.ui.main_window import MainWindow

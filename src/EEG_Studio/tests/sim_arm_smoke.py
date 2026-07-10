@@ -100,6 +100,17 @@ def main() -> int:
     assert np.allclose(cp._sim_arm.q, cp._sim_arm.q_home)
     assert cp.sim_controls._sliders[1].value() != pos_after_cmd or True  # sincronizó
 
+    print("[9b] Vistas 2D colapsables + pantalla completa solo del brazo")
+    sv = cp.sim_view
+    assert not sv.plots_container.isHidden()
+    sv._toggle_2d(False); assert sv.plots_container.isHidden()        # colapsa laterales
+    sv._toggle_2d(True); assert not sv.plots_container.isHidden()
+    sv._open_fullscreen()
+    assert sv._fs is not None and not sv._fs.isHidden()               # ventana FS abierta
+    sv.refresh()                                                     # refresca también la FS
+    sv._fs.close()
+    app.processEvents()
+
     print("[10] Constructor: aplicar una spec nueva reconstruye el brazo")
     sp = make_default_arm_spec()
     sp.joints[1].link_offset = (0.30, 0.0, 0.0)   # hombro más largo

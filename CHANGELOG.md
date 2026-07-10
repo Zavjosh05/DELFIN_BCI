@@ -12,6 +12,26 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-10]
+
+### Añadido
+- **Brazo simulado**: las **vistas laterales 2D** (lateral + superior) ahora son
+  **colapsables** (botón para ocultarlas y ganar espacio para el 3D), y un botón
+  **⛶ Pantalla completa** abre **solo el brazo** a pantalla completa para mejor
+  visualización (Esc para volver).
+- **Línea de tiempo del estímulo**:
+  - **Repetir un segmento periódicamente**: selecciona un segmento y elige el
+    **periodo** y el **nº de repeticiones**; se generan las copias espaciadas (sin
+    salirse del video).
+  - **F6** funciona como **inicio/fin de segmento** (mismo efecto que el botón).
+
+### Cambiado
+- **Estímulo: un video nuevo empieza SIN marcas/segmentos automáticos** (antes se
+  prellenaban una marca y un segmento por defecto). Ahora el usuario coloca todo a
+  mano en la línea de tiempo.
+
+---
+
 ## [2026-07-09]
 
 ### Añadido

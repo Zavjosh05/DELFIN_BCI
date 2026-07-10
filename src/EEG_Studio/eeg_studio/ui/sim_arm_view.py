@@ -9,7 +9,13 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..inference.sim_arm import SimulatedArm
 from .theme import BORDER, MUTED, SURFACE, TEXT
@@ -134,15 +140,59 @@ def _make_3d(arm: SimulatedArm):
         return None
 
 
+class _ArmFullscreen(QWidget):
+    """Ventana a pantalla completa que muestra SOLO el brazo (mejor visualización)."""
+
+    def __init__(self, arm: SimulatedArm) -> None:
+        super().__init__()                 # top-level (sin padre) para pantalla completa
+        self.setWindowTitle("Brazo simulado")
+        self.setStyleSheet(f"background: {SURFACE};")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.view = _make_3d(arm) or _ArmProjection(arm, "Brazo", "side")
+        lay.addWidget(self.view, 1)
+        hint = QLabel("Esc para volver", self)
+        hint.setStyleSheet("color: rgba(255,255,255,110); font-size: 13px;")
+        hint.move(14, 10)
+
+    def refresh(self) -> None:
+        try:
+            self.view.refresh()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def keyPressEvent(self, event):  # noqa: N802
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+
 class SimArmView(QWidget):
     """Vista del brazo simulado: 3D (si hay OpenGL) + proyecciones 2D + estado."""
 
     def __init__(self, arm: SimulatedArm | None = None, parent=None) -> None:
         super().__init__(parent)
         self.arm = arm or SimulatedArm()
+        self._fs: _ArmFullscreen | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
+
+        # Barra: colapsar las vistas 2D y abrir el brazo a pantalla completa.
+        bar = QHBoxLayout()
+        self.toggle2d_btn = QPushButton("▾ Vistas laterales")
+        self.toggle2d_btn.setCheckable(True)
+        self.toggle2d_btn.setChecked(True)
+        self.toggle2d_btn.setToolTip("Mostrar/ocultar las proyecciones 2D (lateral y superior).")
+        self.toggle2d_btn.toggled.connect(self._toggle_2d)
+        bar.addWidget(self.toggle2d_btn)
+        bar.addStretch(1)
+        self.fs_btn = QPushButton("⛶ Pantalla completa")
+        self.fs_btn.setToolTip("Abre SOLO el brazo a pantalla completa (Esc para volver).")
+        self.fs_btn.clicked.connect(self._open_fullscreen)
+        bar.addWidget(self.fs_btn)
+        lay.addLayout(bar)
 
         self.view3d = _make_3d(self.arm)
         if self.view3d is not None:
@@ -155,18 +205,37 @@ class SimArmView(QWidget):
             note.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
             lay.addWidget(note)
 
-        plots = QHBoxLayout()
+        # Contenedor colapsable de las proyecciones 2D.
+        self.plots_container = QWidget()
+        plots = QHBoxLayout(self.plots_container)
+        plots.setContentsMargins(0, 0, 0, 0)
         self.side = _ArmProjection(self.arm, "Lateral (elevación)", "side")
         self.top = _ArmProjection(self.arm, "Superior (giro base)", "top")
         for p in (self.side, self.top):
             p.setMinimumHeight(130)
             plots.addWidget(p)
-        lay.addLayout(plots)
+        lay.addWidget(self.plots_container)
 
         self.status = QLabel()
         self.status.setStyleSheet(f"color: {TEXT}; font-size: 11px;")
         lay.addWidget(self.status)
         self.refresh()
+
+    def _toggle_2d(self, shown: bool) -> None:
+        self.plots_container.setVisible(shown)
+        self.toggle2d_btn.setText(("▾ " if shown else "▸ ") + "Vistas laterales")
+
+    def _open_fullscreen(self) -> None:
+        if self._fs is not None:
+            self._fs.close()
+        self._fs = _ArmFullscreen(self.arm)
+        self._fs.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._fs.destroyed.connect(self._on_fs_closed)
+        self._fs.showFullScreen()
+        self._fs.refresh()
+
+    def _on_fs_closed(self, *_args) -> None:
+        self._fs = None
 
     def set_arm(self, arm: SimulatedArm) -> None:
         """Reasigna el brazo (p. ej. tras reconstruirlo) y redibuja todo."""
@@ -176,6 +245,8 @@ class SimArmView(QWidget):
         if self.view3d is not None:
             self.view3d.arm = arm
             self.view3d.rebuild()
+        if self._fs is not None:               # la ventana FS quedaría con el brazo viejo
+            self._fs.close()
         self.refresh()
 
     def refresh(self) -> None:
@@ -183,6 +254,8 @@ class SimArmView(QWidget):
             self.view3d.refresh()
         self.side.refresh()
         self.top.refresh()
+        if self._fs is not None:               # ventana a pantalla completa abierta
+            self._fs.refresh()
         q = self.arm.q
         pinza = "cerrada ✊" if self.arm.gripper_closed else "abierta ✋"
         ee = self.arm.ee()

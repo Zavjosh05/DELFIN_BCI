@@ -8,7 +8,7 @@ clases se toman de las que ya existen en el proyecto. Devuelve los eventos en ms
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
@@ -18,7 +18,9 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -183,10 +185,13 @@ class StimTimelineDialog(QDialog):
         mark_btn = QPushButton("＋ Marca aquí")
         mark_btn.clicked.connect(self._add_marker)
         cap.addWidget(mark_btn)
-        self.seg_btn = QPushButton("Inicio de segmento aquí")
+        self.seg_btn = QPushButton("Inicio de segmento aquí (F6)")
         self.seg_btn.clicked.connect(self._segment_click)
         cap.addWidget(self.seg_btn)
         lay.addLayout(cap)
+        # F6 = inicio/fin de segmento (misma acción que el botón).
+        self._sc_seg = QShortcut(QKeySequence("F6"), self)
+        self._sc_seg.activated.connect(self._segment_click)
 
         # --- Tabla de eventos ---
         self.table = QTableWidget(0, 4)
@@ -194,11 +199,15 @@ class StimTimelineDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.setMaximumHeight(160)
         lay.addWidget(self.table)
+        trow = QHBoxLayout()
         rm = QPushButton("Quitar seleccionado"); rm.clicked.connect(self._remove_selected)
-        lay.addWidget(rm)
+        rep = QPushButton("Repetir periódicamente…"); rep.clicked.connect(self._repeat_segment)
+        rep.setToolTip("Repite el segmento seleccionado cada N segundos, varias veces.")
+        trow.addWidget(rm); trow.addWidget(rep); trow.addStretch(1)
+        lay.addLayout(trow)
 
         hint = QLabel("Muévete por la barra (indica el instante bajo el cursor) y fija ahí "
-                      "la marca o el segmento. Se guardan en el proyecto.")
+                      "la marca o el segmento (F6 = inicio/fin). Se guardan en el proyecto.")
         hint.setWordWrap(True); hint.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
         lay.addWidget(hint)
 
@@ -215,11 +224,8 @@ class StimTimelineDialog(QDialog):
         self.timeline.set_duration(d)
         self.goto_spin.setMaximum(max(0.0, d / 1000.0))
         self.time_lbl.setText(f"{_fmt(0)} / {_fmt(d)}")
-        if not self._prefilled and d > 0 and not self._events:
-            from ..core.stim import default_events
-            self._events = default_events(self.label_combo.currentText(), d)
-            self._prefilled = True
-            self._sync()
+        # (Antes se prellenaban marcas/segmento automáticos; ahora un video nuevo
+        # empieza VACÍO — el usuario coloca todo a mano.)
 
     def _on_position(self, p: int) -> None:
         self.timeline.set_position(p)
@@ -279,7 +285,7 @@ class StimTimelineDialog(QDialog):
         else:
             a, b = sorted((self._seg_start, pos))
             self._seg_start = None
-            self.seg_btn.setText("Inicio de segmento aquí")
+            self.seg_btn.setText("Inicio de segmento aquí (F6)")
             if b - a >= 1:
                 self._events.append({"kind": "segment", "start": a, "stop": b,
                                      "label": self.label_combo.currentText().strip() or "clase"})
@@ -291,6 +297,43 @@ class StimTimelineDialog(QDialog):
             if 0 <= r < len(self._events):
                 self._events.pop(r)
         self._sync()
+
+    def _repeat_segment(self) -> None:
+        """Repite el segmento seleccionado cada N segundos, varias veces."""
+        seg = None
+        for r in sorted({i.row() for i in self.table.selectedItems()}):
+            if 0 <= r < len(self._events) and self._events[r].get("kind") == "segment":
+                seg = self._events[r]
+                break
+        if seg is None:
+            QMessageBox.information(self, "Repetir segmento",
+                                   "Selecciona un segmento en la tabla primero.")
+            return
+        period, ok = QInputDialog.getDouble(
+            self, "Repetir periódicamente", "Periodo entre repeticiones (s):",
+            (seg["stop"] - seg["start"]) / 1000.0, 0.1, 3600.0, 3)
+        if not ok:
+            return
+        count, ok = QInputDialog.getInt(
+            self, "Repetir periódicamente", "Nº de repeticiones (además del actual):",
+            3, 1, 1000)
+        if not ok:
+            return
+        step = int(round(period * 1000))
+        dur = seg["stop"] - seg["start"]
+        added = 0
+        for i in range(1, count + 1):
+            start = seg["start"] + i * step
+            stop = start + dur
+            if self._duration and stop > self._duration:
+                break
+            self._events.append({"kind": "segment", "start": start, "stop": stop,
+                                 "label": seg.get("label", "")})
+            added += 1
+        if added:
+            self._sync()
+        if added < count:
+            self.hint.setText(f"Se añadieron {added} repeticiones (el resto no cabía en el video).")
 
     def _sync(self) -> None:
         self._events.sort(key=lambda e: e.get("t", e.get("start", 0)))
