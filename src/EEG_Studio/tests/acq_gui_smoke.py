@@ -49,6 +49,15 @@ def main() -> int:
     assert panel._n_samples > 0, "no llegaron muestras"
     print(f"    muestras recibidas: {panel._n_samples}")
 
+    print("[1b] Advertencia de lag cuando la señal se retrasa")
+    import time as _t
+    panel._last_chunk_t = _t.perf_counter() - 5.0        # 5 s sin muestras nuevas
+    panel._check_lag(_t.perf_counter(), False)
+    assert panel._lagging, "no detectó el lag"
+    assert "retrasando" in panel.status.text().lower(), panel.status.text()
+    panel._lagging = False                                # limpia para el resto del test
+    print("    lag detectado y avisado")
+
     print("[2] Grabando ~0.6 s a CSV del proyecto")
     panel._start_recording()
     _pump(app, 0.6)

@@ -81,6 +81,13 @@ def main() -> int:
     print(f"    pipeline={win.project.state['pipeline'][0]['type']} · "
           f"dataset={win.dataset.X.shape} · modelos={list(win.models)} · predice {list(pred)}")
 
+    print("[3b] Reimportar el MISMO bundle: fuentes y etiquetas ya presentes se OMITEN")
+    n_src, n_seg = len(win.project.sources), len(win.project.state["segments"])
+    win._apply_config(*config_export.read_bundle(bundle))         # importa otra vez
+    assert len(win.project.sources) == n_src, "duplicó fuentes al reimportar"
+    assert len(win.project.state["segments"]) == n_seg, "duplicó segmentos al reimportar"
+    print(f"    sin duplicados: {n_src} fuente(s), {n_seg} segmento(s)")
+
     print("[4] El bundle NO contiene imágenes (solo datos)")
     import zipfile
     with zipfile.ZipFile(bundle) as z:

@@ -939,11 +939,18 @@ class MainWindow(QMainWindow):
         if srcs and src_blobs:
             imp = os.path.join(self.project.path, IMPORTED_DIR)
             os.makedirs(imp, exist_ok=True)
-            n_src = 0
+            # Dedup: NO reimportar fuentes ya presentes (por id o por nombre de archivo).
+            existing_ids = {s["id"] for s in self.project.sources}
+            existing_names = {os.path.basename(s.get("path", "")).lower()
+                              for s in self.project.sources}
+            n_src, n_skip = 0, 0
             for meta in srcs:
                 arc = meta.get("file")
                 if not arc or arc not in src_blobs:
                     continue
+                if meta.get("id") in existing_ids or os.path.basename(arc).lower() in existing_names:
+                    n_skip += 1
+                    continue                          # ya importada: se ignora
                 dest = os.path.join(imp, os.path.basename(arc))
                 with open(dest, "wb") as f:
                     f.write(src_blobs[arc])
@@ -957,8 +964,9 @@ class MainWindow(QMainWindow):
                     n_src += 1
                 except Exception:  # noqa: BLE001
                     pass
-            if n_src:
-                parts.append(f"{n_src} fuente(s)")
+            if n_src or n_skip:
+                extra = f" ({n_skip} ya existentes, omitidas)" if n_skip else ""
+                parts.append(f"{n_src} fuente(s) nueva(s){extra}")
         pre = cfg.get("preprocessing")
         if pre:
             if pre.get("pipelines"):     # bundles nuevos: todos los pipelines
@@ -977,9 +985,23 @@ class MainWindow(QMainWindow):
             if ds.get("config"):
                 self.project.edit("dataset", ds["config"], "Importar config de dataset")
             if ds.get("segments"):
-                self.project.edit("segments", ds["segments"], "Importar segmentos")
+                # Fusiona: añade solo los segmentos (etiquetas) que NO estén ya.
+                existing = self.project.state["segments"]
+                seen = {(s.get("source_id"), s.get("start"), s.get("stop"), s.get("label"))
+                        for s in existing}
+                new_segs = [s for s in ds["segments"]
+                            if (s.get("source_id"), s.get("start"), s.get("stop"),
+                                s.get("label")) not in seen]
+                if new_segs:
+                    self.project.edit("segments", existing + new_segs,
+                                      f"Importar {len(new_segs)} segmento(s)")
+                    parts.append(f"{len(new_segs)} etiqueta(s) nueva(s)")
             if ds.get("cuts"):
-                self.project.edit("cuts", ds["cuts"], "Importar recortes")
+                # Fusiona por fuente: no pisa los recortes ya existentes.
+                merged = dict(self.project.state.get("cuts", {}))
+                for sid, ranges in ds["cuts"].items():
+                    merged.setdefault(sid, ranges)
+                self.project.edit("cuts", merged, "Importar recortes")
             if ds_blobs:
                 out_dir = os.path.join(self.project.path, DATASETS_DIR)
                 os.makedirs(out_dir, exist_ok=True)

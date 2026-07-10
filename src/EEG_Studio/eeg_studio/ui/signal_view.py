@@ -34,6 +34,25 @@ _CURVE_COLORS = [
     "#FF8A65", "#90A4AE",
 ]
 
+# Código de colores por REGIÓN del cuero cabelludo (Emotiv EPOC+):
+#   azul = frontal · rojo = fronto-central/temporal · verde = parieto-occipital.
+_REGION_BLUE = "#4a86e8"
+_REGION_RED = "#e0574f"
+_REGION_GREEN = "#4caf68"
+_REGION_COLOR = {
+    "AF3": _REGION_BLUE, "AF4": _REGION_BLUE, "F7": _REGION_BLUE, "F8": _REGION_BLUE,
+    "F3": _REGION_RED, "F4": _REGION_RED, "FC5": _REGION_RED, "FC6": _REGION_RED,
+    "T7": _REGION_RED, "T8": _REGION_RED,
+    "P7": _REGION_GREEN, "P8": _REGION_GREEN, "O1": _REGION_GREEN, "O2": _REGION_GREEN,
+}
+
+
+def channel_color(name: str, idx: int) -> str:
+    """Color de la curva de un canal: por REGIÓN si el nombre es de un electrodo EPOC+
+    conocido (código de colores frontal/central/occipital); si no, la paleta cíclica."""
+    key = str(name).strip().upper()
+    return _REGION_COLOR.get(key, _CURVE_COLORS[idx % len(_CURVE_COLORS)])
+
 # Paleta para colorear los segmentos por clase (color estable por etiqueta).
 _SEGMENT_PALETTE = [
     "#66BB6A", "#42A5F5", "#FFA726", "#EC407A", "#AB47BC",
@@ -355,9 +374,8 @@ class SignalView(QWidget):
         for i in range(n_ch):
             offset = (n_ch - 1 - i) * self._spacing
             curve = disp[i] * gain + offset
-            color = _CURVE_COLORS[i % len(_CURVE_COLORS)]
-            self.plot.plot(t, curve, pen=pg.mkPen(color, width=1))
             name = self._channel_names[i] if i < len(self._channel_names) else f"ch{i}"
+            self.plot.plot(t, curve, pen=pg.mkPen(channel_color(name, i), width=1))
             ticks.append((offset, name))
 
         axis = self.plot.getAxis("left")
@@ -398,9 +416,8 @@ class SignalView(QWidget):
         if normalized:
             s = float(ch.std()) or 1.0
             disp = disp / s
-        color = _CURVE_COLORS[idx % len(_CURVE_COLORS)]
-        self.plot.plot(t, disp * gain, pen=pg.mkPen(color, width=1))
         name = self._channel_names[idx] if idx < len(self._channel_names) else f"ch{idx}"
+        self.plot.plot(t, disp * gain, pen=pg.mkPen(channel_color(name, idx), width=1))
         self.plot.getAxis("left").setTicks(None)   # ticks numéricos automáticos
         self.plot.setLabel("left", name, units=None if normalized else "µV")
 

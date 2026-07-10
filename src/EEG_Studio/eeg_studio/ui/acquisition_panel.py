@@ -69,6 +69,11 @@ from ..config import (
     RECORDINGS_DIR,
 )
 
+# --- Detección de lag de la señal en vivo ---
+_LAG_STALL_S = 2.0        # sin muestras nuevas por este tiempo => la señal se colgó
+_LAG_WINDOW_S = 3.0       # ventana para medir la tasa efectiva de muestreo
+_LAG_RATE_FRAC = 0.6      # tasa efectiva < 60% de la nominal => la señal se retrasa
+
 
 class AcquisitionPanel(QWidget):
     def __init__(self, controller) -> None:
@@ -91,6 +96,11 @@ class AcquisitionPanel(QWidget):
         self._roll_filled = 0
         self._quality_tick = 0                   # para refrescar la calidad cada N ticks
         self._battery_warned = False             # aviso de batería baja (una sola vez)
+        # Detección de LAG (la señal se retrasa / se pierden muestras).
+        self._last_chunk_t = 0.0                 # instante del último bloque recibido
+        self._rate_t0 = 0.0                      # ventana para medir la tasa efectiva
+        self._rate_n0 = 0
+        self._lagging = False                    # estado actual de lag (para el aviso)
 
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)   # menos estrangulamiento en 2º plano
@@ -389,6 +399,10 @@ class AcquisitionPanel(QWidget):
         self._configured = False
         self._n_samples = 0
         self._t_start = time.perf_counter()
+        self._last_chunk_t = self._t_start           # reinicia la detección de lag
+        self._rate_t0 = self._t_start
+        self._rate_n0 = 0
+        self._lagging = False
         self.controller.show_live_view()
         self._timer.start()
         self.status.setText("Conectando… esperando muestras.")
@@ -421,8 +435,10 @@ class AcquisitionPanel(QWidget):
                 f"La fuente dejó de enviar datos:\n{msg}\n\n"
                 "Vuelve a pulsar «Conectar» para seguir grabando.")
             return
+        now = time.perf_counter()
         chunk = self.source.read()
         if chunk is None:
+            self._check_lag(now, False)          # ¿lleva mucho sin muestras nuevas?
             return
         if not self._configured:
             self.controller.live_view.configure(
@@ -431,17 +447,45 @@ class AcquisitionPanel(QWidget):
             self._roll = np.zeros((self.source.n_channels, ONLINE_BUFFER_SAMPLES))
             self._roll_filled = 0
             self._configured = True
+        self._last_chunk_t = now
         self.controller.live_view.append(chunk)
         self._push_buffer(chunk)
         # La grabación ya se escribe en el HILO PRODUCTOR (tap), NO aquí: así no se
         # pierde nada aunque este temporizador se estrangule en segundo plano (dos
         # monitores / app sin foco).
         self._n_samples += chunk.shape[1]
+        self._check_lag(now, True)
         self._update_status()
         self._update_battery()
         self._quality_tick = (self._quality_tick + 1) % 8
         if self._quality_tick == 0:              # ~4 Hz: evita parpadeo
             self._update_quality()
+
+    def _check_lag(self, now: float, got_chunk: bool) -> None:
+        """Avisa (sin bloquear) cuando la señal en vivo se retrasa: o bien lleva un
+        rato sin muestras nuevas, o su tasa efectiva cae muy por debajo de la nominal
+        (típico del EPOC+ con la batería baja)."""
+        if not self._configured or self.source is None:
+            return
+        fs = float(self.source.sample_rate or 1.0)
+        lagging = (now - self._last_chunk_t) > _LAG_STALL_S      # se colgó
+        dt = now - self._rate_t0
+        if dt >= _LAG_WINDOW_S:                                  # tasa efectiva en la ventana
+            eff = (self._n_samples - self._rate_n0) / dt
+            if eff < _LAG_RATE_FRAC * fs:
+                lagging = True
+            self._rate_t0 = now
+            self._rate_n0 = self._n_samples
+        if lagging and not self._lagging:                       # entra en lag: avisar UNA vez
+            self._lagging = True
+            self.status.setText("⚠ La señal se está retrasando (lag / pérdida de muestras). "
+                                "Suele pasar con la batería baja: conviene cargar la diadema.")
+            self.status.setStyleSheet("color: #ff6b6b; font-weight: 600;")
+            self.controller.statusBar().showMessage(
+                "⚠ Señal EEG retrasada (lag). Revisa la batería/conexión de la diadema.", 8000)
+        elif got_chunk and not lagging and self._lagging:        # recuperada
+            self._lagging = False
+            self.status.setStyleSheet("")
 
     def _record_tap(self, chunk) -> None:
         """Escribe un bloque a la grabación. Se llama en el HILO PRODUCTOR (no en la
@@ -504,6 +548,8 @@ class AcquisitionPanel(QWidget):
         return self._roll[:, -n:].copy()
 
     def _update_status(self) -> None:
+        if self._lagging:                    # no pisar el aviso de lag (rojo) mientras dure
+            return
         elapsed = max(1e-6, time.perf_counter() - self._t_start)
         fs = self._n_samples / elapsed
         rec = f" | grabando: {self.recorder.n_samples} muestras" if self.recorder else ""

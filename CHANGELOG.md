@@ -15,6 +15,14 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-10]
 
 ### Añadido
+- **Aviso de señal retrasada (lag)** en «Tiempo real»: si la señal en vivo se cuelga
+  (deja de llegar) o su tasa efectiva cae muy por debajo de la nominal —típico del
+  EPOC+ con la batería baja—, se muestra una **advertencia** (estado en rojo + barra
+  de estado), sin bloquear ni interrumpir la grabación.
+- **Código de colores por región en el visor de señales**: cada canal EPOC+ se
+  dibuja según su zona del cuero cabelludo —**azul** frontal (AF3/AF4/F7/F8),
+  **rojo** central/temporal (F3/F4/FC5/FC6/T7/T8), **verde** parieto-occipital
+  (P7/P8/O1/O2)—; los canales con nombres desconocidos usan la paleta cíclica.
 - **Barra de paneles a la izquierda (estilo PyCharm)**: una barra vertical con un
   **botón por panel** (Fuentes, Herramientas, Historial) que lo **despliega o
   colapsa** con un clic; el botón queda marcado cuando el panel está visible.
@@ -37,6 +45,10 @@ cambios se agrupan por fecha de trabajo.
   - **F6** funciona como **inicio/fin de segmento** (mismo efecto que el botón).
 
 ### Cambiado
+- **Importar `.eegbundle` no duplica lo ya presente**: al importar un bundle, las
+  **fuentes** ya existentes (por id o nombre de archivo) y los **segmentos/etiquetas**
+  repetidos se **omiten**; solo se traen los que faltan (antes los segmentos se
+  sobrescribían por completo).
 - **Estímulo: un video nuevo empieza SIN marcas/segmentos automáticos** (antes se
   prellenaban una marca y un segmento por defecto). Ahora el usuario coloca todo a
   mano en la línea de tiempo.
