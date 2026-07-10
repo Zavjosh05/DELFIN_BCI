@@ -219,6 +219,58 @@ class SimulatedArm:
         self.q = self.q_home.copy()
         self.gripper_closed = False
 
+    # --- Control interactivo desde las vistas 2D (clic para apuntar) -------
+    def _pitch_indices(self) -> list[int]:
+        """Joints que mueven el brazo en el plano vertical (eje ≈ y): hombro,
+        codo, muñeca. La base (eje z) se excluye."""
+        return [i for i, j in enumerate(self.spec.joints)
+                if abs(np.asarray(j.axis, dtype=float)[2]) < 0.5]
+
+    def aim_base_to(self, x: float, y: float) -> None:
+        """Gira SOLO la base (yaw) para apuntar el brazo hacia ``(x, y)`` del
+        plano horizontal (clic en la vista superior). No mueve el resto."""
+        if abs(x) < 1e-9 and abs(y) < 1e-9:
+            return
+        idx = next((i for i, j in enumerate(self.spec.joints)
+                    if abs(np.asarray(j.axis, dtype=float)[2]) > 0.5), None)
+        if idx is None:
+            return
+        self.set_q(idx, -math.atan2(y, x))     # convención histórica (seno negado)
+
+    def aim_planar(self, radius: float, height: float, iters: int = 80) -> bool:
+        """Acerca el efector al objetivo ``(radio, altura)`` del plano vertical
+        (clic en la vista lateral) moviendo hombro/codo/muñeca — IK aproximada
+        por descenso de coordenadas, respetando límites articulares y el piso.
+        La base (yaw) no se toca. Devuelve ``True`` si mejoró la distancia."""
+        idxs = self._pitch_indices()
+        if not idxs:
+            return False
+
+        def cost(q) -> float:
+            ee = self.ee(q)
+            return (math.hypot(ee[0], ee[1]) - radius) ** 2 + (ee[2] - height) ** 2
+
+        q = self.q.copy()
+        cur = start = cost(q)
+        step = 0.15
+        for _ in range(int(iters)):
+            improved = False
+            for i in idxs:
+                for s in (step, -step):
+                    q_try = q.copy()
+                    q_try[i] = float(np.clip(q_try[i] + s, self.q_min[i], self.q_max[i]))
+                    if not self.check_floor(q_try):
+                        continue
+                    c = cost(q_try)
+                    if c < cur - 1e-7:
+                        q, cur, improved = q_try, c, True
+            if not improved:
+                step *= 0.5
+                if step < 1e-3:
+                    break
+        self.q = q
+        return cur < start - 1e-9
+
 
 class SimArmSink:
     """Salida del modo de control hacia el brazo **simulado**.

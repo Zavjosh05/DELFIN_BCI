@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -21,6 +22,41 @@ from ..inference.sim_arm import SimulatedArm
 from .theme import ACCENT, MUTED, TEXT
 
 _SLIDER_MAX = 1000
+
+# D-pad de acciones del brazo simulado: (texto, comando, fila, columna).
+_ACTION_BUTTONS = (
+    ("▲ Arriba", "arriba", 0, 1),
+    ("◀ Izquierda", "izquierda", 1, 0),
+    ("▶ Derecha", "derecha", 1, 2),
+    ("▼ Abajo", "abajo", 2, 1),
+    ("✊ Agarre", "agarre", 3, 0),
+    ("✋ Soltar", "soltar", 3, 2),
+)
+
+
+class SimArmActionPad(QWidget):
+    """D-pad de los 6 comandos (arriba/abajo, izquierda/derecha, agarre/soltar)
+    + HOME para el brazo simulado. ``on_command(cmd)`` recibe cada acción."""
+
+    def __init__(self, on_command, parent=None) -> None:
+        super().__init__(parent)
+        self._on_command = on_command
+        self.buttons: dict[str, QPushButton] = {}
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        for text, cmd, r, c in _ACTION_BUTTONS:
+            b = QPushButton(text)
+            b.setMinimumHeight(34)
+            b.clicked.connect(lambda _=False, cc=cmd: self._on_command(cc))
+            self.buttons[cmd] = b
+            grid.addWidget(b, r, c)
+        lay.addLayout(grid)
+        home = QPushButton("🏠  Posición inicial (HOME)")
+        home.clicked.connect(lambda: self._on_command("home"))
+        lay.addWidget(home)
 
 
 class SimArmControls(QWidget):

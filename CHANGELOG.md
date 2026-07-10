@@ -29,6 +29,16 @@ cambios se agrupan por fecha de trabajo.
   un proyecto reciente para **renombrarlo** (mueve la carpeta `.eegproj` y actualiza
   el nombre interno del proyecto) o **quitarlo de la lista** (solo lo olvida de
   recientes; **no** borra nada del disco).
+- **Brazo simulado a pantalla completa: ahora con controles**. La ventana de pantalla
+  completa ya no muestra solo el brazo: incluye a la derecha el **D-pad de acciones**
+  (arriba/abajo, izquierda/derecha, agarre/soltar + HOME) y los **sliders por
+  articulación**, y un **botón «✕ Cerrar (Esc)»** visible para volver (antes solo se
+  salía con Esc, sin indicación). Mover el brazo ahí **sincroniza** el panel principal.
+- **Control por clic en las vistas 2D del brazo** (como en `Proyecto_RNN`): clic en la
+  **vista superior** gira la **base** para apuntar a ese punto; clic en la **vista
+  lateral** acerca el efector a esa **altura/distancia** moviendo hombro/codo/muñeca
+  (IK aproximada por descenso de coordenadas, respetando límites y piso). Funciona
+  tanto en el panel como en pantalla completa.
 - **Barra de paneles a la izquierda (estilo PyCharm)**: una barra vertical con un
   **botón por panel** (Fuentes, Herramientas, Historial) que lo **despliega o
   colapsa** con un clic; el botón queda marcado cuando el panel está visible.
@@ -67,6 +77,14 @@ cambios se agrupan por fecha de trabajo.
   mostrarlo** recupera un tamaño usable (antes Qt podía restaurarlo colapsado).
 
 ### Corregido / reforzado
+- **Creación de `.eegbundle` blindada**: el bundle se escribe primero en un archivo
+  temporal (`.part`) y solo al final se **reemplaza atómicamente** el destino — un
+  fallo a mitad ya **no deja un bundle corrupto** en su sitio. Cada binario
+  (modelo/dataset/fuente) se empaqueta de forma **tolerante**: si uno falla (archivo
+  bloqueado, ilegible o ausente) se **omite y se anota** en vez de abortar todo el
+  export, y al terminar se **verifica la integridad** del ZIP. Al leer, se rechaza con
+  un error claro cualquier archivo que no sea un bundle válido (no-ZIP o sin
+  `bundle.json`). La exportación avisa de los elementos omitidos.
 - **El visor de señal ya no impone un ancho mínimo enorme**: las dos filas de
   controles van ahora en un desplazamiento horizontal, así el visor **se puede
   encoger** (antes su ancho mínimo aplastaba los demás paneles). Su ancho mínimo pasó

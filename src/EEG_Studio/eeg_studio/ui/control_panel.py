@@ -279,7 +279,7 @@ class ControlPanel(QWidget):
         moverse mientras se controla. El constructor va en un diálogo aparte."""
         w = QWidget()
         lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(6)
-        self.sim_view = SimArmView(self._sim_arm)
+        self.sim_view = SimArmView(self._sim_arm, on_change=self._sim_refresh)
         lay.addWidget(self.sim_view)
 
         self.sim_controls = SimArmControls(self._sim_arm, on_change=self._sim_refresh)

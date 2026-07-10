@@ -88,6 +88,43 @@ def main() -> int:
     assert ds2.X.shape == ds.X.shape, (ds2.X.shape, ds.X.shape)
     print(f"    modelo predice {list(pred)} · dataset {ds2.X.shape} recuperado")
 
+    print("[7] Blindaje: escritura atómica (sin dejar .part) y sin omisiones")
+    assert not os.path.exists(bundle + ".part"), "quedó un temporal a medias"
+    assert info.get("skipped") == [], info.get("skipped")
+    import zipfile
+    assert zipfile.is_zipfile(bundle)
+    with zipfile.ZipFile(bundle) as z:
+        assert z.testzip() is None and "bundle.json" in z.namelist()  # íntegro
+
+    print("[8] Tolerante: una fuente con archivo faltante se OMITE, el bundle sigue OK")
+    proj.sources = [{"id": "src1", "alias": "no_existe",
+                     "path": os.path.join(tmp, "no_existe.csv")}]
+    b2 = os.path.join(tmp, "ConFuente" + config_export.BUNDLE_EXT)
+    info2 = config_export.export_bundle(
+        proj, models, {"preprocessing", "models", "sources"}, b2)
+    assert os.path.isfile(b2) and info2["sources"] == 0, info2
+    assert any("no_existe" in s for s in info2["skipped"]), info2["skipped"]
+    _c3, m3, _d3, s3 = config_export.read_bundle(b2)       # válido pese a la omisión
+    assert set(m3) == {"rf_1"} and s3 == {}
+    print(f"    fuente faltante omitida y anotada: {info2['skipped']}")
+
+    print("[9] read_bundle rechaza archivos que no son bundles válidos")
+    not_zip = os.path.join(tmp, "no_zip.eegbundle")
+    with open(not_zip, "w", encoding="utf-8") as f:
+        f.write("esto no es un zip")
+    try:
+        config_export.read_bundle(not_zip); assert False, "debió rechazar el no-ZIP"
+    except ValueError:
+        pass
+    zip_sin_json = os.path.join(tmp, "sin_json.eegbundle")
+    with zipfile.ZipFile(zip_sin_json, "w") as z:
+        z.writestr("otra_cosa.txt", "hola")
+    try:
+        config_export.read_bundle(zip_sin_json); assert False, "debió exigir bundle.json"
+    except ValueError:
+        pass
+    print("    no-ZIP y ZIP sin bundle.json rechazados con error claro")
+
     print("\nEXPORTAR CONFIGURACIÓN / BUNDLE OK ✓")
     return 0
 

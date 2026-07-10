@@ -998,9 +998,17 @@ class MainWindow(QMainWindow):
             mb = info["size"] / 1e6
             cmp = (f"  ·  {mb:.1f} MB (proyecto: {proj_size / 1e6:.1f} MB)"
                    if proj_size else f"  ·  {mb:.1f} MB")
+            skipped = info.get("skipped") or []
             self.statusBar().showMessage(
                 f"Bundle exportado: {info['models']} modelo(s), {info['datasets']} "
-                f"dataset(s), {info.get('sources', 0)} fuente(s){cmp}")
+                f"dataset(s), {info.get('sources', 0)} fuente(s)"
+                + (f", {len(skipped)} omitido(s)" if skipped else "") + cmp)
+            if skipped:                                # transparencia: qué no entró y por qué
+                QMessageBox.warning(
+                    self, "Bundle exportado con omisiones",
+                    "El bundle se creó, pero estos elementos se omitieron:\n\n• "
+                    + "\n• ".join(skipped[:12])
+                    + ("\n…" if len(skipped) > 12 else ""))
             # Aviso si, pese a omitir la caché, el bundle pesa más que el proyecto.
             if proj_size and info["size"] > proj_size:
                 extra = ("\n\nSugerencia: vuelve a exportar SIN marcar «Señales de "

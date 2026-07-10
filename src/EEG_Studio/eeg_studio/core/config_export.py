@@ -116,7 +116,15 @@ def export_bundle(project, models: dict, sections, out_path: str,
     Incluye, según las secciones elegidas: ``bundle.json`` (config), los modelos
     entrenados (``models/<nombre>.joblib``) y los datasets guardados del proyecto
     (``datasets/*.npz``). ``pipeline_indices`` limita qué pipelines exportar
-    (``None`` = todos). Devuelve un resumen ``{"models": n, "datasets": n}``.
+    (``None`` = todos). Devuelve un resumen ``{"models": n, "datasets": n, ...,
+    "skipped": [...]}``.
+
+    **Blindado**: se escribe primero en un archivo temporal (``.part``) junto al
+    destino y solo al final se **reemplaza atómicamente** el ``out_path`` — un
+    fallo a mitad nunca deja un bundle corrupto en su sitio. Cada binario se
+    empaqueta de forma **tolerante**: si un modelo/dataset/fuente falla (p. ej. un
+    archivo bloqueado o ilegible) se **omite** y se anota en ``skipped`` en vez de
+    abortar todo el export. Al terminar se **verifica la integridad** del ZIP.
     """
     from . import classification
 
@@ -125,49 +133,92 @@ def export_bundle(project, models: dict, sections, out_path: str,
     n_models = 0
     ds_files: list[str] = []
     n_sources = 0
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
-        if "models" in sections:
-            for name, res in (models or {}).items():
-                arc = f"models/{name}.joblib"
-                z.writestr(arc, classification.result_to_bytes(res),
-                           compress_type=_compress_type(arc))
-                n_models += 1
-            for m in cfg.get("models", []):                # referencia al binario
-                m["file"] = f"models/{m['name']}.joblib"
-        if "dataset" in sections:
-            # Solo los datos (.npz). NO se incluyen imágenes ni gráficos: la matriz de
-            # confusión y demás se regeneran al vuelo desde las métricas del modelo.
-            ds_dir = os.path.join(project.path, DATASETS_DIR)
-            if os.path.isdir(ds_dir):
-                for f in sorted(os.listdir(ds_dir)):
-                    if f.endswith(".npz"):
-                        z.write(os.path.join(ds_dir, f), f"datasets/{f}",
-                                compress_type=_compress_type(f))
-                        ds_files.append(f)
-            cfg["dataset"]["files"] = ds_files
-        if "sources" in sections:
-            # Las señales de origen se guardan comprimidas; la caché (regenerable)
-            # NO se incluye, por eso el bundle suele pesar menos que el proyecto.
-            for src, meta in zip(project.sources, cfg.get("sources", [])):
-                p = src.get("path", "")
-                if not os.path.isfile(p):
-                    continue
-                arc = f"sources/{src['id']}__{os.path.basename(p)}"
-                z.write(p, arc, compress_type=_compress_type(p))
-                meta["file"] = arc
-                n_sources += 1
-        z.writestr("bundle.json", json.dumps(cfg, ensure_ascii=False, indent=2),
-                   compress_type=zipfile.ZIP_DEFLATED)
+    skipped: list[str] = []
+
+    out_path = os.path.abspath(out_path)
+    out_dir = os.path.dirname(out_path) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    tmp_path = out_path + ".part"                      # temporal junto al destino
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z:
+            if "models" in sections:
+                for name, res in (models or {}).items():
+                    arc = f"models/{name}.joblib"
+                    try:
+                        z.writestr(arc, classification.result_to_bytes(res),
+                                   compress_type=_compress_type(arc))
+                        n_models += 1
+                    except Exception as exc:  # noqa: BLE001
+                        skipped.append(f"modelo «{name}»: {exc}")
+                for m in cfg.get("models", []):            # referencia al binario
+                    m["file"] = f"models/{m['name']}.joblib"
+            if "dataset" in sections:
+                # Solo los datos (.npz). NO se incluyen imágenes ni gráficos: la matriz
+                # de confusión y demás se regeneran al vuelo desde las métricas.
+                ds_dir = os.path.join(project.path, DATASETS_DIR)
+                if os.path.isdir(ds_dir):
+                    for f in sorted(os.listdir(ds_dir)):
+                        if not f.endswith(".npz"):
+                            continue
+                        try:
+                            z.write(os.path.join(ds_dir, f), f"datasets/{f}",
+                                    compress_type=_compress_type(f))
+                            ds_files.append(f)
+                        except Exception as exc:  # noqa: BLE001
+                            skipped.append(f"dataset «{f}»: {exc}")
+                cfg["dataset"]["files"] = ds_files
+            if "sources" in sections:
+                # Las señales de origen se guardan comprimidas; la caché (regenerable)
+                # NO se incluye, por eso el bundle suele pesar menos que el proyecto.
+                for src, meta in zip(project.sources, cfg.get("sources", [])):
+                    p = src.get("path", "")
+                    if not os.path.isfile(p):
+                        skipped.append(f"fuente «{os.path.basename(p) or src.get('id')}»: "
+                                       "archivo no encontrado")
+                        continue
+                    arc = f"sources/{src['id']}__{os.path.basename(p)}"
+                    try:
+                        z.write(p, arc, compress_type=_compress_type(p))
+                        meta["file"] = arc
+                        n_sources += 1
+                    except Exception as exc:  # noqa: BLE001
+                        skipped.append(f"fuente «{os.path.basename(p)}»: {exc}")
+            z.writestr("bundle.json", json.dumps(cfg, ensure_ascii=False, indent=2),
+                       compress_type=zipfile.ZIP_DEFLATED)
+
+        # Verificación de integridad antes de publicar el archivo definitivo.
+        with zipfile.ZipFile(tmp_path) as z:
+            bad = z.testzip()
+            if bad is not None:
+                raise OSError(f"el ZIP quedó corrupto (entrada dañada: {bad})")
+            if "bundle.json" not in z.namelist():
+                raise OSError("falta bundle.json en el paquete")
+        os.replace(tmp_path, out_path)                 # publicación atómica
+    except BaseException:
+        # No dejes el temporal a medias si algo falla (incluye Ctrl-C/errores).
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
     return {"models": n_models, "datasets": len(ds_files), "sources": n_sources,
-            "path": out_path, "size": os.path.getsize(out_path)}
+            "skipped": skipped, "path": out_path, "size": os.path.getsize(out_path)}
 
 
 def read_bundle(path: str) -> tuple[dict, dict, dict, dict]:
     """Lee un ``.eegbundle``.
 
     Devuelve ``(config, {modelo: bytes}, {dataset.npz: bytes}, {arc_fuente: bytes})``.
+    Blindado: rechaza con un error claro si el archivo no es un ZIP válido o si le
+    falta ``bundle.json`` (no es un bundle de EEG Studio).
     """
+    if not zipfile.is_zipfile(path):
+        raise ValueError("El archivo no es un .eegbundle válido (no es un ZIP).")
     with zipfile.ZipFile(path) as z:
+        if "bundle.json" not in z.namelist():
+            raise ValueError("El .eegbundle no contiene bundle.json "
+                             "(¿archivo incompleto o de otro programa?).")
         cfg = json.loads(z.read("bundle.json").decode("utf-8"))
         models = {n[len("models/"):-len(".joblib")]: z.read(n)
                   for n in z.namelist()

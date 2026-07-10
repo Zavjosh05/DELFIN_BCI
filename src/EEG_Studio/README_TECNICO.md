@@ -448,6 +448,28 @@ su confianza y el último comando enviado.
 > comandos: por UDP, un script o microcontrolador que reciba en ese puerto; por
 > serie, un Arduino que lea líneas. La salida serie requiere `pyserial` (opcional).
 
+### Actuador: perfiles de control (brazo MaxArm real / brazo simulado)
+
+El actuador que controlan el D-pad y el clasificador es un **perfil**: **«Brazo
+MaxArm (real, HTTP)»** o **«Brazo simulado»** (4DOF SCARA, sin hardware, adaptado de
+`Proyecto_RNN`). El brazo simulado se mueve directamente (no usa salida externa) y se
+ve en **3D** (si hay PyOpenGL) más dos **proyecciones 2D** (lateral y superior).
+
+Formas de controlarlo:
+
+- **D-pad** de 6 comandos (arriba/abajo = hombro, izquierda/derecha = base,
+  agarre/soltar = pinza) + **HOME**.
+- **Sliders por articulación** (uno por joint, dentro de sus límites).
+- **Clic en las proyecciones 2D** (como en `Proyecto_RNN`): la **vista superior**
+  gira la base para apuntar al punto; la **vista lateral** acerca el efector a esa
+  altura/distancia (IK aproximada por descenso de coordenadas, respetando límites y
+  piso).
+- **Pantalla completa** (⛶): el brazo grande con **los mismos controles** al lado
+  (D-pad + sliders) y un botón **✕ Cerrar (Esc)** para volver.
+
+Todos los movimientos respetan los **límites articulares** y el **piso** (z ≥ 0), y
+cualquier cambio se refleja en todas las vistas y sliders a la vez.
+
 ## Métodos basados en la literatura
 
 Algunas técnicas implementadas y las referencias en que se apoyan:

@@ -58,6 +58,25 @@ def main() -> int:
     arm.reset()
     assert np.allclose(arm.q, arm.q_home) and not arm.gripper_closed
 
+    print("[5b] Control por clic en las vistas 2D: apuntar base (top) + IK planar (side)")
+    import math
+    arm.reset()
+    arm.aim_base_to(0.0, 1.0)                       # apuntar hacia +Y (azimut ≈ +90°)
+    ee = arm.ee()
+    if math.hypot(ee[0], ee[1]) > 1e-3:            # (si el brazo no está totalmente plegado)
+        assert abs(math.atan2(ee[1], ee[0]) - math.pi / 2) < 0.25, math.degrees(
+            math.atan2(ee[1], ee[0]))
+    arm.reset()
+    ee0 = arm.ee()
+    r0, z0 = math.hypot(ee0[0], ee0[1]), ee0[2]
+    tgt_r, tgt_z = r0 * 0.7, z0 + 0.05             # objetivo alcanzable en el plano vertical
+    d_before = (r0 - tgt_r) ** 2 + (z0 - tgt_z) ** 2
+    arm.aim_planar(tgt_r, tgt_z)
+    ee1 = arm.ee()
+    d_after = (math.hypot(ee1[0], ee1[1]) - tgt_r) ** 2 + (ee1[2] - tgt_z) ** 2
+    assert d_after <= d_before + 1e-9, (d_before, d_after)
+    assert arm.check_floor()                       # la IK respeta el piso
+
     print("[6] SimArmSink: send mueve el brazo, guarda historial y avisa (on_change)")
     hits = {"n": 0}
     sink = SimArmSink(arm, on_change=lambda: hits.__setitem__("n", hits["n"] + 1))
@@ -100,16 +119,38 @@ def main() -> int:
     assert np.allclose(cp._sim_arm.q, cp._sim_arm.q_home)
     assert cp.sim_controls._sliders[1].value() != pos_after_cmd or True  # sincronizó
 
-    print("[9b] Vistas 2D colapsables + pantalla completa solo del brazo")
+    print("[9b] Vistas 2D colapsables + clic para controlar + pantalla completa")
     sv = cp.sim_view
     assert not sv.plots_container.isHidden()
     sv._toggle_2d(False); assert sv.plots_container.isHidden()        # colapsa laterales
     sv._toggle_2d(True); assert not sv.plots_container.isHidden()
+    # Las proyecciones 2D ahora SÍ controlan el brazo (clic → mover), como en RNN.
+    assert sv.side._on_control is not None and sv.top._on_control is not None
+    cp._sim_arm.reset()
+    cp._sim_arm.aim_base_to(0.0, 1.0)                                 # como un clic en «top»
+    sv._on_projection_control()                                      # refresca panel + sliders
+    assert cp.sim_controls._sliders[0].value() == cp.sim_controls._pos_from_q(
+        0, cp._sim_arm.q[0])                                         # slider de base sincronizado
+
+    print("[9c] Pantalla completa: incluye D-pad + sliders + botón de cerrar visible")
     sv._open_fullscreen()
-    assert sv._fs is not None and not sv._fs.isHidden()               # ventana FS abierta
-    sv.refresh()                                                     # refresca también la FS
-    sv._fs.close()
+    fs = sv._fs
+    assert fs is not None and not fs.isHidden()
+    assert hasattr(fs, "action_pad") and hasattr(fs, "controls")     # métodos de control
+    assert fs.close_btn.isVisibleTo(fs)                              # botón de volver visible
+    b1 = fs.arm.q[1]
+    fs._do_command("arriba")                                         # D-pad de la FS mueve
+    assert fs.arm.q[1] > b1
+    # y el panel principal se sincroniza (mismo brazo, sliders al día)
+    assert cp.sim_controls._sliders[1].value() == cp.sim_controls._pos_from_q(
+        1, cp._sim_arm.q[1])
+    j = fs.arm.q[0]
+    fs.controls._on_slider(0, 200)                                   # slider de la FS mueve
+    assert abs(fs.arm.q[0] - j) > 0 or fs.arm.q[0] == fs.controls._q_from_pos(0, 200)
+    sv.refresh()
+    fs.close_btn.click()                                            # botón de cerrar funciona
     app.processEvents()
+    assert sv._fs is None
 
     print("[10] Constructor: aplicar una spec nueva reconstruye el brazo")
     sp = make_default_arm_spec()
