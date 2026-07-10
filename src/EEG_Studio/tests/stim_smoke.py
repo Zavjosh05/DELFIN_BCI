@@ -91,6 +91,9 @@ def main() -> int:
     assert win.acq_panel.stim_list.count() == 1
     assert "arriba" in win.acq_panel.stim_list.item(0).text()
     assert "abajo" in win.acq_panel.stim_list.item(0).text()   # varias clases mostradas
+    # selector de monitor para el video
+    assert win.acq_panel.monitor_combo.count() >= 1
+    assert win.acq_panel._selected_screen() is not None
 
     print("[8] Grabación automática: segmentos exactos colocados y guardados solos")
     panel = win.acq_panel

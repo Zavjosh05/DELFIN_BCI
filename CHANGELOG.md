@@ -41,6 +41,10 @@ cambios se agrupan por fecha de trabajo.
   - **Exportar / importar** la configuración de estímulos (JSON). Al importar en otro
     proyecto/equipo, si no encuentra un video **pregunta su ubicación** y reubica por
     nombre.
+  - **Selector de monitor**: elige en qué pantalla se despliega el video del estímulo
+    (a pantalla completa); la interfaz principal se queda en la suya. Lista los
+    monitores conectados (con un botón para actualizarla) y recuerda la elección; por
+    defecto usa un monitor externo si lo hay.
 - **Perfiles de control + brazo simulado** en la pestaña **Control**. El control del
   actuador ahora es un **perfil** seleccionable: **«Brazo MaxArm (real)»** (el de
   antes, por HTTP) y **«Brazo simulado»** (nuevo, sin hardware). El brazo simulado es

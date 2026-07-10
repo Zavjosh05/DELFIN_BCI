@@ -56,9 +56,15 @@ class StimPlayerWindow(QWidget):
         self._started = False
         self._done = False
 
-    def run(self) -> bool:
-        """Muestra a pantalla completa en el mejor monitor y reproduce."""
-        screen, external = _best_screen()
+    def run(self, screen=None) -> bool:
+        """Muestra a pantalla completa en el monitor indicado (o el mejor por
+        defecto: uno externo si hay, si no el principal) y reproduce."""
+        external = False
+        if screen is None:
+            screen, external = _best_screen()
+        else:
+            external = screen is not (QApplication.instance().primaryScreen()
+                                      if QApplication.instance() else None)
         if screen is not None:
             self.setScreen(screen)
             self.setGeometry(screen.geometry())
@@ -106,11 +112,13 @@ class StimSession:
     """Coordina grabación + reproducción de UN estímulo. Mantener una referencia
     viva hasta que termine (``on_done`` se llama al final)."""
 
-    def __init__(self, controller, config: dict, rec_name: str, on_done=None) -> None:
+    def __init__(self, controller, config: dict, rec_name: str, screen=None,
+                 on_done=None) -> None:
         self.controller = controller
         self.acq = controller.acq_panel
         self.config = config
         self.rec_name = rec_name
+        self._screen = screen
         self._on_done = on_done
         self._events = config.get("events", [])
         self._markers = markers_in_order(self._events)
@@ -133,7 +141,7 @@ class StimSession:
         self.window.started.connect(self._on_started)
         self.window.position.connect(self._on_position)
         self.window.finished.connect(self._on_finished)
-        self.window.run()
+        self.window.run(self._screen)
         return True
 
     def _on_started(self) -> None:

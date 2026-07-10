@@ -15,6 +15,7 @@ import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -690,6 +691,24 @@ class AcquisitionPanel(QWidget):
         self.stim_list.setMaximumHeight(110)
         self.stim_list.itemDoubleClicked.connect(self._configure_stim_item)
         v.addWidget(self.stim_list)
+
+        # Selector de monitor: en qué pantalla se despliega el VIDEO del estímulo
+        # (la interfaz principal se queda en la pantalla actual).
+        mon_row = QHBoxLayout()
+        mon_row.addWidget(QLabel("Monitor del video:"))
+        self.monitor_combo = QComboBox()
+        self.monitor_combo.setToolTip(
+            "Pantalla donde se muestra el video del estímulo (a pantalla completa). "
+            "La interfaz de la app permanece en su pantalla actual.")
+        self.monitor_combo.currentIndexChanged.connect(self._save_stim_monitor)
+        mon_row.addWidget(self.monitor_combo, 1)
+        refresh_mon = QPushButton("⟳")
+        refresh_mon.setFixedWidth(32)
+        refresh_mon.setToolTip("Actualizar la lista de monitores conectados.")
+        refresh_mon.clicked.connect(self._refresh_monitors)
+        mon_row.addWidget(refresh_mon)
+        v.addLayout(mon_row)
+
         row = QHBoxLayout()
         add_btn = QPushButton("＋ Añadir / configurar…")
         add_btn.clicked.connect(self._add_stim)
@@ -705,8 +724,47 @@ class AcquisitionPanel(QWidget):
         row2.addWidget(exp_btn); row2.addWidget(imp_btn); row2.addStretch(1)
         v.addLayout(row2)
         self._stim_session = None
+        self._refresh_monitors()
         self.refresh_stim()
         return box
+
+    def _refresh_monitors(self) -> None:
+        """Puebla el selector con los monitores conectados (por defecto uno externo)."""
+        app = QApplication.instance()
+        screens = list(app.screens()) if app else []
+        primary = app.primaryScreen() if app else None
+        self.monitor_combo.blockSignals(True)
+        self.monitor_combo.clear()
+        for i, s in enumerate(screens):
+            g = s.geometry()
+            tag = " (principal)" if s is primary else " (externo)"
+            self.monitor_combo.addItem(f"Monitor {i + 1}: {g.width()}×{g.height()}{tag}", i)
+        default = 0
+        for i, s in enumerate(screens):                 # preferir un monitor externo
+            if s is not primary:
+                default = i
+                break
+        saved = self.controller._settings().value("stim_monitor", None)
+        try:
+            saved = int(saved) if saved is not None else None
+        except (TypeError, ValueError):
+            saved = None
+        idx = self.monitor_combo.findData(saved) if saved is not None else -1
+        self.monitor_combo.setCurrentIndex(idx if idx >= 0 else default)
+        self.monitor_combo.blockSignals(False)
+
+    def _save_stim_monitor(self, *_args) -> None:
+        data = self.monitor_combo.currentData()
+        if data is not None:
+            self.controller._settings().setValue("stim_monitor", int(data))
+
+    def _selected_screen(self):
+        app = QApplication.instance()
+        screens = list(app.screens()) if app else []
+        idx = self.monitor_combo.currentData()
+        if idx is not None and 0 <= int(idx) < len(screens):
+            return screens[int(idx)]
+        return None
 
     def refresh_stim(self) -> None:
         """Repuebla la lista de estímulos configurados desde el proyecto."""
@@ -835,12 +893,14 @@ class AcquisitionPanel(QWidget):
                 "Conecta una fuente en «Tiempo real» y espera muestras antes de "
                 "reproducir el estímulo (la grabación necesita señal).")
             return
+        self._refresh_monitors()                     # por si (des)conectaron monitores
         default_name = f"{cfg.get('label', 'estimulo')}_{time.strftime('%H%M%S')}"
         name, ok = QInputDialog.getText(self, "Nombre de la grabación",
                                         "Nombre:", text=default_name)
         if not ok:
             return
         self._stim_session = StimSession(self.controller, cfg, name.strip() or default_name,
+                                         screen=self._selected_screen(),
                                          on_done=self._on_stim_done)
         self._stim_session.start()
 
