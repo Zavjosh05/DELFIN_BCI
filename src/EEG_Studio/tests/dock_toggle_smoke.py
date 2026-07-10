@@ -45,6 +45,21 @@ def main() -> int:
     act.trigger(); app.processEvents()
     assert dock.isVisible() == before, "el botón no restauró la visibilidad"
 
+    print("[3] Al ocultar/desplegar, los tamaños se adaptan (no queda colapsado)")
+    win.resize(1200, 800); app.processEvents()
+    d = win.src_dock                          # panel «Fuentes» (sin ancho mínimo grande)
+    if not d.isVisible():
+        d.toggleViewAction().trigger(); app.processEvents()
+    d.toggleViewAction().trigger()            # ocultar -> el central recupera el espacio
+    for _ in range(4):
+        app.processEvents()
+    assert not d.isVisible() and win._dock_hidden[d] is True
+    d.toggleViewAction().trigger()            # re-desplegar -> tamaño usable restaurado
+    for _ in range(6):
+        app.processEvents()
+    assert d.isVisible() and win._dock_hidden[d] is False
+    assert d.width() > 0, d.width()           # no volvió colapsado
+
     win.acq_panel.shutdown()
     print("\nVISOR ENCOGIBLE + BARRA DE ACTIVIDAD OK ✓")
     return 0

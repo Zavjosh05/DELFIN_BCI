@@ -23,7 +23,12 @@ cambios se agrupan por fecha de trabajo.
   zona** (como el gorro EPOC+): **azul** frontal (AF3/AF4 más fuerte, F7/F8 más
   claro), **rojo** central/temporal (F3/F4 vino, FC5/FC6/T7/T8 salmón) y **verde**
   parieto-occipital (P7/P8 claro, O1/O2 oscuro). Los canales con nombres desconocidos
-  usan la paleta cíclica.
+  usan la paleta cíclica. El **visor en vivo (Tiempo real)** usa ahora **el mismo
+  código de colores por región** que el visor de señales.
+- **Recientes de la pantalla de bienvenida: renombrar y quitar**. Clic derecho sobre
+  un proyecto reciente para **renombrarlo** (mueve la carpeta `.eegproj` y actualiza
+  el nombre interno del proyecto) o **quitarlo de la lista** (solo lo olvida de
+  recientes; **no** borra nada del disco).
 - **Barra de paneles a la izquierda (estilo PyCharm)**: una barra vertical con un
   **botón por panel** (Fuentes, Herramientas, Historial) que lo **despliega o
   colapsa** con un clic; el botón queda marcado cuando el panel está visible.
@@ -53,6 +58,13 @@ cambios se agrupan por fecha de trabajo.
 - **Estímulo: un video nuevo empieza SIN marcas/segmentos automáticos** (antes se
   prellenaban una marca y un segmento por defecto). Ahora el usuario coloca todo a
   mano en la línea de tiempo.
+- **Importar configuración de estímulos pregunta ante repetidos**: si al importar un
+  JSON de estímulos encuentra configuraciones **iguales a las ya presentes** (misma
+  etiqueta y archivo de video, o mismo id), pregunta si **sobrescribir** o **ignorar**
+  las repetidas (o cancelar); las nuevas se importan siempre. Antes se duplicaban.
+- **Los paneles se re-adaptan al desplegarse**: al **ocultar** un panel (Fuentes /
+  Herramientas / Historial) el visor central recupera su espacio, y al **volver a
+  mostrarlo** recupera un tamaño usable (antes Qt podía restaurarlo colapsado).
 
 ### Corregido / reforzado
 - **El visor de señal ya no impone un ancho mínimo enorme**: las dos filas de

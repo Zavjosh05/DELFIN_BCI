@@ -52,6 +52,7 @@ from ..config import (
     IMPORTED_DIR,
     ORG_NAME,
     PROJECT_EXT,
+    PROJECT_MANIFEST,
 )
 from ..core import classification, dataset as dataset_mod, mat_loader, mne_loader
 from ..core.csv_loader import compress_csv, load_recording
@@ -231,6 +232,10 @@ class MainWindow(QMainWindow):
         self.welcome_recent.setMinimumHeight(150)
         self.welcome_recent.itemActivated.connect(self._on_welcome_recent)
         self.welcome_recent.itemClicked.connect(self._on_welcome_recent)
+        self.welcome_recent.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.welcome_recent.customContextMenuRequested.connect(self._welcome_recent_menu)
+        self.welcome_recent.setToolTip(
+            "Clic para abrir · clic derecho para renombrar o quitar de la lista.")
         cl.addWidget(self.welcome_recent)
 
         center = QHBoxLayout()
@@ -264,6 +269,83 @@ class MainWindow(QMainWindow):
         path = item.data(Qt.ItemDataRole.UserRole)
         if path:
             self._open_project_path(path)
+
+    def _welcome_recent_menu(self, pos) -> None:
+        """Menú contextual de un proyecto reciente: renombrar o quitar de la lista."""
+        item = self.welcome_recent.itemAt(pos)
+        if item is None:
+            return
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if not path:
+            return
+        exists = os.path.isfile(os.path.join(path, PROJECT_MANIFEST))
+        menu = QMenu(self)
+        act_rename = menu.addAction("Renombrar proyecto…")
+        act_rename.setEnabled(exists)                      # no se puede renombrar lo que no está
+        act_forget = menu.addAction("Quitar de la lista")
+        chosen = menu.exec(self.welcome_recent.mapToGlobal(pos))
+        if chosen is act_rename:
+            self._rename_recent_project(path)
+        elif chosen is act_forget:
+            self._forget_recent(path)
+            self._refresh_welcome_recents()
+
+    def _rename_recent_project(self, path: str) -> None:
+        """Renombra la carpeta ``.eegproj`` y el nombre interno del proyecto en disco.
+
+        Solo para proyectos cerrados (la bienvenida se muestra sin proyecto abierto);
+        si estuviera abierto, pide cerrarlo antes para no dejar rutas colgando.
+        """
+        path = os.path.abspath(path)
+        if self.project is not None and os.path.abspath(self.project.path) == path:
+            QMessageBox.information(self, "Renombrar",
+                                    "Cierra el proyecto antes de renombrarlo.")
+            return
+        old_name = os.path.basename(path.rstrip("/\\"))
+        if old_name.endswith(PROJECT_EXT):
+            old_name = old_name[: -len(PROJECT_EXT)]
+        new_name, ok = QInputDialog.getText(self, "Renombrar proyecto",
+                                            "Nuevo nombre:", text=old_name)
+        new_name = (new_name or "").strip()
+        if not ok or not new_name or new_name == old_name:
+            return
+        # Evita separadores de ruta en el nombre (sería un movimiento, no un renombrado).
+        if any(sep in new_name for sep in ("/", "\\", ":")):
+            QMessageBox.warning(self, "Nombre inválido",
+                                "El nombre no puede contener «/», «\\» ni «:».")
+            return
+        parent = os.path.dirname(path)
+        new_path = os.path.join(parent, new_name + PROJECT_EXT)
+        if os.path.exists(new_path):
+            QMessageBox.warning(self, "Ya existe",
+                                f"Ya hay un elemento llamado «{new_name + PROJECT_EXT}».")
+            return
+        try:
+            os.rename(path, new_path)
+            self._set_project_manifest_name(new_path, new_name)   # nombre interno coherente
+        except OSError as exc:
+            QMessageBox.critical(self, "Error al renombrar", str(exc))
+            return
+        # Reemplaza la ruta en recientes conservando su posición.
+        recent = self._recent_projects()
+        recent = [new_path if os.path.abspath(p) == path else p for p in recent]
+        self._settings().setValue("recent_projects", recent)
+        self._refresh_welcome_recents()
+        self.statusBar().showMessage(f"Proyecto renombrado: {new_name}")
+
+    @staticmethod
+    def _set_project_manifest_name(project_path: str, name: str) -> None:
+        """Actualiza el campo «name» del project.json tras renombrar la carpeta."""
+        import json
+        manifest = os.path.join(project_path, PROJECT_MANIFEST)
+        try:
+            with open(manifest, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            data["name"] = name
+            with open(manifest, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+        except (OSError, ValueError):
+            pass                                              # el renombrado de carpeta ya basta
 
     def _update_center(self) -> None:
         """Muestra la bienvenida si no hay proyecto, o el área de trabajo si lo hay.
@@ -406,6 +488,40 @@ class MainWindow(QMainWindow):
         self.log_dock = QDockWidget("Historial", self)
         self.log_dock.setWidget(hist_container)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
+
+        self._wire_dock_resizing()
+
+    def _wire_dock_resizing(self) -> None:
+        """Adapta los tamaños al mostrar/ocultar paneles.
+
+        Al **ocultar** un panel, el área central (visor) recupera su espacio de forma
+        automática (comportamiento de QMainWindow). Al **volver a desplegarlo**, Qt a
+        veces lo restaura colapsado; aquí le devolvemos un ancho/alto razonable."""
+        self._dock_pref = {
+            self.src_dock: (Qt.Orientation.Horizontal, 260),
+            self.right_dock: (Qt.Orientation.Horizontal, 360),
+            self.log_dock: (Qt.Orientation.Vertical, 180),
+        }
+        self._dock_hidden = {d: d.isHidden() for d in self._dock_pref}
+        for dock in self._dock_pref:
+            dock.visibilityChanged.connect(
+                lambda visible, d=dock: self._on_dock_visibility(d, visible))
+
+    def _on_dock_visibility(self, dock, visible: bool) -> None:
+        """Cuando un panel pasa de oculto a visible, le restaura un tamaño usable.
+
+        Solo actúa en la transición oculto→visible para no pisar el tamaño que el
+        usuario haya ajustado a mano en interacciones normales."""
+        was_hidden = self._dock_hidden.get(dock, True)
+        self._dock_hidden[dock] = not visible
+        if visible and was_hidden and not dock.isFloating():
+            orient, size = self._dock_pref[dock]
+            # Diferido: fuera del propio evento de visibilidad, para evitar reentradas.
+            QTimer.singleShot(0, lambda: self._nudge_dock_size(dock, orient, size))
+
+    def _nudge_dock_size(self, dock, orient, size: int) -> None:
+        if dock.isVisible() and not dock.isFloating():
+            self.resizeDocks([dock], [size], orient)
 
     def _restore_docks(self) -> None:
         """Vuelve a mostrar y recolocar todos los paneles (Ver → Restaurar paneles)."""

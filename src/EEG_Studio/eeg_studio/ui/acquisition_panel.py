@@ -75,6 +75,14 @@ _LAG_WINDOW_S = 3.0       # ventana para medir la tasa efectiva de muestreo
 _LAG_RATE_FRAC = 0.6      # tasa efectiva < 60% de la nominal => la señal se retrasa
 
 
+def _stim_key(cfg: dict) -> tuple:
+    """Identidad de una config de estímulo para detectar repetidos al importar:
+    etiqueta + nombre del archivo de video (sin distinguir mayúsculas)."""
+    label = str(cfg.get("label", "")).strip().lower()
+    base = os.path.basename(str(cfg.get("path", ""))).strip().lower()
+    return (label, base)
+
+
 class AcquisitionPanel(QWidget):
     def __init__(self, controller) -> None:
         super().__init__()
@@ -893,8 +901,35 @@ class AcquisitionPanel(QWidget):
         except Exception as exc:  # noqa: BLE001
             self.controller.warn("No se pudo importar", str(exc)); return
         configs = data.get("stim_videos", data) if isinstance(data, dict) else data
-        search_dir, n = None, 0
-        for cfg in (configs or []):
+        configs = [c for c in (configs or []) if isinstance(c, dict)]
+        if not configs:
+            self.controller.warn("Nada que importar",
+                                 "El archivo no contiene configuraciones de estímulo.")
+            return
+
+        # Índice de los existentes para detectar repetidos (por id, o por etiqueta+archivo).
+        existing = self.controller.project.stim_videos()
+        by_id = {c["id"]: c for c in existing if c.get("id")}
+        by_key = {}
+        for c in existing:
+            by_key.setdefault(_stim_key(c), c)
+
+        # Clasifica ANTES de pedir ubicar videos, para no molestar con los que se ignoren.
+        pairs = [(cfg, by_id.get(cfg.get("id")) or by_key.get(_stim_key(cfg)))
+                 for cfg in configs]
+        dups = [p for p in pairs if p[1] is not None]
+
+        overwrite = True
+        if dups:
+            overwrite = self._ask_stim_overwrite([d for _c, d in dups])
+            if overwrite is None:
+                return                                     # cancelar
+
+        search_dir, added, updated, skipped = None, 0, 0, 0
+        for cfg, dup in pairs:
+            if dup is not None and not overwrite:
+                skipped += 1
+                continue
             vp = cfg.get("path", "")
             resolved = stim_core.relocate_video(vp, search_dir)
             if resolved is None:               # no se encuentra: pregunta la ubicación
@@ -903,13 +938,45 @@ class AcquisitionPanel(QWidget):
                 if folder:
                     search_dir = folder
                     resolved = stim_core.relocate_video(vp, search_dir)
-            new_cfg = dict(cfg); new_cfg["id"] = None      # id nuevo (no pisa los existentes)
+            new_cfg = dict(cfg)
             new_cfg["path"] = resolved or vp               # deja la original si no se ubicó
+            if dup is not None:                            # sobrescribe el existente (mismo id)
+                new_cfg["id"] = dup.get("id")
+                updated += 1
+            else:
+                new_cfg["id"] = None                       # id nuevo (no pisa los existentes)
+                added += 1
             self.controller.project.save_stim_video(new_cfg)
-            n += 1
         self.controller.request_autosave()
         self.refresh_stim()
-        self.status.setText(f"{n} estímulo(s) importado(s).")
+        parts = [f"{added} nuevo(s)"]
+        if updated:
+            parts.append(f"{updated} sobrescrito(s)")
+        if skipped:
+            parts.append(f"{skipped} ignorado(s)")
+        self.status.setText("Estímulos importados: " + ", ".join(parts) + ".")
+
+    def _ask_stim_overwrite(self, dups: list) -> bool | None:
+        """Pregunta qué hacer con estímulos repetidos al importar.
+
+        Devuelve ``True`` (sobrescribir), ``False`` (ignorar los repetidos) o
+        ``None`` (cancelar toda la importación)."""
+        names = ", ".join(sorted({str(d.get("label", "")) or "(sin nombre)" for d in dups}))
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Estímulos repetidos")
+        box.setText(f"Ya existen {len(dups)} configuración(es) igual(es): {names}.\n"
+                    "¿Qué quieres hacer con las repetidas?")
+        b_over = box.addButton("Sobrescribir", QMessageBox.ButtonRole.AcceptRole)
+        b_skip = box.addButton("Ignorar", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is b_over:
+            return True
+        if clicked is b_skip:
+            return False
+        return None                                        # cancelar
 
     def _stim_config(self, vid_id):
         proj = self.controller.project

@@ -146,6 +146,42 @@ def main() -> int:
     assert next((l for a, b, l in ses._segments if a <= 4000 < b), None) == "abajo"
     assert next((l for a, b, l in ses._segments if a <= 8000 < b), None) is None
 
+    print("[10] Importar estímulos: pregunta si SOBRESCRIBIR o IGNORAR los repetidos")
+    import eeg_studio.ui.acquisition_panel as apmod
+    ipanel = win.acq_panel
+    win.project = proj                                     # ya tiene 1 estímulo ("arriba")
+    assert len(proj.stim_videos()) == 1
+    orig_open = apmod.QFileDialog.getOpenFileName
+    apmod.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (out, "JSON (*.json)"))
+    try:
+        # (a) mismo estímulo, elijo IGNORAR -> no cambia nada, id intacto
+        prev_id = proj.stim_videos()[0]["id"]
+        ipanel._ask_stim_overwrite = lambda dups: False
+        ipanel._import_stim()
+        assert len(proj.stim_videos()) == 1, proj.stim_videos()
+        assert proj.stim_videos()[0]["id"] == prev_id
+        assert "ignorado" in ipanel.status.text().lower(), ipanel.status.text()
+
+        # (b) mismo estímulo, elijo SOBRESCRIBIR -> sigue habiendo 1 (mismo id)
+        ipanel._ask_stim_overwrite = lambda dups: True
+        ipanel._import_stim()
+        assert len(proj.stim_videos()) == 1, proj.stim_videos()
+        assert proj.stim_videos()[0]["id"] == prev_id
+        assert "sobrescrito" in ipanel.status.text().lower(), ipanel.status.text()
+
+        # (c) estímulo NUEVO (otra etiqueta) -> se añade sin preguntar
+        out2 = os.path.join(tmp, "estimulos2.json")
+        with open(out2, "w", encoding="utf-8") as fh:
+            json.dump({"stim_videos": [{"path": vp, "name": videos[0]["name"],
+                                        "label": "soltar", "events": []}]}, fh)
+        apmod.QFileDialog.getOpenFileName = staticmethod(
+            lambda *a, **k: (out2, "JSON (*.json)"))
+        ipanel._import_stim()
+        assert len(proj.stim_videos()) == 2, proj.stim_videos()
+        assert "nuevo" in ipanel.status.text().lower(), ipanel.status.text()
+    finally:
+        apmod.QFileDialog.getOpenFileName = orig_open
+
     print("\nESTIMULACIÓN SINCRONIZADA (GENERAL) OK ✓")
     return 0
 

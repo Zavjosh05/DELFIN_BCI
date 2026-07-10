@@ -19,7 +19,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from .signal_view import _CURVE_COLORS
+from .signal_view import channel_color
 
 # Opciones de µV por canal para la escala fija.
 _UV_OPTIONS = ("20", "50", "100", "200", "500", "1000", "2000")
@@ -96,7 +96,7 @@ class LiveSignalView(QWidget):
         # Eje de tiempo cacheado: es constante, no hace falta recrearlo cada frame.
         self._x = np.linspace(-self._win / self._fs, 0.0, self._win)
         for i in range(n):
-            color = _CURVE_COLORS[i % len(_CURVE_COLORS)]
+            color = channel_color(channel_names[i], i)   # código de colores por región
             curve = self.plot.plot(self._x, np.zeros(self._win), pen=pg.mkPen(color, width=1))
             self._curves.append(curve)
         self.plot.setXRange(self._x[0], 0.0, padding=0.01)
