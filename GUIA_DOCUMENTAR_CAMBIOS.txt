@@ -1,0 +1,175 @@
+===============================================================================
+ DELFIN EEG Studio — GUÍA PARA DOCUMENTAR CAMBIOS DE CÓDIGO (para IA/colaboradores)
+===============================================================================
+
+Propósito
+---------
+Este archivo describe, paso a paso, CÓMO se documentan y registran los cambios de
+código en este repositorio, para que cualquier asistente (p. ej. otra instancia de
+Claude) mantenga TODO consistente: mismo estilo, mismas pruebas, mismos changelogs y
+mismos commits. Si vas a tocar el código, sigue este flujo tal cual.
+
+Léelo entero antes de tu primer cambio. Es una convención del proyecto, no una
+sugerencia.
+
+
+0. Contexto rápido del repositorio
+----------------------------------
+- App: "DELFIN EEG Studio" — aplicación de escritorio PyQt6 para EEG (Emotiv EPOC+),
+  con proyectos NO destructivos (`.eegproj`). Idioma del proyecto: ESPAÑOL.
+- Rutas clave:
+    * Código de la app ......... src/EEG_Studio/eeg_studio/
+    * Pruebas (smoke) .......... src/EEG_Studio/tests/
+    * Intérprete (venv) ........ src/EEG_Studio/.venv/Scripts/python.exe
+    * CHANGELOG (código) ....... CHANGELOG.md              (en la RAÍZ del repo)
+    * Doc técnica .............. src/EEG_Studio/README_TECNICO.md
+    * README general ........... README.md                 (en la RAÍZ del repo)
+- `Proyecto_RNN/` es una referencia local (gitignored). No se edita ni se sube; se
+  usa solo para consultar/portar ideas (p. ej. el brazo simulado).
+
+
+1. Restricciones permanentes (NO negociables)
+---------------------------------------------
+- NUNCA escribir ni borrar archivos en la carpeta de datos ORIGEN del usuario. Toda
+  conversión/copia se hace DENTRO del proyecto `.eegproj`.
+- La app NO debe cambiar la configuración del dongle Emotiv.
+- Los videos de estímulo se referencian desde `data/videos/` (gitignored, no se
+  copian al repo).
+- Commits DIRECTO a `main` (no ramas), salvo que el usuario pida otra cosa.
+- Los mensajes de commit NO llevan línea de atribución (nada de "Co-Authored-By" ni
+  "Generated with…"). Ver sección 7.
+- No subir binarios ni datos de usuario. Respetar `.gitignore`.
+
+
+2. Flujo COMPLETO para cada cambio
+----------------------------------
+Orden recomendado (de arriba abajo):
+
+  (a) ENTENDER antes de tocar. Lee los módulos afectados y los vecinos; imita su
+      estilo (nombres, densidad de comentarios, patrones). El código nuevo debe
+      "leerse" como el que ya está.
+
+  (b) IMPLEMENTAR el cambio (ver sección 3 para estilo).
+
+  (c) PRUEBAS: añade o extiende un smoke en tests/ que ejercite el comportamiento
+      nuevo (ver sección 5). Cada comportamiento nuevo debe quedar cubierto.
+
+  (d) CHANGELOG.md: añade las entradas del cambio bajo la fecha de hoy (sección 4).
+
+  (e) README_TECNICO.md: si el cambio es visible para el usuario o cambia el
+      comportamiento, actualiza la parte correspondiente. Si añadiste o cambiaste una
+      prueba, actualiza también la LISTA DE PRUEBAS al final del README.
+
+  (f) VERIFICAR: corre la BATERÍA COMPLETA de smokes; debe quedar 100% en verde
+      (sección 6).
+
+  (g) COMMIT a `main` con mensaje en español (sección 7).
+
+No te saltes (c), (d), (f). Un cambio "no está terminado" hasta que las pruebas están
+verdes y el CHANGELOG refleja lo hecho.
+
+
+3. Estilo de código
+-------------------
+- Docstrings y comentarios EN ESPAÑOL.
+- Comenta el PORQUÉ (la intención/decisión), no el qué obvio. Densidad parecida a la
+  del archivo que edites.
+- Ediciones NO destructivas: preferir añadir/extender sin romper firmas ni datos
+  existentes. Si cambias una firma pública, actualiza TODOS los llamadores.
+- PyQt6: cuidado con hilos (worker en hilos, GUI en el hilo principal). El OpenGL del
+  brazo requiere `AA_ShareOpenGLContexts` (ya configurado en app.py).
+- Robustez: valida parámetros y tolera archivos/datos ausentes o corruptos con
+  mensajes claros, sin reventar la GUI.
+
+
+4. CHANGELOG.md — cómo escribirlo
+---------------------------------
+- Formato "Keep a Changelog" (es-ES). Se agrupa por FECHA de trabajo (AAAA-MM-DD),
+  no por versión, mientras no haya releases.
+- Encabezado de la fecha:  `## [AAAA-MM-DD]`  (usa la fecha de hoy; si ya existe la
+  sección de hoy, AÑADE dentro, no crees otra).
+- Subsecciones que se usan (crea solo las que apliquen):
+      ### Añadido            -> funcionalidad nueva
+      ### Cambiado           -> cambios de comportamiento existente
+      ### Corregido / reforzado  -> bugs arreglados y blindajes/robustez
+- Cada entrada es una viñeta `-` que empieza con un **término en negrita** y explica,
+  en lenguaje de usuario, QUÉ cambió y por qué importa (no "qué línea"). Ejemplo real:
+      - **Creación de `.eegbundle` blindada**: el bundle se escribe primero en un
+        temporal (`.part`) y solo al final se reemplaza atómicamente el destino…
+- Este CHANGELOG documenta el CÓDIGO del repo. No confundir con la bitácora interna
+  de cada proyecto `.eegproj` (`changelog.json`, historial de ediciones del usuario).
+
+
+5. README_TECNICO.md — cómo mantenerlo
+--------------------------------------
+- Es la descripción técnica de la app (ubicado en src/EEG_Studio/).
+- Si el cambio afecta a lo que el usuario ve o hace, añade/ajusta el párrafo o la
+  sección pertinente, en español y con el mismo tono.
+- Al FINAL hay una lista enumerada de las pruebas smoke con una breve descripción
+  entre paréntesis. Si agregas una prueba nueva o cambias lo que cubre una existente,
+  refleja ahí el nombre y su descripción.
+
+
+6. Pruebas (smoke) — convención y ejecución
+-------------------------------------------
+Convención de cada prueba (tests/<nombre>_smoke.py):
+  - Se ejecuta OFFSCREEN (sin hardware ni pantalla): al inicio
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+  - `main()` imprime pasos numerados: `[1] ...`, `[2] ...`, con asserts, y termina con
+        print("\n<NOMBRE EN MAYÚSCULAS> OK ✓")
+    devolviendo 0. El patrón de cierre "OK ✓" indica éxito.
+  - No abre diálogos modales reales: se monkeypatchean (QFileDialog, QInputDialog,
+    QMessageBox…) o se extrae la decisión a un método testeable.
+  - No toca datos de origen; usa carpetas temporales (tempfile) y, si toca QSettings,
+    respalda y restaura los valores reales del usuario.
+
+Cómo correr UNA prueba (desde src/EEG_Studio):
+    QT_QPA_PLATFORM=offscreen ./.venv/Scripts/python.exe -m tests.<nombre>_smoke
+
+Cómo correr la BATERÍA COMPLETA (todas las *_smoke) — debe quedar 100% verde:
+    cd src/EEG_Studio
+    export QT_QPA_PLATFORM=offscreen
+    PY=./.venv/Scripts/python.exe
+    for f in tests/*_smoke.py; do
+      mod="tests.$(basename "$f" .py)"
+      timeout 200 $PY -m "$mod" >/dev/null 2>>/tmp/battery.log \
+        && echo "PASS $mod" || echo "FAIL $mod"
+    done
+  (La batería tarda varios minutos; conviene lanzarla en segundo plano.)
+
+Notas prácticas:
+  - Si quedan procesos python colgados entre corridas, mátalos antes:
+        PowerShell:  Get-Process python | Stop-Process -Force
+  - Windows/PowerShell es el shell primario; también hay bash (Git Bash) para
+    scripts POSIX. Cada uno con su sintaxis.
+
+
+7. Commits
+----------
+- A `main` directamente.
+- Mensaje EN ESPAÑOL, estilo Conventional Commits:
+        <tipo>(<área>): <resumen en minúscula>
+  tipos usados: feat, fix, refactor, docs, test…  áreas típicas: ui, brazo, visor,
+  core, tests…
+- Cuerpo (opcional pero recomendado): en viñetas, qué cambió y por qué; menciona las
+  pruebas afectadas y que el CHANGELOG/README se actualizaron.
+- PROHIBIDO añadir cualquier línea de atribución/coautoría (nada de "Co-Authored-By",
+  "Generated with Claude Code", etc.).
+- El push lo hace el usuario cuando quiere; no hagas `git push` salvo que lo pida.
+
+Ejemplo de encabezado real de este repo:
+    feat(brazo): controles en pantalla completa + control por clic en vistas 2D; blinda .eegbundle
+
+
+8. Checklist antes de dar por cerrado un cambio
+-----------------------------------------------
+  [ ] Código implementado imitando el estilo del entorno (español, comentarios del porqué).
+  [ ] Firmas cambiadas -> todos los llamadores actualizados.
+  [ ] Prueba smoke nueva o extendida que cubre el comportamiento.
+  [ ] CHANGELOG.md actualizado bajo la fecha de hoy, en la subsección correcta.
+  [ ] README_TECNICO.md actualizado (incl. lista de pruebas si aplica).
+  [ ] Batería completa de smokes en VERDE (0 fallos).
+  [ ] Commit a `main`, mensaje en español, SIN línea de atribución.
+  [ ] No se tocó la carpeta de datos origen ni la config del dongle.
+
+===============================================================================
