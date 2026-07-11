@@ -38,8 +38,17 @@ def main() -> int:
     arm.execute("abajo"); arm.execute("abajo")
     assert arm.q[1] < home[1]
     b0 = arm.q[0]
-    arm.execute("izquierda"); assert arm.q[0] > b0
-    arm.execute("derecha"); arm.execute("derecha"); assert arm.q[0] < b0
+    arm.execute("izquierda"); assert arm.q[0] != b0
+    arm.execute("derecha"); arm.execute("derecha"); assert arm.q[0] != b0
+
+    print("[2b] izquierda mueve el efector a la IZQUIERDA (+y) y derecha a la (-y)")
+    # Mirando a lo largo del brazo desde la base (dirección +x en HOME), la
+    # izquierda es +y y la derecha es -y. Antes estaban invertidos (bug de signo).
+    arm.reset(); arm.execute("izquierda")
+    assert arm.ee()[1] > 1e-4, ("izquierda debería llevar el efector a +y", arm.ee())
+    arm.reset(); arm.execute("derecha")
+    assert arm.ee()[1] < -1e-4, ("derecha debería llevar el efector a -y", arm.ee())
+    arm.reset()
 
     print("[3] agarre/soltar controlan la pinza; comando desconocido no rompe")
     assert not arm.gripper_closed

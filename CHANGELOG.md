@@ -34,6 +34,15 @@ cambios se agrupan por fecha de trabajo.
   - Nota: la **normalización** que se pedía junto con estos pasos ya existía como
     paso «Normalizar» (zscore/minmax); no se duplicó.
 
+### Corregido / reforzado
+- **Brazo simulado: se corrige la inversión izquierda/derecha**. Los comandos
+  `izquierda`/`derecha` (D-pad, sliders del panel de Control y clase del
+  clasificador) movían la base al lado contrario: por la convención histórica de la
+  matriz de rotación (seno negado), un yaw positivo gira el brazo hacia la derecha,
+  no hacia la izquierda como asumía el mapeo. Ahora `izquierda` lleva el efector a
+  la izquierda (+y) y `derecha` a la derecha (−y), mirando a lo largo del brazo
+  desde la base. El control por clic en las vistas 2D ya era correcto y no cambia.
+
 ---
 
 ## [2026-07-10]

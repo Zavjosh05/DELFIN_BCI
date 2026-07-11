@@ -44,11 +44,18 @@ def _rot(axis, theta: float) -> np.ndarray:
 # Comando (clase del clasificador) -> acción del brazo simulado.
 #   ("joint", indice, signo): empuja el ángulo del joint en esa dirección
 #   ("gripper", bool):        abre (False) / cierra (True) la pinza
+#
+# Marco de referencia de izquierda/derecha: de pie en la base y mirando a lo largo
+# del brazo (dirección +x, la que apunta en HOME), la IZQUIERDA es +y y la DERECHA
+# es -y (regla de la mano derecha con +z hacia arriba). OJO: por la convención
+# histórica de _rot() (seno negado), un yaw POSITIVO gira el brazo hacia -y (la
+# derecha) y uno NEGATIVO hacia +y (la izquierda); por eso 'izquierda' usa signo
+# -1 y 'derecha' signo +1 (invertir estos signos vuelve a cruzar los controles).
 SIM_ARM_COMMANDS: dict[str, tuple] = {
     "arriba":    ("joint", 1, +1.0),   # hombro sube
     "abajo":     ("joint", 1, -1.0),   # hombro baja
-    "izquierda": ("joint", 0, +1.0),   # base gira a la izquierda (yaw +)
-    "derecha":   ("joint", 0, -1.0),   # base gira a la derecha  (yaw -)
+    "izquierda": ("joint", 0, -1.0),   # base gira a la izquierda (efector hacia +y)
+    "derecha":   ("joint", 0, +1.0),   # base gira a la derecha  (efector hacia -y)
     "agarre":    ("gripper", True),    # cerrar pinza
     "soltar":    ("gripper", False),   # abrir pinza
 }
