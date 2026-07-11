@@ -15,6 +15,24 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-11]
 
 ### Añadido
+- **Controlar el brazo desde una grabación (sin diadema)**. Ahora se puede
+  alimentar la clasificación con un archivo grabado en vez de la señal en vivo, de
+  dos formas complementarias:
+  - **Fuente «Reproducir grabación (archivo)»** (pestaña *Tiempo real*): reproduce
+    un CSV como si fuera la diadema (a 1×, una sola pasada). Al conectarla, el visor
+    en vivo y el modo *Control* funcionan igual que con el EPOC+ — útil para
+    demostraciones y para revisar la señal sin hardware.
+  - **«Controlar desde archivo grabado»** (pestaña *Control*): eliges una grabación
+    (p. ej. `Sujeto001_Abajo.csv`), se clasifica **completa** por ventanas
+    deslizantes (voto mayoritario) y se ejecuta **un movimiento** en el actuador del
+    perfil activo (brazo simulado o MaxArm). Muestra la **clase esperada deducida
+    del nombre del archivo** frente a la predicha, la confianza y —comparando contra
+    esa verdad-terreno— la **exactitud** ventana a ventana, con **aviso de
+    compatibilidad** si el archivo no encaja con el modelo o la clase no corresponde
+    a un movimiento del brazo.
+  - Núcleo reutilizable: `acquisition/playback.py::FilePlaybackSource` y
+    `inference/online.py::classify_recording` (resumen con etiqueta ganadora,
+    conteos por clase, confianza, exactitud y predicción por ventana).
 - **Preprocesamiento: 3 pasos nuevos**, con la misma descripción integrada (qué hace
   el paso y qué efecto tiene cada parámetro) que ya tenían los filtros existentes:
   - **Reconstrucción de Subespacios de Artefactos (ASR)**: descompone la señal en

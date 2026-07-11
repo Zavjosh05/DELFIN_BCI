@@ -7,14 +7,17 @@ por UDP, puerto serie o registro.
 """
 from __future__ import annotations
 
+import os
 import time
 
 import threading
 
+import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -35,11 +38,13 @@ from ..inference.arm import (
     DEFAULT_PULSE_MS as ARM_PULSE,
     ArmClient,
 )
-from ..inference.sim_arm import SimArmSink, SimulatedArm
+from ..inference.sim_arm import SIM_ARM_COMMAND_NAMES, SimArmSink, SimulatedArm
 from .arm_builder import ArmBuilderWidget
 from .sim_arm_controls import SimArmControls
 from .sim_arm_view import SimArmView
 
+from ..core import stim as stim_core
+from ..core.csv_loader import load_recording
 from ..config import (
     ONLINE_INTERVAL_MS,
     ONLINE_SERIAL_BAUD,
@@ -48,7 +53,13 @@ from ..config import (
     ONLINE_UDP_PORT,
     ONLINE_WINDOW_SAMPLES,
 )
-from ..inference import PredictionSmoother, classify_window, make_sink, serial_available
+from ..inference import (
+    PredictionSmoother,
+    classify_recording,
+    classify_window,
+    make_sink,
+    serial_available,
+)
 
 
 class ControlPanel(QWidget):
@@ -63,6 +74,7 @@ class ControlPanel(QWidget):
         self._run_model = None     # modelo fijado al iniciar el control
         self._sim_arm = SimulatedArm()             # brazo simulado (perfil sin hardware)
         self._cmd_buttons: dict[str, QPushButton] = {}
+        self._file_path: str | None = None         # grabación para el modo «un archivo → un movimiento»
 
         self._timer = QTimer(self)
         self._timer.setInterval(ONLINE_INTERVAL_MS)
@@ -115,6 +127,9 @@ class ControlPanel(QWidget):
         self.map_box = QGroupBox("Comando por clase")
         self.map_form = QFormLayout(self.map_box)
         layout.addWidget(self.map_box)
+
+        # Control «un archivo → un movimiento» (sin diadema).
+        layout.addWidget(self._recorded_file_section())
 
         # Salida hacia el controlador (solo perfiles con actuador EXTERNO, p. ej.
         # el MaxArm real). El brazo simulado no necesita salida: se mueve directo.
@@ -199,6 +214,110 @@ class ControlPanel(QWidget):
         note.setWordWrap(True)
         lay.addRow(note)
         return w
+
+    # --- Control desde un archivo grabado (un archivo -> un movimiento) -----
+    def _recorded_file_section(self) -> QGroupBox:
+        """Sección para clasificar una grabación previa y mover el actuador del
+        perfil activo, sin necesidad de la diadema. Complementa la reproducción en
+        vivo (fuente «Reproducir grabación» de la pestaña Tiempo real)."""
+        box = QGroupBox("Controlar desde archivo grabado (sin diadema)")
+        lay = QVBoxLayout(box)
+
+        row = QHBoxLayout()
+        self.file_edit = QLineEdit()
+        self.file_edit.setReadOnly(True)
+        self.file_edit.setPlaceholderText("Ningún archivo elegido (p. ej. Sujeto001_Abajo.csv)")
+        pick = QPushButton("Elegir archivo…")
+        pick.clicked.connect(self._choose_control_file)
+        row.addWidget(self.file_edit, 1)
+        row.addWidget(pick, 0)
+        lay.addLayout(row)
+
+        self.file_btn = QPushButton("Clasificar y mover")
+        self.file_btn.setToolTip("Analiza la grabación con el modelo elegido y mueve el "
+                                 "actuador del perfil activo según la clase mayoritaria.")
+        self.file_btn.clicked.connect(self._classify_file)
+        lay.addWidget(self.file_btn)
+
+        self.file_result = QLabel("Elige un archivo y un modelo para clasificarlo.")
+        self.file_result.setWordWrap(True)
+        self.file_result.setStyleSheet("color: #9aa4ae; font-size: 11px;")
+        lay.addWidget(self.file_result)
+        return box
+
+    def _choose_control_file(self) -> None:
+        start = ""
+        proj = getattr(self.controller, "project", None)
+        if proj is not None:
+            start = getattr(proj, "path", "") or ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Elegir grabación para clasificar", start,
+            "Grabaciones EEG (*.csv *.csv.gz);;Todos los archivos (*)")
+        if path:
+            self._file_path = path
+            self.file_edit.setText(path)
+
+    def _classify_file(self) -> None:
+        model = self._selected_model()
+        if model is None:
+            self.controller.info("Sin modelo", "Entrena o importa un modelo primero.")
+            return
+        if not self._file_path:
+            self.controller.info("Sin archivo", "Elige una grabación (CSV) primero.")
+            return
+        path = self._file_path
+        project = self.controller.project
+        win = self.window.value()
+        # Clase esperada del nombre del archivo (p. ej. «Sujeto001_Abajo» -> «abajo»).
+        expected = stim_core.class_from_filename(os.path.basename(path))
+
+        def job():
+            rec = load_recording(path)
+            gt = None
+            if expected is not None:                 # verdad-terreno constante = clase del nombre
+                gt = np.full(rec.n_samples, expected, dtype=object)
+            summary = classify_recording(model, project, rec.data, rec.sample_rate,
+                                         window=win, ground_truth=gt)
+            return {"summary": summary, "channels": rec.n_channels,
+                    "expected": expected, "path": path}
+
+        self.file_btn.setEnabled(False)
+        self.file_result.setText("Clasificando la grabación…")
+        self.controller._spawn(job, self._on_file_classified, self._on_file_error)
+
+    def _on_file_classified(self, res: dict) -> None:
+        self.file_btn.setEnabled(True)
+        s = res["summary"]
+        label = s["label"]
+        command = self._command_for(label)
+        # Mueve el actuador del perfil activo (mismo despacho que el D-pad).
+        self._profile_do(command)
+
+        parts = [f"Archivo: {os.path.basename(res['path'])}",
+                 f"predicho: «{label}» → comando «{command}»"]
+        if res["expected"]:
+            hit = "✓" if res["expected"] == label else "✗"
+            parts.append(f"esperado (nombre): «{res['expected']}» {hit}")
+        if s["confidence"] is not None:
+            parts.append(f"confianza {s['confidence'] * 100:.0f}%")
+        if s["accuracy"] is not None:
+            parts.append(f"exactitud {s['accuracy'] * 100:.0f}% de {s['n_windows']} ventanas")
+        text = "  ·  ".join(parts)
+        # Aviso de compatibilidad: si el comando no es un movimiento del brazo.
+        if command not in SIM_ARM_COMMAND_NAMES:
+            text += ("\n⚠ «" + command + "» no corresponde a un movimiento del brazo; "
+                     "ajusta el mapeo «Comando por clase» si quieres que se mueva.")
+        self.file_result.setText(text)
+        self.file_result.setStyleSheet("color: #c8d0d8; font-size: 11px;")
+
+    def _on_file_error(self, msg: str) -> None:
+        self.file_btn.setEnabled(True)
+        self.file_result.setText("")
+        self.controller.warn(
+            "No se pudo clasificar el archivo",
+            "La grabación no se pudo clasificar. Posibles causas: no es un CSV válido, "
+            "o su nº de canales no coincide con el que se usó para entrenar el modelo.\n\n"
+            f"{msg}")
 
     # --- Actuador: perfiles de control ------------------------------------
     def _actuator_section(self) -> QGroupBox:
@@ -424,6 +543,8 @@ class ControlPanel(QWidget):
         if model is None:
             self.status.setText("Sin modelos. Entrena uno en «Clasificación».")
             self.start_btn.setEnabled(False)
+            if hasattr(self, "file_btn"):
+                self.file_btn.setEnabled(False)
             return
         self.status.setText(
             f"Modelo «{self.model_combo.currentData()}» · clases: {', '.join(model.classes)}")
@@ -432,6 +553,8 @@ class ControlPanel(QWidget):
         if model.input_kind == "raw" and model.nn_config:
             self.window.setValue(int(model.nn_config.get("window_samples", self.window.value())))
         self.start_btn.setEnabled(True)
+        if hasattr(self, "file_btn"):
+            self.file_btn.setEnabled(True)
 
     def _build_class_rows(self, classes: list[str]) -> None:
         while self.map_form.rowCount():
@@ -505,7 +628,7 @@ class ControlPanel(QWidget):
 
     def _set_inputs_enabled(self, enabled: bool) -> None:
         for w in (self.window, self.interval, self.smooth_k, self.sink_combo,
-                  self.map_box, self.profile_combo):
+                  self.map_box, self.profile_combo, self.file_btn):
             w.setEnabled(enabled)
 
     # --- Bucle de inferencia (hilo principal vía QTimer) ------------------

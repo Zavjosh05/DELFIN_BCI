@@ -12,7 +12,7 @@ from .arm import (
     ArmClient,
     ArmHttpSink,
 )
-from .online import PredictionSmoother, classify_window
+from .online import PredictionSmoother, classify_recording, classify_window
 from .sim_arm import (
     SIM_ARM_COMMAND_NAMES,
     SIM_ARM_COMMANDS,
@@ -33,6 +33,7 @@ from .sinks import (
 
 __all__ = [
     "classify_window",
+    "classify_recording",
     "PredictionSmoother",
     "CommandSink",
     "LogSink",

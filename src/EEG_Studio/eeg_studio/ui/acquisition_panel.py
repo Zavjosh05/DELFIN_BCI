@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
 
 from ..acquisition import (
     EmotivDongleSource,
+    FilePlaybackSource,
     LSLSource,
     SimulatedSource,
     TCPSource,
@@ -128,6 +129,7 @@ class AcquisitionPanel(QWidget):
         self.source_combo.addItem("OpenViBE Acquisition Server (LSL)", "lsl")
         self.source_combo.addItem("Emotiv EPOC+ (lector integrado, sin CyKit)", "emotiv")
         self.source_combo.addItem("CyKit / TCP (respaldo)", "tcp")
+        self.source_combo.addItem("Reproducir grabación (archivo)", "playback")
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
         layout.addWidget(self.source_combo)
 
@@ -137,6 +139,7 @@ class AcquisitionPanel(QWidget):
         self.params.addWidget(self._lsl_params())
         self.params.addWidget(self._emotiv_params())
         self.params.addWidget(self._tcp_params())
+        self.params.addWidget(self._playback_params())
         layout.addWidget(self.params)
 
         conn = QHBoxLayout()
@@ -365,6 +368,44 @@ class AcquisitionPanel(QWidget):
         if idx >= 0:
             self.source_combo.setCurrentIndex(idx)
 
+    def _playback_params(self) -> QWidget:
+        w = QWidget()
+        lay = QFormLayout(w)
+        self.playback_path = QLineEdit()
+        self.playback_path.setReadOnly(True)
+        self.playback_path.setPlaceholderText("Ningún archivo elegido")
+        pick = QPushButton("Elegir archivo…")
+        pick.clicked.connect(self._choose_playback_file)
+        row = QHBoxLayout()
+        row.addWidget(self.playback_path, 1)
+        row.addWidget(pick, 0)
+        lay.addRow("Grabación:", self._wrap_row(row))
+        note = QLabel("Reproduce un CSV grabado como si fuera la diadema (1x, una "
+                      "pasada). Útil para ver la señal o controlar el brazo desde una "
+                      "grabación previa sin el EPOC+.")
+        note.setWordWrap(True)
+        lay.addRow(note)
+        return w
+
+    @staticmethod
+    def _wrap_row(row_layout) -> QWidget:
+        """Envuelve un layout horizontal en un QWidget para meterlo en un QFormLayout."""
+        holder = QWidget()
+        holder.setLayout(row_layout)
+        return holder
+
+    def _choose_playback_file(self) -> None:
+        start = ""
+        proj = getattr(self.controller, "project", None)
+        if proj is not None:
+            rec_dir = os.path.join(proj.path, RECORDINGS_DIR)
+            start = rec_dir if os.path.isdir(rec_dir) else proj.path
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Elegir grabación para reproducir", start,
+            "Grabaciones EEG (*.csv *.csv.gz);;Todos los archivos (*)")
+        if path:
+            self.playback_path.setText(path)
+
     # ------------------------------------------------------------------ #
     def _on_source_changed(self, idx: int) -> None:
         self.params.setCurrentIndex(idx)
@@ -387,6 +428,11 @@ class AcquisitionPanel(QWidget):
                 n_channels=self.tcp_nch.value(),
                 channel_start=self.tcp_start.value(),
             )
+        if kind == "playback":
+            path = self.playback_path.text().strip()
+            if not path:
+                raise ValueError("Elige un archivo de grabación (CSV) para reproducir.")
+            return FilePlaybackSource(path)
         return None
 
     # --- Conexión ---------------------------------------------------------

@@ -293,6 +293,15 @@ marcador). También funciona con CSV de OpenViBE que ya traigan estimulaciones.
 No requiere nada. Genera 14 canales sintéticos a 128 Hz para probar la interfaz
 sin el casco.
 
+### Fuente 5 — Reproducir grabación (archivo)
+No requiere hardware: reproduce un **CSV grabado** (los de `recordings/`, o
+cualquier CSV de OpenViBE) como si fuera la diadema, a **1× tiempo real** y en una
+sola pasada. Al conectarla, el visor en vivo y el modo **Control** funcionan igual
+que con una fuente real, así que sirve para **demostrar** el sistema o **validar un
+modelo** sobre grabaciones previas sin el EPOC+. (Para clasificar un archivo entero
+de una vez y ejecutar un solo movimiento, ver *Control en tiempo real → Controlar
+desde archivo grabado*.)
+
 ### Fuente 2 — OpenViBE Acquisition Server (LSL)
 No hace falta el **Designer**; basta el **Acquisition Server** como driver:
 1. Abrir **OpenViBE Acquisition Server**.
@@ -456,6 +465,23 @@ su confianza y el último comando enviado.
 > comandos: por UDP, un script o microcontrolador que reciba en ese puerto; por
 > serie, un Arduino que lea líneas. La salida serie requiere `pyserial` (opcional).
 
+### Controlar desde archivo grabado (sin diadema)
+
+Además del control en vivo, puedes generar un movimiento a partir de una
+**grabación previa**, de dos formas:
+
+- **Reproducirla como fuente en vivo:** en *Tiempo real* elige la fuente
+  **«Reproducir grabación (archivo)»**, escoge el CSV y **Conectar**; el modo
+  *Control* la clasifica en continuo igual que con la diadema.
+- **Un archivo → un movimiento:** en la sección **«Controlar desde archivo
+  grabado»** de la pestaña *Control*, eliges una grabación (p. ej.
+  `Sujeto001_Abajo.csv`) y **«Clasificar y mover»**: se clasifica el archivo
+  completo por ventanas (voto mayoritario) y se ejecuta **un** movimiento en el
+  actuador del perfil activo. Muestra la **clase esperada** (deducida del nombre del
+  archivo) frente a la **predicha**, la confianza y la **exactitud** ventana a
+  ventana, y **avisa** si el archivo no encaja con el modelo (p. ej. distinto nº de
+  canales) o si la clase no corresponde a un movimiento del brazo.
+
 ### Actuador: perfiles de control (brazo MaxArm real / brazo simulado)
 
 El actuador que controlan el D-pad y el clasificador es un **perfil**: **«Brazo
@@ -523,9 +549,10 @@ eeg_studio/
 │   ├── lsl.py            # OpenViBE Acquisition Server vía LSL (pylsl)
 │   ├── emotiv.py         # lector nativo EPOC+ por USB (HID+AES, sin OpenViBE/CyKit)
 │   ├── tcp.py            # CyKit / socket TCP genérico (respaldo)
+│   ├── playback.py       # reproducir una grabación (CSV) como fuente en vivo
 │   └── recorder.py       # grabación a CSV formato OpenViBE
 ├── inference/           # control en tiempo real (clasificación en línea)
-│   ├── online.py         # clasificar ventana + suavizado de predicciones
+│   ├── online.py         # clasificar ventana / grabación + suavizado de predicciones
 │   └── sinks.py          # salida de comandos: registro / UDP / serie
 ├── workers/             # ejecución asíncrona (QThread)
 └── ui/                  # widgets PyQt6 (visor, paneles, ventana principal)
@@ -574,4 +601,6 @@ tamaño al desplegar un panel oculto),
 `welcome_recents_smoke` (renombrar/quitar proyectos recientes en la bienvenida),
 `e2e_smoke` (flujo completo de extremo a extremo),
 `artifact_steps_smoke` (preprocesamiento: ASR, rechazo por umbral manual/automático
-y corrección de la línea base).
+y corrección de la línea base),
+`file_control_smoke` (controlar el brazo desde una grabación: fuente de reproducción,
+`classify_recording` y la sección one-shot del panel de Control).

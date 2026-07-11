@@ -7,6 +7,7 @@ para funcionar: la captura es una función opcional.
 from .base import StreamSource
 from .emotiv import EmotivDongleSource, emotiv_deps_available
 from .lsl import LSLSource, pylsl_available
+from .playback import FilePlaybackSource
 from .recorder import CSVRecorder
 from .simulated import SimulatedSource
 from .tcp import TCPSource
@@ -17,6 +18,7 @@ __all__ = [
     "LSLSource",
     "TCPSource",
     "EmotivDongleSource",
+    "FilePlaybackSource",
     "CSVRecorder",
     "pylsl_available",
     "emotiv_deps_available",
