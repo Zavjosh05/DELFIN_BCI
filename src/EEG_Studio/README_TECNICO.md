@@ -26,9 +26,13 @@ y disponen de **deshacer/rehacer** e historial.
   ganancia, normalización de vista, navegación temporal y selección de regiones.
 - **Preprocesamiento** como *pipeline* reproducible: eliminar tendencia, filtros
   pasa-banda / altas / bajas, notch (red eléctrica), referencia promedio común
-  (CAR), referencia a canal, normalización y **eliminación de artefactos por ICA**
-  (rechazo automático de componentes por kurtosis). Cada filtro y cada parámetro
-  muestran en la interfaz **qué hacen y qué efecto tiene modificarlos**.
+  (CAR), referencia a canal, normalización, **eliminación de artefactos por ICA**
+  (rechazo automático de componentes por kurtosis), **Reconstrucción de Subespacios
+  de Artefactos (ASR)** (atenúa ráfagas de artefacto por componentes espaciales),
+  **rechazo por umbral** (recorte de amplitud, manual o automático por canal) y
+  **corrección de la línea base** (resta la media de un tramo de referencia inicial,
+  típico en análisis tipo ERP). Cada filtro y cada parámetro muestran en la interfaz
+  **qué hacen y qué efecto tiene modificarlos**.
 - **Selección de canales**: activa/desactiva canales (p. ej. excluir los EOG de
   un dataset ajeno); afecta a CAR, características y modelos.
 - **Procesamiento / extracción de características**: potencias por banda
@@ -197,7 +201,11 @@ y hora: el punto **actual** va resaltado y los pasos rehacibles atenuados. Haz
   instante.
 - **Qué ganas:** señal más limpia y comparable. *Pasa-banda 1–45 Hz* quita deriva
   y ruido alto; *notch 50/60 Hz* elimina la red eléctrica; *CAR* resta el ruido
-  común; **ICA** elimina parpadeos/músculo automáticamente → mejor exactitud.
+  común; **ICA** elimina parpadeos/músculo automáticamente; **ASR** corrige ráfagas
+  de artefacto (saltos de electrodo, movimiento) sin descartar la ventana; **rechazo
+  por umbral** recorta picos de amplitud puntuales; **corrección de la línea base**
+  ancla el segmento a un tramo de referencia inicial (útil en análisis tipo ERP) →
+  mejor exactitud.
 - **Marcadores y segmentos legibles:** en grabaciones largas con muchos marcadores
   (p. ej. 288 ensayos), el visor solo dibuja los **visibles en el rango actual**
   (atenuados, con etiqueta al acercar) y arranca en una ventana de ~30 s, en vez de
@@ -564,4 +572,6 @@ e importación con aviso de repetidos → sobrescribir/ignorar),
 `dock_toggle_smoke` (visor encogible + barra de paneles estilo PyCharm + re-adaptar
 tamaño al desplegar un panel oculto),
 `welcome_recents_smoke` (renombrar/quitar proyectos recientes en la bienvenida),
-`e2e_smoke` (flujo completo de extremo a extremo).
+`e2e_smoke` (flujo completo de extremo a extremo),
+`artifact_steps_smoke` (preprocesamiento: ASR, rechazo por umbral manual/automático
+y corrección de la línea base).

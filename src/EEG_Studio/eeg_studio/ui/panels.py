@@ -302,6 +302,7 @@ class PreprocessingPanel(QWidget):
                 "type": ["linear", "constant"],
                 "method": ["zscore", "minmax"],
                 "design": design_opts,
+                "mode": ["manual", "automatico"],
             }.get(key, [str(value)])
             w.addItems(options)
             w.setCurrentText(str(value))

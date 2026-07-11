@@ -188,6 +188,106 @@ def ica_artifact(data: np.ndarray, n_components: int = 0, kurt_threshold: float 
     return np.ascontiguousarray(cleaned.T, dtype=np.float64)
 
 
+def asr_reconstruct(data: np.ndarray, fs: float, window_sec: float = 0.5,
+                    cutoff: float = 5.0) -> np.ndarray:
+    """Reconstrucción de Subespacios de Artefactos (ASR), versión simplificada.
+
+    Inspirado en Mullen et al. 2013 (ASR de clean_rawdata/EEGLAB): en vez de
+    corregir canal a canal, se descompone la señal en componentes espaciales
+    (autovectores de la covarianza entre canales, vía PCA) y se estima, por
+    ventanas, la energía (RMS) de cada componente. Un componente cuya energía en
+    una ventana supera ``cutoff`` veces su nivel habitual (mediana robusta de sus
+    RMS en todas las ventanas) se atenúa hasta ese límite antes de reconstruir la
+    señal en el espacio original. Así se corrigen ráfagas de artefacto (saltos de
+    electrodo, movimiento) sin descartar la ventana ni afectar a los componentes
+    que sí llevan señal limpia.
+    """
+    n_ch, n_samples = data.shape
+    x = np.asarray(data, dtype=np.float64)
+    if n_ch < 2 or n_samples < 4:
+        return x.copy()
+
+    mean = x.mean(axis=1, keepdims=True)
+    xc = x - mean
+    cov = np.cov(xc)
+    if not np.all(np.isfinite(cov)):
+        return x.copy()
+
+    eigvals, eigvecs = np.linalg.eigh(cov)        # covarianza simétrica: estable
+    comps = eigvecs.T @ xc                        # (n_componentes, n_muestras)
+
+    win = max(1, int(round(window_sec * fs)))
+    n_win = int(np.ceil(n_samples / win))
+    rms = np.zeros((comps.shape[0], n_win))
+    for w in range(n_win):
+        seg = comps[:, w * win:(w + 1) * win]
+        if seg.shape[1]:
+            rms[:, w] = np.sqrt(np.mean(seg ** 2, axis=1))
+
+    baseline = np.median(rms, axis=1, keepdims=True)   # nivel habitual por componente
+    baseline[baseline <= 0] = 1e-9
+    limit = cutoff * baseline
+
+    comps_clean = comps.copy()
+    for w in range(n_win):
+        sl = slice(w * win, min((w + 1) * win, n_samples))
+        over = rms[:, w] > limit[:, 0]
+        if np.any(over):
+            scale = np.ones(comps.shape[0])
+            scale[over] = limit[over, 0] / np.maximum(rms[over, w], 1e-9)
+            comps_clean[:, sl] = comps_clean[:, sl] * scale[:, None]
+
+    reconstructed = eigvecs @ comps_clean + mean
+    return np.ascontiguousarray(reconstructed, dtype=np.float64)
+
+
+def threshold_reject(data: np.ndarray, mode: str = "manual", threshold: float = 100.0,
+                     k: float = 5.0) -> np.ndarray:
+    """Rechazo por umbral: recorta (clip) las muestras que exceden un límite de
+    amplitud, canal a canal, en vez de descartar la ventana entera.
+
+    ``mode``:
+      * ``"manual"``     usa ``threshold`` (µV) tal cual, simétrico en torno a 0.
+      * ``"automatico"`` calcula un umbral propio por canal a partir de sus datos:
+                         mediana ± ``k`` × MAD (desviación absoluta mediana,
+                         escalada a una desviación estándar equivalente), así se
+                         adapta a la amplitud típica de cada canal en vez de un
+                         valor fijo para todos.
+    """
+    out = np.asarray(data, dtype=np.float64).copy()
+    for ch in range(out.shape[0]):
+        x = out[ch]
+        if mode == "automatico":
+            med = np.median(x)
+            mad = np.median(np.abs(x - med))
+            robust_std = mad * 1.4826 if mad > 0 else (float(x.std()) or 1.0)
+            thr = max(float(k), 0.0) * robust_std
+            lo, hi = med - thr, med + thr
+        else:
+            thr = abs(float(threshold))
+            lo, hi = -thr, thr
+        if hi > lo:
+            np.clip(x, lo, hi, out=x)
+    return out
+
+
+def baseline_correction(data: np.ndarray, fs: float, baseline_sec: float = 0.2) -> np.ndarray:
+    """Corrección de la línea base: resta a cada canal la media de una ventana de
+    referencia al inicio del segmento (típico en análisis tipo ERP: alinear al
+    nivel previo al evento). A diferencia de 'Eliminar tendencia' (que ajusta una
+    recta/media a TODO el segmento), aquí la referencia es solo el tramo inicial
+    de duración ``baseline_sec`` (segundos); si es mayor que el segmento, se usa
+    el segmento completo como línea base.
+    """
+    x = np.asarray(data, dtype=np.float64)
+    n = x.shape[1]
+    if n <= 0:
+        return x.copy()
+    n_base = min(max(int(round(baseline_sec * fs)), 1), n)
+    baseline_mean = x[:, :n_base].mean(axis=1, keepdims=True)
+    return x - baseline_mean
+
+
 # --- Registro de pasos para el pipeline ------------------------------------
 # Cada paso del pipeline es un dict: {"type": <str>, "params": {...}}.
 # Las funciones se invocan con (data, fs, **params); ignoran fs si no lo usan.
@@ -207,6 +307,9 @@ STEP_REGISTRY: dict[str, Callable] = {
     "reference": _wrap(reference_to_channel, use_fs=False),
     "normalize": _wrap(normalize, use_fs=False),
     "ica": _wrap(ica_artifact, use_fs=False),
+    "asr": _wrap(asr_reconstruct, use_fs=True),
+    "threshold": _wrap(threshold_reject, use_fs=False),
+    "baseline": _wrap(baseline_correction, use_fs=True),
 }
 
 # Etiquetas legibles para la interfaz.
@@ -220,6 +323,9 @@ STEP_LABELS = {
     "reference": "Referenciar a canal",
     "normalize": "Normalizar",
     "ica": "Eliminar artefactos (ICA)",
+    "asr": "Reconstrucción de Subespacios de Artefactos (ASR)",
+    "threshold": "Rechazo por umbral (Manual/Automático)",
+    "baseline": "Corrección de la línea base",
 }
 
 # Descripción de cada filtro/paso (qué hace) para mostrar en la interfaz.
@@ -251,6 +357,20 @@ STEP_DESCRIPTIONS = {
                  "cada canal al rango 0–1. Útil antes de modelos sensibles a la escala.",
     "ica": "Descompone la señal en componentes independientes (ICA) y elimina los de "
            "kurtosis alta (parpadeos, músculo), reconstruyendo sin esos artefactos.",
+    "asr": "Reconstrucción de Subespacios de Artefactos: descompone la señal en "
+           "componentes espaciales (PCA entre canales) y atenúa, ventana a ventana, "
+           "los componentes cuya energía supera 'cutoff' veces su nivel habitual — "
+           "corrige ráfagas de artefacto (saltos de electrodo, movimiento) sin "
+           "descartar la ventana ni tocar los componentes con señal limpia.",
+    "threshold": "Recorta (clip) las muestras que superan un límite de amplitud, canal "
+                 "a canal, en vez de descartar la ventana. 'mode' = 'manual' usa un "
+                 "valor fijo ('threshold' en µV); 'automatico' calcula un umbral propio "
+                 "por canal a partir de sus datos (mediana ± k×MAD).",
+    "baseline": "Resta a cada canal la media de una ventana de referencia al inicio del "
+                "segmento (línea base), típico en análisis tipo ERP para alinear al "
+                "nivel previo a un evento. A diferencia de 'Eliminar tendencia' (ajusta "
+                "toda la señal), aquí solo se usa el tramo inicial de duración "
+                "'baseline_sec' como referencia.",
 }
 
 # Descripción de cada parámetro y el efecto de modificarlo.
@@ -284,6 +404,24 @@ PARAM_DESCRIPTIONS = {
                     "= descomposición más gruesa y rápida.",
     "kurt_threshold": "Umbral de kurtosis para marcar un componente como artefacto. "
                       "Más bajo = elimina más componentes (más agresivo).",
+    "window_sec": "Duración de la ventana (segundos) usada para medir la energía de "
+                  "cada componente. Ventanas más cortas reaccionan más rápido a ráfagas "
+                  "breves; más largas promedian mejor pero reaccionan más lento.",
+    "cutoff": "Umbral de energía (en veces el nivel habitual del componente) a partir "
+              "del cual se considera artefacto y se atenúa. Más bajo = más agresivo "
+              "(corrige más, pero arriesga tocar señal limpia); más alto = más "
+              "conservador.",
+    "mode": "Cómo se fija el umbral de rechazo: 'manual' usa el valor de 'threshold' "
+            "tal cual; 'automatico' lo calcula por canal a partir de sus propios datos "
+            "(mediana ± k×MAD), adaptándose a la amplitud típica de cada canal.",
+    "threshold": "Límite de amplitud (µV), simétrico en torno a 0. Las muestras que lo "
+                 "superen se recortan a ese valor. Solo se usa si mode='manual'.",
+    "k": "Multiplicador del umbral automático (mode='automatico'): límite = mediana ± "
+         "k × MAD del canal. Más bajo = más agresivo (recorta más); más alto = más "
+         "permisivo.",
+    "baseline_sec": "Duración (segundos), desde el inicio del segmento, que se usa "
+                    "como línea base de referencia. Si es mayor que el segmento, se usa "
+                    "el segmento completo.",
 }
 
 # Parámetros por defecto al añadir un paso desde la interfaz.
@@ -297,6 +435,9 @@ STEP_DEFAULTS = {
     "reference": {"channel": 0},
     "normalize": {"method": "zscore"},
     "ica": {"n_components": 0, "kurt_threshold": 5.0},
+    "asr": {"window_sec": 0.5, "cutoff": 5.0},
+    "threshold": {"mode": "manual", "threshold": 100.0, "k": 5.0},
+    "baseline": {"baseline_sec": 0.2},
 }
 
 

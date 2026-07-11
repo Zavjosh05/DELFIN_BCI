@@ -12,6 +12,30 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-11]
+
+### Añadido
+- **Preprocesamiento: 3 pasos nuevos**, con la misma descripción integrada (qué hace
+  el paso y qué efecto tiene cada parámetro) que ya tenían los filtros existentes:
+  - **Reconstrucción de Subespacios de Artefactos (ASR)**: descompone la señal en
+    componentes espaciales (PCA entre canales) y atenúa, ventana a ventana, los
+    componentes cuya energía supera un umbral (`cutoff`) respecto a su nivel
+    habitual — corrige ráfagas de artefacto (saltos de electrodo, movimiento) sin
+    descartar la ventana ni tocar los componentes con señal limpia. Parámetros:
+    `window_sec` (duración de la ventana de análisis) y `cutoff` (umbral de energía).
+  - **Rechazo por umbral (Manual/Automático)**: recorta (clip) las muestras que
+    superan un límite de amplitud, canal a canal. En modo `manual` usa un valor fijo
+    (`threshold` en µV); en `automatico` calcula un umbral propio por canal a partir
+    de sus datos (mediana ± `k`×MAD), adaptándose a la amplitud típica de cada canal.
+  - **Corrección de la línea base**: resta a cada canal la media de una ventana de
+    referencia al inicio del segmento (`baseline_sec`), típico en análisis tipo ERP
+    para alinear al nivel previo a un evento; a diferencia de «Eliminar tendencia»
+    (que ajusta toda la señal), aquí solo se usa el tramo inicial como referencia.
+  - Nota: la **normalización** que se pedía junto con estos pasos ya existía como
+    paso «Normalizar» (zscore/minmax); no se duplicó.
+
+---
+
 ## [2026-07-10]
 
 ### Añadido
