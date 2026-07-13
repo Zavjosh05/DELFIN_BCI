@@ -7,6 +7,9 @@
 /data/Prueba_interfaz/
 # --- Proyecto de referencia (RNN): se conserva local, NO se sube ---
 /src/EEG_Studio/Proyecto_RNN/
+# --- Documento de referencias bibliográficas (uso personal, NO se sube) ---
+/REFERENCIAS_EEG_IMAGINACION_MOTORA.md
+/REFERENCIAS_EEG_IMAGINACION_MOTORA.pdf
 # --- Python Virtual Environments ---
 venv/
 .venv/

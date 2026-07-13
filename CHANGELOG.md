@@ -12,6 +12,24 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-13]
+
+### Añadido
+- **Más hiperparámetros para los clasificadores clásicos**, disponibles tanto en el
+  panel de **Clasificación** (al entrenar) como en el diálogo **«Configuración…»** de
+  cada modelo (para reentrenar):
+  - **Random Forest**: **«Mín. por hoja»** (`min_samples_leaf`) y **«Peso de clases»**
+    (`class_weight`: ninguno / *balanced*).
+  - **SVM**: **`coef0`** (término independiente para los kernels *poly*/*sigmoide*) y
+    **«Peso de clases»** (*balanced*).
+  - **LDA**: pasa de «sin parámetros» a ser configurable con **solver** (svd / lsqr /
+    eigen) y **shrinkage** (ninguno / *auto*, Ledoit-Wolf). El *shrinkage* solo se
+    habilita con *lsqr*/*eigen* (el *svd* no lo admite) y ayuda con **pocas muestras y
+    muchas características**, situación típica en EEG. El **«Peso de clases» balanced**
+    compensa un número desigual de ensayos por clase.
+
+---
+
 ## [2026-07-11]
 
 ### Añadido

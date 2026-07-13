@@ -541,12 +541,42 @@ class ClassificationPanel(QWidget):
         self.svm_degree.setRange(1, 10)
         self.svm_degree.setValue(3)
         self.svm_degree.setToolTip("Grado del polinomio (solo kernel 'poly').")
+        self.svm_coef0 = QDoubleSpinBox()
+        self.svm_coef0.setRange(-100.0, 100.0)
+        self.svm_coef0.setDecimals(2)
+        self.svm_coef0.setValue(0.0)
+        self.svm_coef0.setToolTip("Término independiente del kernel (solo 'poly' y 'sigmoide').")
+        self.svm_class_weight = QComboBox()
+        self.svm_class_weight.addItem("ninguno", "none")
+        self.svm_class_weight.addItem("balanced", "balanced")
+        self.svm_class_weight.setToolTip("«balanced» compensa clases desbalanceadas.")
         svm_form.addRow("Kernel:", self.svm_kernel)
         svm_form.addRow("C:", self.svm_C)
         svm_form.addRow("gamma:", self.svm_gamma)
         svm_form.addRow("Grado (poly):", self.svm_degree)
+        svm_form.addRow("coef0 (poly/sigmoide):", self.svm_coef0)
+        svm_form.addRow("Peso de clases:", self.svm_class_weight)
         self.svm_box.setVisible(False)
         layout.addWidget(self.svm_box)
+
+        # Parámetros del LDA (visible solo para LDA): solver + shrinkage.
+        self.lda_box = QGroupBox("Parámetros del LDA")
+        lda_form = QFormLayout(self.lda_box)
+        self.lda_solver = QComboBox()
+        self.lda_solver.addItems(["svd", "lsqr", "eigen"])
+        self.lda_solver.setToolTip("svd: sin regularización (por defecto). lsqr/eigen: "
+                                   "permiten «shrinkage».")
+        self.lda_solver.currentIndexChanged.connect(self._on_lda_solver_changed)
+        self.lda_shrinkage = QComboBox()
+        self.lda_shrinkage.addItem("ninguno", "none")
+        self.lda_shrinkage.addItem("auto (Ledoit-Wolf)", "auto")
+        self.lda_shrinkage.setToolTip("Regularización de la covarianza. «auto» ayuda con "
+                                      "pocas muestras y muchas características (típico en EEG). "
+                                      "Requiere solver lsqr/eigen.")
+        lda_form.addRow("Solver:", self.lda_solver)
+        lda_form.addRow("Shrinkage:", self.lda_shrinkage)
+        self.lda_box.setVisible(False)
+        layout.addWidget(self.lda_box)
 
         # Parámetros del Random Forest (visible solo para RF).
         self.rf_box = QGroupBox("Parámetros del Random Forest")
@@ -563,6 +593,11 @@ class ClassificationPanel(QWidget):
         self.rf_min_split.setRange(2, 100)
         self.rf_min_split.setValue(2)
         self.rf_min_split.setToolTip("Mínimo de muestras para dividir un nodo (mayor = menos sobreajuste).")
+        self.rf_min_leaf = QSpinBox()
+        self.rf_min_leaf.setRange(1, 100)
+        self.rf_min_leaf.setValue(1)
+        self.rf_min_leaf.setToolTip("Mínimo de muestras por hoja (mayor = árboles más suaves, "
+                                    "menos sobreajuste; útil con datasets pequeños).")
         self.rf_max_features = QComboBox()
         self.rf_max_features.addItem("sqrt", "sqrt")
         self.rf_max_features.addItem("log2", "log2")
@@ -571,11 +606,18 @@ class ClassificationPanel(QWidget):
         self.rf_criterion = QComboBox()
         self.rf_criterion.addItems(["gini", "entropy", "log_loss"])
         self.rf_criterion.setToolTip("Medida de calidad de las divisiones.")
+        self.rf_class_weight = QComboBox()
+        self.rf_class_weight.addItem("ninguno", "none")
+        self.rf_class_weight.addItem("balanced", "balanced")
+        self.rf_class_weight.setToolTip("«balanced» compensa clases desbalanceadas "
+                                        "(distinto nº de ensayos por clase).")
         rf_form.addRow("Nº de árboles:", self.rf_estimators)
         rf_form.addRow("Profundidad máx.:", self.rf_max_depth)
         rf_form.addRow("Mín. para dividir:", self.rf_min_split)
+        rf_form.addRow("Mín. por hoja:", self.rf_min_leaf)
         rf_form.addRow("Máx. características:", self.rf_max_features)
         rf_form.addRow("Criterio:", self.rf_criterion)
+        rf_form.addRow("Peso de clases:", self.rf_class_weight)
         self.rf_box.setVisible(False)
         layout.addWidget(self.rf_box)
 
@@ -607,6 +649,7 @@ class ClassificationPanel(QWidget):
         self.nn_config_widget.window.valueChanged.connect(self.update_io_info)
         layout.addWidget(self.nn_config_widget)
         self._on_svm_kernel_changed()
+        self._on_lda_solver_changed()
 
         train_btn = QPushButton("Entrenar y añadir al proyecto")
         train_btn.clicked.connect(self.controller.train_model)
@@ -655,6 +698,7 @@ class ClassificationPanel(QWidget):
         self.nn_config_widget.setVisible(is_nn)
         self.svm_box.setVisible(key == "svm")
         self.rf_box.setVisible(key == "random_forest")
+        self.lda_box.setVisible(key == "lda")
         self.raw_box.setVisible(classification.is_riemann(key))
         if is_nn:
             self.nn_config_widget.set_net_type(classification.net_type(key))
@@ -664,6 +708,11 @@ class ClassificationPanel(QWidget):
         kernel = self.svm_kernel.currentData()
         self.svm_degree.setEnabled(kernel == "poly")
         self.svm_gamma.setEnabled(kernel in ("rbf", "poly", "sigmoid"))
+        self.svm_coef0.setEnabled(kernel in ("poly", "sigmoid"))
+
+    def _on_lda_solver_changed(self) -> None:
+        # El shrinkage solo aplica a lsqr/eigen (no a svd).
+        self.lda_shrinkage.setEnabled(self.lda_solver.currentText() != "svd")
 
     @property
     def classifier_key(self) -> str:
@@ -678,6 +727,8 @@ class ClassificationPanel(QWidget):
             "C": float(self.svm_C.value()),
             "gamma": self.svm_gamma.currentText(),
             "degree": self.svm_degree.value(),
+            "coef0": float(self.svm_coef0.value()),
+            "class_weight": self.svm_class_weight.currentData(),
         }
 
     def rf_params(self) -> dict:
@@ -685,17 +736,27 @@ class ClassificationPanel(QWidget):
             "n_estimators": self.rf_estimators.value(),
             "max_depth": self.rf_max_depth.value(),     # 0 = sin límite
             "min_samples_split": self.rf_min_split.value(),
+            "min_samples_leaf": self.rf_min_leaf.value(),
             "max_features": self.rf_max_features.currentData(),
             "criterion": self.rf_criterion.currentText(),
+            "class_weight": self.rf_class_weight.currentData(),
+        }
+
+    def lda_params(self) -> dict:
+        return {
+            "solver": self.lda_solver.currentText(),
+            "shrinkage": self.lda_shrinkage.currentData(),
         }
 
     def classic_params(self) -> dict | None:
-        """Parámetros del clasificador clásico seleccionado (SVM o RF)."""
+        """Parámetros del clasificador clásico seleccionado (SVM, RF o LDA)."""
         key = self.classifier_key
         if key == "svm":
             return self.svm_params()
         if key == "random_forest":
             return self.rf_params()
+        if key == "lda":
+            return self.lda_params()
         return None
 
     def raw_window_value(self) -> int:
