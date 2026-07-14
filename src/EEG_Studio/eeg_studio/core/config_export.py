@@ -26,6 +26,21 @@ CONFIG_EXT = ".eegcfg"        # JSON legible (solo configuración, sin binarios)
 BUNDLE_EXT = ".eegbundle"     # ZIP autónomo: configuración + modelos + datasets
 
 
+def _source_arcname(source_id: str, path: str) -> str:
+    """Nombre del CSV dentro del ZIP: ``<id>__<archivo>``.
+
+    El prefijo con el id evita choques entre fuentes que se llamen igual. Si el
+    archivo **ya** viene prefijado (porque a su vez se importó de otro bundle) el
+    prefijo se **normaliza a uno solo**: si no, cada ciclo importar→exportar iba
+    encadenando prefijos (``id__id__id__señal.csv``).
+    """
+    base = os.path.basename(path)
+    prefix = f"{source_id}__"
+    while base.startswith(prefix):
+        base = base[len(prefix):]
+    return prefix + base
+
+
 def _compress_type(name: str) -> int:
     """No recomprime lo que ya está comprimido (.gz/.npz/.joblib); comprime el resto."""
     already = name.lower().endswith((".gz", ".npz", ".joblib", ".zip"))
@@ -212,7 +227,7 @@ def export_bundle(project, models: dict, sections, out_path: str,
                         skipped.append(f"fuente «{os.path.basename(p) or src.get('id')}»: "
                                        "archivo no encontrado")
                         continue
-                    arc = f"sources/{src['id']}__{os.path.basename(p)}"
+                    arc = f"sources/{_source_arcname(src['id'], p)}"
                     try:
                         z.write(p, arc, compress_type=_compress_type(p))
                         meta["file"] = arc

@@ -38,7 +38,7 @@ from ..config import (
     PROJECT_MANIFEST,
     RECORDINGS_DIR,
 )
-from . import preprocessing
+from . import marks_sidecar, preprocessing
 from .changelog import ChangeLog, EditCommand, snapshot
 from .csv_loader import load_recording
 from .recording import Recording
@@ -305,6 +305,8 @@ class Project:
         target["alias"] = new_alias
 
         # Renombra el archivo si vive dentro del proyecto (recordings/, imported/…).
+        # Solo se calcula la ruta nueva: el archivo lo mueve `_apply_section`, así el
+        # movimiento va atado al commit y deshacer/rehacer lo revierten igual.
         old_path = self._resolve_path(src["path"])
         if self.is_internal_path(old_path) and os.path.isfile(old_path):
             folder = os.path.dirname(old_path)
@@ -315,13 +317,52 @@ class Project:
             while os.path.exists(cand) and os.path.abspath(cand) != os.path.abspath(old_path):
                 cand = os.path.join(folder, f"{base}_{i}{ext}")
                 i += 1
-            if os.path.abspath(cand) != os.path.abspath(old_path):
-                os.rename(old_path, cand)       # el id no cambia → caché sigue válida
-            target["path"] = cand
+            target["path"] = cand               # el id no cambia → caché sigue válida
 
         self._commit("sources", new_sources, f"Renombrar fuente a «{new_alias}»",
                      setter=lambda v: setattr(self, "sources", v))
         return True
+
+    @staticmethod
+    def _move_source_file(old_path: str, new_path: str) -> None:
+        """Mueve un CSV interno **con su archivo lateral de marcas**.
+
+        El lateral se llama ``<csv>.marks.json``: si no se mueve con él, las marcas
+        de la grabación quedan huérfanas y se pierden."""
+        os.rename(old_path, new_path)
+        old_side = marks_sidecar.sidecar_path(old_path)
+        if os.path.isfile(old_side):
+            os.replace(old_side, marks_sidecar.sidecar_path(new_path))
+
+    def _sync_source_files(self, new_sources: list) -> None:
+        """Deja los archivos internos donde digan las rutas de ``new_sources``.
+
+        Se llama en cada cambio de la sección ``sources``, así que **deshacer y
+        rehacer** un renombrado también devuelven el archivo (y su lateral) a su
+        nombre anterior; antes la lista volvía atrás pero el archivo no, y la fuente
+        quedaba apuntando a un archivo inexistente. Solo toca archivos internos y
+        nunca pisa uno que ya exista."""
+        current = {s.get("id"): s for s in self.sources}
+        for s in new_sources:
+            old = current.get(s.get("id"))
+            if old is None:
+                continue                        # fuente nueva: no hay nada que mover
+            old_path = self._resolve_path(old.get("path", ""))
+            new_path = self._resolve_path(s.get("path", ""))
+            if not old_path or not new_path:
+                continue
+            if os.path.abspath(old_path) == os.path.abspath(new_path):
+                continue                        # la ruta no cambió
+            if not self.is_internal_path(new_path):
+                continue                        # los archivos externos no se tocan
+            if os.path.isfile(old_path) and not os.path.exists(new_path):
+                try:
+                    self._move_source_file(old_path, new_path)
+                except OSError:
+                    # No se pudo mover (archivo en uso, permisos…): la ruta se queda
+                    # en el archivo que SÍ existe. Nunca se deja la fuente apuntando
+                    # a un archivo inexistente.
+                    s["path"] = old.get("path", "")
 
     def reorder_sources(self, ordered_ids: list[str]) -> bool:
         """Reordena las fuentes según ``ordered_ids`` (el «orden propio» del usuario).
@@ -946,6 +987,10 @@ class Project:
             self.invalidate_processed()
 
     def _apply_section(self, section: str, value, setter=None) -> None:
+        # Los archivos internos siguen a sus rutas: al aplicar (o al deshacer/rehacer)
+        # un renombrado, el CSV y su lateral de marcas se mueven con él.
+        if section == "sources":
+            self._sync_source_files(value)
         if setter is not None:
             setter(value)
         elif section == "sources":

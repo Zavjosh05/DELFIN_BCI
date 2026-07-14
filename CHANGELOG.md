@@ -73,6 +73,23 @@ cambios se agrupan por fecha de trabajo.
   del proyecto. Antes se importaba todo sin preguntar.
 
 ### Corregido / reforzado
+- **Renombrar una señal ya no pierde sus marcas ni rompe la fuente al deshacer**. Al
+  renombrar un CSV interno del proyecto pasaban dos cosas:
+  - Las **marcas** viven en un archivo lateral llamado según el CSV
+    (`<csv>.marks.json`) y **no se renombraba con él**: quedaba huérfano y las marcas
+    de la grabación **se perdían**. Ahora el lateral se mueve junto al CSV.
+  - **Deshacer** devolvía la ruta anterior en el proyecto pero **no renombraba el
+    archivo de vuelta**, así que la fuente quedaba apuntando a un archivo inexistente
+    (y daba errores). Ahora el movimiento del archivo va atado al cambio: deshacer y
+    rehacer dejan el CSV, su lateral y el proyecto siempre coherentes.
+  - Los **segmentos** no estaban afectados (referencian el id de la fuente, no su
+    nombre) y siguen igual. Los archivos **externos** al proyecto se siguen sin tocar.
+- **El prefijo del id ya no se encadena al re-exportar un bundle**. Dentro del bundle
+  cada CSV va como `<id>__señal.csv` (el prefijo evita choques de nombres). Al importar
+  ese archivo y **volver a exportarlo**, se le añadía **otro** prefijo, así que cada
+  ciclo importar→exportar encadenaba uno más
+  (`id__id__id__señal.csv`) y los nombres se volvían ilegibles. Ahora el prefijo se
+  **normaliza a uno solo**, sin importar cuántos ciclos lleve el archivo.
 - **Importar un bundle ya no borra tus pipelines**. Al traer el preprocesamiento se
   **reemplazaban TODOS** los pipelines del proyecto por los del bundle, así que perdías
   los tuyos (y recuperarlos exigía deshacer varias veces, porque una importación son

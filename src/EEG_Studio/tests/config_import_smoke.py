@@ -164,6 +164,39 @@ def main() -> int:
     assert len(win.project.model_configs()) == n_cfg, win.project.model_configs()
     print(f"    siguen siendo {n_cfg}")
 
+    print("[11] Ciclos importar→exportar: el prefijo del id NO se acumula")
+    # Regresión: el CSV se guardaba como «<id>__nombre.csv», y al re-exportar se le
+    # añadía OTRO prefijo («<id>__<id>__nombre.csv»), encadenando uno por ciclo.
+    src_id = win.project.sources[0]["id"]
+    prev = os.path.basename(win.project.get_source(src_id)["path"])
+    assert prev.count("__") == 1, prev
+    bcyc = os.path.join(tempfile.mkdtemp(), "ciclo" + config_export.BUNDLE_EXT)
+    config_export.export_bundle(win.project, {}, {"sources"}, bcyc)
+    for ciclo in range(2):
+        wc = MainWindow()
+        wc.project = Project.create(tempfile.mkdtemp(), f"ciclo{ciclo}")
+        wc._apply_config(*config_export.read_bundle(bcyc))
+        disco = os.path.basename(wc.project.sources[0]["path"])
+        assert disco.count("__") == 1, f"prefijo repetido tras {ciclo + 1} ciclo(s): {disco}"
+        bcyc = os.path.join(wc.project.path, f"c{ciclo}" + config_export.BUNDLE_EXT)
+        config_export.export_bundle(wc.project, {}, {"sources"}, bcyc)
+        wc.acq_panel.shutdown()
+    print(f"    tras 3 ciclos sigue con un solo prefijo ({disco})")
+
+    print("[11b] Renombrar una fuente y exportar: no se pierde ningún archivo")
+    # El export usa la ruta ACTUAL, así que renombrar en la app no debe romperlo.
+    win6 = MainWindow()
+    win6.project = Project.create(tempfile.mkdtemp(), "renombrada")
+    win6._apply_config(*config_export.read_bundle(bundle))
+    sid6 = win6.project.sources[0]["id"]
+    win6.project.rename_source(sid6, "nombre limpio")
+    out6 = os.path.join(win6.project.path, "tras" + config_export.BUNDLE_EXT)
+    info6 = config_export.export_bundle(win6.project, {}, {"sources"}, out6)
+    assert info6["skipped"] == [], info6["skipped"]      # nada «archivo no encontrado»
+    assert info6["sources"] == 1, info6
+    win6.acq_panel.shutdown()
+    print("    exporta la fuente renombrada sin omisiones")
+
     print("[10] Importar NO borra los pipelines/canales propios (los añade)")
     # Regresión: set_pipelines REEMPLAZABA todos los pipelines, así que importar un
     # bundle borraba los que tenía el usuario (y recuperarlos exigía varios undo).

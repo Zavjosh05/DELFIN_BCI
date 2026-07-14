@@ -73,11 +73,41 @@ def main() -> int:
         proj.get_source(sid_o)["path"]
     print("    Prueba_Uno.csv ocupado -> Prueba_Uno_2.csv")
 
-    print("[5] Deshacer restaura el alias (undo/redo del renombrado)")
+    print("[5] Deshacer/rehacer restauran el alias Y el archivo en disco")
+    # Regresión: antes el undo devolvía la ruta anterior pero NO renombraba el
+    # archivo, así que la fuente quedaba apuntando a un archivo inexistente.
+    renamed_path = proj.get_source(sid_o)["path"]
     proj.undo()
-    assert proj.get_source(sid_o)["alias"] == "otra"
+    s_o = proj.get_source(sid_o)
+    assert s_o["alias"] == "otra"
+    assert os.path.basename(s_o["path"]) == "otra.csv", s_o["path"]
+    assert os.path.isfile(s_o["path"]), "deshacer dejó la fuente apuntando a un archivo inexistente"
+    assert not os.path.exists(renamed_path), "el archivo debió volver a su nombre anterior"
     proj.redo()
-    assert proj.get_source(sid_o)["alias"] == "Prueba Uno"
+    s_o = proj.get_source(sid_o)
+    assert s_o["alias"] == "Prueba Uno"
+    assert os.path.isfile(s_o["path"]), "rehacer dejó la fuente rota"
+    assert os.path.basename(s_o["path"]) == "Prueba_Uno_2.csv", s_o["path"]
+    print("    el alias y el archivo vuelven juntos (undo y redo)")
+
+    print("[5b] Las marcas (archivo lateral) siguen al CSV al renombrar")
+    # Regresión: el lateral se llama «<csv>.marks.json»; si no se mueve con el CSV,
+    # las marcas de la grabación quedan huérfanas y se pierden.
+    from eeg_studio.core import marks_sidecar
+    csv_m = os.path.join(proj.path, RECORDINGS_DIR, "con_marcas.csv")
+    _csv(csv_m)
+    marks_sidecar.write_marks(csv_m, [(0, 10, "arriba")], 128.0)
+    sid_m = proj.add_source(csv_m, alias="con marcas")["id"]
+    proj.rename_source(sid_m, "Sujeto007")
+    p_new = proj.get_source(sid_m)["path"]
+    assert os.path.basename(p_new) == "Sujeto007.csv", p_new
+    assert marks_sidecar.read_marks(p_new) == [(0, 10, "arriba")], "se perdieron las marcas"
+    assert not os.path.exists(marks_sidecar.sidecar_path(csv_m)), "quedó un lateral huérfano"
+    proj.undo()                                   # el lateral también vuelve
+    assert marks_sidecar.read_marks(proj.get_source(sid_m)["path"]) == [(0, 10, "arriba")]
+    proj.redo()
+    assert marks_sidecar.read_marks(proj.get_source(sid_m)["path"]) == [(0, 10, "arriba")]
+    print("    <csv>.marks.json se mueve con el CSV (y vuelve al deshacer)")
 
     print("[6] UI: edición en el sitio de la lista dispara el renombrado")
     win = MainWindow()
