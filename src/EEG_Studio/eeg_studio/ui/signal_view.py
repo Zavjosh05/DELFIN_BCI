@@ -26,6 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .flow_layout import FlowLayout
+
 pg.setConfigOptions(antialias=False, background="#101317", foreground="#c8d0d8")
 
 _CURVE_COLORS = [
@@ -74,6 +76,18 @@ def segment_color(label: str) -> str:
     return _SEGMENT_PALETTE[idx]
 
 
+def _chip(*widgets) -> QWidget:
+    """Agrupa una etiqueta y su(s) control(es) en un contenedor compacto para que
+    NO se separen al reacomodarse la barra de controles (FlowLayout)."""
+    box = QWidget()
+    h = QHBoxLayout(box)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(3)
+    for w in widgets:
+        h.addWidget(w)
+    return box
+
+
 class SignalView(QWidget):
     segment_requested = pyqtSignal(int, int)  # (start_sample, stop_sample)
     cut_requested = pyqtSignal(int, int)      # recortar (eliminar) el tramo seleccionado
@@ -111,12 +125,26 @@ class SignalView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        controls = QHBoxLayout()
+        # Todos los controles van en un FlowLayout: se reacomodan en tantas filas
+        # como haga falta según el ancho, en vez de recortarse/desbordar cuando hay
+        # muchos. Cada etiqueta va pegada a su control en un "chip" para que no se
+        # separen al envolver. Un botón alterna entre barra compacta y expandida.
+        flow = FlowLayout(h_spacing=8, v_spacing=4)
+
+        self.expand_btn = QPushButton("⤢")
+        self.expand_btn.setCheckable(True)
+        self.expand_btn.setFixedWidth(30)
+        self.expand_btn.setToolTip(
+            "Expandir o compactar la barra de controles (ver todos los botones a "
+            "la vez en varias filas, o dejarla compacta con desplazamiento)."
+        )
+        self.expand_btn.toggled.connect(self._toggle_controls_expanded)
+        flow.addWidget(self.expand_btn)
+
         self.mode_box = QComboBox()
         self.mode_box.addItems(["Procesada", "Cruda"])
         self.mode_box.setToolTip("Mostrar la señal con o sin el pipeline aplicado")
-        controls.addWidget(QLabel("Vista:"))
-        controls.addWidget(self.mode_box)
+        flow.addWidget(_chip(QLabel("Vista:"), self.mode_box))
 
         self.gain_box = QComboBox()
         self.gain_box.addItems(["x0.25", "x0.5", "x1", "x2", "x4", "x8"])
@@ -127,21 +155,19 @@ class SignalView(QWidget):
             "fluctuaciones pequeñas o evitar que señales grandes se solapen."
         )
         self.gain_box.currentTextChanged.connect(self._redraw)
-        controls.addWidget(QLabel("Ganancia:"))
-        controls.addWidget(self.gain_box)
+        flow.addWidget(_chip(QLabel("Ganancia:"), self.gain_box))
 
         # Aislar un canal: muestra solo ese y sus medidas (rango de variación).
         self.channel_box = QComboBox()
         self.channel_box.addItem("Todos")
         self.channel_box.setToolTip("Aísla un canal para verlo solo y ver sus medidas.")
         self.channel_box.currentIndexChanged.connect(self._redraw)
-        controls.addWidget(QLabel("Canal:"))
-        controls.addWidget(self.channel_box)
+        flow.addWidget(_chip(QLabel("Canal:"), self.channel_box))
 
         self.norm_chk = QCheckBox("Normalizar vista")
         self.norm_chk.setChecked(True)
         self.norm_chk.stateChanged.connect(self._redraw)
-        controls.addWidget(self.norm_chk)
+        flow.addWidget(self.norm_chk)
 
         self.markers_chk = QCheckBox("Marcadores")
         self.markers_chk.setChecked(True)
@@ -150,7 +176,7 @@ class SignalView(QWidget):
             "para etiquetar manualmente las regiones de interés."
         )
         self.markers_chk.stateChanged.connect(self._redraw_overlay)
-        controls.addWidget(self.markers_chk)
+        flow.addWidget(self.markers_chk)
 
         self.segments_chk = QCheckBox("Segmentos")
         self.segments_chk.setChecked(True)
@@ -159,11 +185,10 @@ class SignalView(QWidget):
             "por clase, para ver de un vistazo qué tramos ya están etiquetados."
         )
         self.segments_chk.stateChanged.connect(self._redraw_overlay)
-        controls.addWidget(self.segments_chk)
+        flow.addWidget(self.segments_chk)
 
-        controls.addStretch(1)
         self.sel_label = QLabel("Selección: —")
-        controls.addWidget(self.sel_label)
+        flow.addWidget(self.sel_label)
 
         # Longitud (en tiempo) de la región seleccionada: fijarla a un valor exacto.
         self.len_spin = QDoubleSpinBox()
@@ -172,83 +197,79 @@ class SignalView(QWidget):
         self.len_spin.setSingleStep(0.5)
         self.len_spin.setValue(4.0)
         self.len_spin.setSuffix(" s")
+        self.len_spin.setMaximumWidth(90)
         self.len_spin.setEnabled(False)
         self.len_spin.setToolTip(
             "Fija la longitud (en tiempo) de la región seleccionada. Se ajusta "
             "manteniendo el inicio; útil para marcar ventanas de duración exacta."
         )
         self.len_spin.valueChanged.connect(self._on_length_changed)
-        controls.addWidget(QLabel("Long.:"))
-        controls.addWidget(self.len_spin)
+        flow.addWidget(_chip(QLabel("Long.:"), self.len_spin))
 
         self.add_seg_btn = QPushButton("Crear segmento")
         self.add_seg_btn.setToolTip("Crea un segmento etiquetado a partir de la región seleccionada.")
         self.add_seg_btn.clicked.connect(self._emit_segment)
         self.add_seg_btn.setEnabled(False)
-        controls.addWidget(self.add_seg_btn)
+        flow.addWidget(self.add_seg_btn)
 
         # Edición de la señal sobre la selección.
         self.del_seg_btn = QPushButton("Borrar segmentos")
         self.del_seg_btn.setToolTip("Elimina los segmentos etiquetados que caen en la selección.")
         self.del_seg_btn.clicked.connect(self._emit_delete_segments)
         self.del_seg_btn.setEnabled(False)
-        controls.addWidget(self.del_seg_btn)
+        flow.addWidget(self.del_seg_btn)
 
         self.cut_btn = QPushButton("Recortar")
         self.cut_btn.setToolTip("Marca el tramo seleccionado como ELIMINADO (se excluye del "
                                 "dataset y se sombrea en gris). No borra el CSV; reversible con Ctrl+Z.")
         self.cut_btn.clicked.connect(self._emit_cut)
         self.cut_btn.setEnabled(False)
-        controls.addWidget(self.cut_btn)
+        flow.addWidget(self.cut_btn)
 
         # --- Escalas de los ejes (rango X en tiempo, rango Y en amplitud) ---
-        axes = QHBoxLayout()
-        axes.addWidget(QLabel("Ejes  ·  X:"))
         self.xstart_spin = QDoubleSpinBox()
         self.xstart_spin.setRange(0.0, 1e7); self.xstart_spin.setDecimals(2)
-        self.xstart_spin.setSuffix(" s"); self.xstart_spin.setToolTip("Inicio de la ventana de tiempo visible.")
+        self.xstart_spin.setSuffix(" s"); self.xstart_spin.setMaximumWidth(90)
+        self.xstart_spin.setToolTip("Inicio de la ventana de tiempo visible.")
         self.xstart_spin.valueChanged.connect(self._apply_x_range)
-        axes.addWidget(QLabel("desde")); axes.addWidget(self.xstart_spin)
         self.xwin_spin = QDoubleSpinBox()
         self.xwin_spin.setRange(0.05, 1e7); self.xwin_spin.setDecimals(2)
         self.xwin_spin.setValue(10.0); self.xwin_spin.setSuffix(" s")
+        self.xwin_spin.setMaximumWidth(90)
         self.xwin_spin.setToolTip("Ancho de la ventana de tiempo (zoom horizontal).")
         self.xwin_spin.valueChanged.connect(self._apply_x_range)
-        axes.addWidget(QLabel("ventana")); axes.addWidget(self.xwin_spin)
-        axes.addSpacing(14)
-        axes.addWidget(QLabel("Y:"))
+        flow.addWidget(_chip(QLabel("Ejes · X desde"), self.xstart_spin,
+                             QLabel("ventana"), self.xwin_spin))
+
         self.ymin_spin = QDoubleSpinBox()
         self.ymin_spin.setRange(-1e9, 1e9); self.ymin_spin.setDecimals(2)
+        self.ymin_spin.setMaximumWidth(90)
         self.ymin_spin.setToolTip("Límite inferior del eje de amplitud.")
         self.ymin_spin.valueChanged.connect(self._apply_y_range)
         self.ymax_spin = QDoubleSpinBox()
         self.ymax_spin.setRange(-1e9, 1e9); self.ymax_spin.setDecimals(2)
+        self.ymax_spin.setMaximumWidth(90)
         self.ymax_spin.setToolTip("Límite superior del eje de amplitud.")
         self.ymax_spin.valueChanged.connect(self._apply_y_range)
-        axes.addWidget(self.ymin_spin); axes.addWidget(QLabel("a")); axes.addWidget(self.ymax_spin)
+        flow.addWidget(_chip(QLabel("Y:"), self.ymin_spin, QLabel("a"), self.ymax_spin))
+
         self.autoscale_btn = QPushButton("Auto (ajustar)")
         self.autoscale_btn.setToolTip("Ajusta X e Y automáticamente para ver toda la señal.")
         self.autoscale_btn.clicked.connect(self._autoscale_axes)
-        axes.addWidget(self.autoscale_btn)
-        axes.addStretch(1)
+        flow.addWidget(self.autoscale_btn)
 
-        # Las dos filas de controles van dentro de un scroll HORIZONTAL: así su ancho
-        # mínimo (muchos widgets) NO fuerza un tamaño mínimo enorme del visor, que
-        # antes impedía encogerlo y aplastaba los demás paneles. Si no caben, aparece
-        # una barra de desplazamiento en vez de agrandar el visor.
         controls_host = QWidget()
-        ch = QVBoxLayout(controls_host)
-        ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(2)
-        ch.addLayout(controls); ch.addLayout(axes)
-        controls_scroll = QScrollArea()
-        controls_scroll.setWidgetResizable(True)
-        controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        controls_scroll.setWidget(controls_host)
-        controls_scroll.setMinimumWidth(0)
-        controls_scroll.setMaximumHeight(controls_host.sizeHint().height() + 18)
-        layout.addWidget(controls_scroll)
+        controls_host.setLayout(flow)
+        self._controls_scroll = QScrollArea()
+        self._controls_scroll.setWidgetResizable(True)
+        self._controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._controls_scroll.setWidget(controls_host)
+        self._controls_scroll.setMinimumWidth(0)
+        self._controls_compact_h = 84          # ~2 filas; el resto con scroll vertical
+        self._controls_scroll.setMaximumHeight(self._controls_compact_h)
+        layout.addWidget(self._controls_scroll)
 
         # Fila de medidas del canal aislado (rango de variación de la señal).
         self.stats_label = QLabel("")
@@ -278,6 +299,12 @@ class SignalView(QWidget):
         self.region.hide()
 
         self.mode_box.currentTextChanged.connect(lambda *_: self.mode_changed.emit())
+
+    def _toggle_controls_expanded(self, expanded: bool) -> None:
+        """Expande la barra de controles (muestra todas las filas de golpe) o la
+        deja compacta (con desplazamiento vertical si no caben)."""
+        self._controls_scroll.setMaximumHeight(260 if expanded else self._controls_compact_h)
+        self.expand_btn.setText("⤡" if expanded else "⤢")
 
     # --- API --------------------------------------------------------------
     @property

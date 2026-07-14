@@ -153,13 +153,12 @@ def normalize(data: np.ndarray, method: str = "zscore") -> np.ndarray:
     raise ValueError(f"Método de normalización desconocido: {method}")
 
 
-def ica_artifact(data: np.ndarray, n_components: int = 0, kurt_threshold: float = 5.0) -> np.ndarray:
-    """Elimina artefactos por ICA: rechaza componentes de kurtosis alta.
+def _fit_ica(data: np.ndarray, n_components: int = 0):
+    """Ajusta FastICA sobre ``(n_canales, n_muestras)`` y devuelve ``(ica, sources)``.
 
-    Los parpadeos oculares y la actividad muscular producen componentes
-    independientes muy "picudos" (kurtosis elevada). Se descompone la señal con
-    ICA, se anulan esos componentes y se reconstruye. Enfoque clásico de
-    eliminación de artefactos (revisión doi:10.18280/isi.290124).
+    Devuelve ``None`` si no converge o hay muy pocos datos. Los parámetros del
+    ajuste viven aquí para que lo que se **elimina** (``ica_artifact``) y lo que se
+    **muestra** (``ica_decompose``) provengan EXACTAMENTE de la misma descomposición.
     """
     import warnings
 
@@ -168,7 +167,7 @@ def ica_artifact(data: np.ndarray, n_components: int = 0, kurt_threshold: float 
 
     n_ch = data.shape[0]
     ncomp = n_ch if not n_components else min(int(n_components), n_ch)
-    X = data.T  # (muestras, canales)
+    X = np.asarray(data, dtype=np.float64).T  # (muestras, canales)
     # max_iter alto + tol algo más laxa reducen los avisos de no-convergencia;
     # aun sin converger del todo el resultado es utilizable, así que se silencia
     # el ConvergenceWarning (la no-convergencia ya se gestiona con el try/except).
@@ -178,14 +177,61 @@ def ica_artifact(data: np.ndarray, n_components: int = 0, kurt_threshold: float 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", ConvergenceWarning)
             sources = ica.fit_transform(X)           # (muestras, componentes)
-    except Exception:  # noqa: BLE001 - no converge: devolver la señal intacta
+    except Exception:  # noqa: BLE001 - no converge / datos insuficientes
+        return None
+    return ica, sources
+
+
+def ica_artifact(data: np.ndarray, n_components: int = 0, kurt_threshold: float = 5.0) -> np.ndarray:
+    """Elimina artefactos por ICA: rechaza componentes de kurtosis alta.
+
+    Los parpadeos oculares y la actividad muscular producen componentes
+    independientes muy "picudos" (kurtosis elevada). Se descompone la señal con
+    ICA, se anulan esos componentes y se reconstruye. Enfoque clásico de
+    eliminación de artefactos (revisión doi:10.18280/isi.290124).
+    """
+    fit = _fit_ica(data, n_components)
+    if fit is None:                                   # no converge: señal intacta
         return data.copy()
+    ica, sources = fit
     k = _kurtosis(sources, axis=0, fisher=True)       # exceso de kurtosis por componente
     artifact = np.abs(k) > kurt_threshold
     if artifact.any() and not artifact.all():         # no anular toda la señal
         sources[:, artifact] = 0.0
     cleaned = ica.inverse_transform(sources)          # (muestras, canales)
     return np.ascontiguousarray(cleaned.T, dtype=np.float64)
+
+
+def ica_decompose(data: np.ndarray, n_components: int = 0,
+                  kurt_threshold: float = 5.0) -> dict | None:
+    """Descompone la señal con ICA para **inspección espacial**, sin reconstruirla.
+
+    Usa el MISMO ajuste que :func:`ica_artifact` (misma semilla y parámetros), así
+    que los componentes que aquí se ven son los mismos que aquel elimina. Devuelve
+    un dict serializable (apto para pasarlo desde un hilo worker):
+
+      * ``"mixing"``      matriz de mezcla ``(n_canales, n_comp)``: cada COLUMNA es
+                          el **mapa espacial** de un componente (peso por canal),
+                          que es lo que se dibuja como mapa topográfico.
+      * ``"kurtosis"``    exceso de kurtosis por componente.
+      * ``"artifact"``    máscara booleana: kurtosis alta = candidato a artefacto
+                          (el mismo criterio que rechaza ``ica_artifact``).
+      * ``"n_components"``  nº de componentes.
+
+    Devuelve ``None`` si ICA no converge o hay datos insuficientes.
+    """
+    fit = _fit_ica(data, n_components)
+    if fit is None:
+        return None
+    ica, sources = fit
+    k = _kurtosis(sources, axis=0, fisher=True)
+    mixing = np.ascontiguousarray(ica.mixing_, dtype=np.float64)  # (n_canales, n_comp)
+    return {
+        "mixing": mixing,
+        "kurtosis": np.asarray(k, dtype=np.float64),
+        "artifact": (np.abs(k) > float(kurt_threshold)),
+        "n_components": int(mixing.shape[1]),
+    }
 
 
 def asr_reconstruct(data: np.ndarray, fs: float, window_sec: float = 0.5,

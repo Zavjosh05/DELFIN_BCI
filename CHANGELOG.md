@@ -12,6 +12,36 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-12]
+
+### Añadido
+- **Mapas topográficos de los componentes ICA**: al seleccionar el paso
+  *Eliminar artefactos (ICA)* en el preprocesamiento aparece el botón **«Ver mapas
+  espaciales (ICA)…»**, que abre una ventana con un **mapa por componente** dibujado
+  sobre un esquema de la cabeza (vista superior, nariz arriba): **rojo** = peso
+  positivo, **azul** = negativo. Los componentes de **kurtosis alta** (candidatos a
+  artefacto, los que ICA elimina) se **resaltan con ⚠**, para ver de un vistazo en
+  qué zonas del cuero cabelludo surgen los artefactos (p. ej. frontal = parpadeos).
+  Se calcula sobre la fuente abierta aplicando antes los pasos previos del pipeline
+  (para que coincida con lo que ICA ve), en un hilo aparte; se puede **guardar como
+  imagen** (PNG/PDF/SVG). Requiere `matplotlib` (opcional); si falta, se avisa.
+  - Nuevo `core/montage.py` con las **posiciones 2D** de los 14 canales EPOC+ y
+    `core/preprocessing.ica_decompose()` (descompone y devuelve la matriz de mezcla
+    + kurtosis + flags, con el mismo ajuste que `ica_artifact`: lo que se ve = lo
+    que se elimina).
+
+### Corregido / reforzado
+- **Barra de controles del visor reacomodable (señal y tiempo real)**: antes, con
+  muchos botones/configuraciones, la barra superior del visor se **recortaba o
+  desbordaba** y no se veían todos los controles. Ahora los controles se reparten
+  en **varias filas** según el ancho de la ventana (nuevo `ui/flow_layout.py`), con
+  un botón **⤢** para **expandir/compactar** la barra (verlos todos de golpe o
+  dejarla compacta con desplazamiento). Cada etiqueta va pegada a su control para no
+  separarse al reacomodarse, y los campos numéricos son más compactos. Afecta al
+  visor de señal (CSV) y al visor en vivo (tiempo real).
+
+---
+
 ## [2026-07-11]
 
 ### Añadido

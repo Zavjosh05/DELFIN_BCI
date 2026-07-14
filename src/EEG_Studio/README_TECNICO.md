@@ -201,7 +201,9 @@ y hora: el punto **actual** va resaltado y los pasos rehacibles atenuados. Haz
   instante.
 - **Qué ganas:** señal más limpia y comparable. *Pasa-banda 1–45 Hz* quita deriva
   y ruido alto; *notch 50/60 Hz* elimina la red eléctrica; *CAR* resta el ruido
-  común; **ICA** elimina parpadeos/músculo automáticamente; **ASR** corrige ráfagas
+  común; **ICA** elimina parpadeos/músculo automáticamente (y con **«Ver mapas
+  espaciales (ICA)…»** muestra el **mapa topográfico** de cada componente sobre la
+  cabeza, resaltando los candidatos a artefacto — para ver *dónde* surgen); **ASR** corrige ráfagas
   de artefacto (saltos de electrodo, movimiento) sin descartar la ventana; **rechazo
   por umbral** recorta picos de amplitud puntuales; **corrección de la línea base**
   ancla el segmento a un tramo de referencia inicial (útil en análisis tipo ERP) →
@@ -603,4 +605,8 @@ tamaño al desplegar un panel oculto),
 `artifact_steps_smoke` (preprocesamiento: ASR, rechazo por umbral manual/automático
 y corrección de la línea base),
 `file_control_smoke` (controlar el brazo desde una grabación: fuente de reproducción,
-`classify_recording` y la sección one-shot del panel de Control).
+`classify_recording` y la sección one-shot del panel de Control),
+`ica_topomap_smoke` (mapas topográficos de los componentes ICA: descomposición,
+posiciones de electrodos, figura y botón/cableado en el panel),
+`signal_controls_smoke` (barra de controles reacomodable del visor de señal y del
+visor en vivo, con expandir/compactar).

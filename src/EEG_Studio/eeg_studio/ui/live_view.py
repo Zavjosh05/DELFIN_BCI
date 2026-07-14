@@ -17,9 +17,19 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
-from .signal_view import channel_color
+from .flow_layout import FlowLayout
+from .signal_view import _chip, channel_color
 
 # Opciones de µV por canal para la escala fija.
 _UV_OPTIONS = ("20", "50", "100", "200", "500", "1000", "2000")
@@ -40,35 +50,52 @@ class LiveSignalView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        controls = QHBoxLayout()
+        # Controles en un FlowLayout: se reacomodan en varias filas si no caben,
+        # con botón para expandir/compactar (igual que el visor de señal).
+        flow = FlowLayout(h_spacing=8, v_spacing=4)
+
+        self.expand_btn = QPushButton("⤢")
+        self.expand_btn.setCheckable(True)
+        self.expand_btn.setFixedWidth(30)
+        self.expand_btn.setToolTip("Expandir o compactar la barra de controles.")
+        self.expand_btn.toggled.connect(self._toggle_controls_expanded)
+        flow.addWidget(self.expand_btn)
+
         # Aislar un canal.
-        controls.addWidget(QLabel("Canal:"))
         self.channel_box = QComboBox()
         self.channel_box.addItem("Todos")
         self.channel_box.setToolTip("Aísla un canal para verlo solo y ver sus medidas en vivo.")
         self.channel_box.currentIndexChanged.connect(self._on_channel_changed)
-        controls.addWidget(self.channel_box)
+        flow.addWidget(_chip(QLabel("Canal:"), self.channel_box))
 
         # Escala: fija (µV) o auto (normalizada).
-        controls.addSpacing(12)
-        controls.addWidget(QLabel("Escala:"))
         self.scale_box = QComboBox()
         self.scale_box.addItems(["Fija (µV)", "Auto (normalizada)"])
         self.scale_box.setToolTip(
             "Fija: escala en µV constante (estilo OpenViBE), no cambia sola.\n"
             "Auto: cada canal se normaliza por su desviación (amplitud uniforme).")
         self.scale_box.currentIndexChanged.connect(self._on_scale_changed)
-        controls.addWidget(self.scale_box)
+        flow.addWidget(_chip(QLabel("Escala:"), self.scale_box))
 
         self.uv_box = QComboBox()
         self.uv_box.addItems(_UV_OPTIONS)
         self.uv_box.setCurrentText("200")
         self.uv_box.setToolTip("Microvoltios por canal en modo de escala fija.")
         self.uv_box.currentIndexChanged.connect(self._on_scale_changed)
-        controls.addWidget(QLabel("µV/canal:"))
-        controls.addWidget(self.uv_box)
-        controls.addStretch(1)
-        layout.addLayout(controls)
+        flow.addWidget(_chip(QLabel("µV/canal:"), self.uv_box))
+
+        controls_host = QWidget()
+        controls_host.setLayout(flow)
+        self._controls_scroll = QScrollArea()
+        self._controls_scroll.setWidgetResizable(True)
+        self._controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._controls_scroll.setWidget(controls_host)
+        self._controls_scroll.setMinimumWidth(0)
+        self._controls_compact_h = 84
+        self._controls_scroll.setMaximumHeight(self._controls_compact_h)
+        layout.addWidget(self._controls_scroll)
 
         self.plot = pg.PlotWidget()
         self.plot.setMenuEnabled(False)
@@ -81,6 +108,11 @@ class LiveSignalView(QWidget):
         self.stats_label.setStyleSheet("color: #9be7c4; font-size: 11px;")
         self.stats_label.setVisible(False)
         layout.addWidget(self.stats_label)
+
+    def _toggle_controls_expanded(self, expanded: bool) -> None:
+        """Expande o compacta la barra de controles del visor en vivo."""
+        self._controls_scroll.setMaximumHeight(220 if expanded else self._controls_compact_h)
+        self.expand_btn.setText("⤡" if expanded else "⤢")
 
     # --- Configuración -----------------------------------------------------
     def configure(self, channel_names: list[str], fs: float, window_seconds: float = 5.0) -> None:

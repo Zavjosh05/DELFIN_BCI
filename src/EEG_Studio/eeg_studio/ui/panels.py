@@ -280,6 +280,23 @@ class PreprocessingPanel(QWidget):
             note.setStyleSheet("color: #9aa4ae; font-style: italic;")
             self.params_form.addRow(note)
 
+        # El paso ICA ofrece un análisis espacial: mapas topográficos de los
+        # componentes para VER dónde surgen los artefactos que se eliminan.
+        if stype == "ica":
+            ica_btn = QPushButton("Ver mapas espaciales (ICA)…")
+            ica_btn.setToolTip(
+                "Descompone la fuente abierta con ICA (aplicando antes los pasos "
+                "previos del pipeline) y muestra el mapa topográfico de cada "
+                "componente sobre la cabeza, resaltando los candidatos a artefacto."
+            )
+            ica_btn.clicked.connect(lambda: self.controller.show_ica_topomaps(row))
+            self.params_form.addRow(ica_btn)
+            hint = QLabel("Rojo/azul = peso del componente por zona del cuero "
+                          "cabelludo; ⚠ = kurtosis alta (artefacto).")
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+            self.params_form.addRow(hint)
+
     def _make_editor(self, key: str, value, stype: str | None = None) -> QWidget:
         if isinstance(value, bool):
             w = QCheckBox()

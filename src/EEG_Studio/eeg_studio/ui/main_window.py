@@ -54,7 +54,13 @@ from ..config import (
     PROJECT_EXT,
     PROJECT_MANIFEST,
 )
-from ..core import classification, dataset as dataset_mod, mat_loader, mne_loader
+from ..core import (
+    classification,
+    dataset as dataset_mod,
+    mat_loader,
+    mne_loader,
+    preprocessing,
+)
 from ..core.csv_loader import compress_csv, load_recording
 from ..core.processing import band_powers, extract_feature_vector, time_features
 from ..core.project import Project
@@ -1734,6 +1740,63 @@ class MainWindow(QMainWindow):
         from .feature_view import show_feature_dialog
         show_feature_dialog(self, self.project.kept_display_names(rec),
                             band_powers(data, fs), time_features(data))
+
+    def show_ica_topomaps(self, row: int) -> None:
+        """Mapas topográficos de los componentes ICA del paso ``row``.
+
+        Descompone la señal de la fuente abierta con ICA (aplicando antes los pasos
+        previos del pipeline, para que los componentes coincidan con lo que ICA ve
+        realmente) y muestra un mapa espacial por componente, con los candidatos a
+        artefacto resaltados. El cómputo (ICA) corre en un hilo para no bloquear."""
+        if not self._require_project() or self.current_source_id is None:
+            self.info("Sin fuente", "Abre una fuente (CSV) para ver los mapas "
+                                     "espaciales de los componentes ICA.")
+            return
+        from . import ica_topomap_view
+        if not ica_topomap_view.topomaps_available():
+            self.warn("Falta matplotlib",
+                      "Los mapas topográficos requieren matplotlib. Instálalo con:\n"
+                      "pip install matplotlib")
+            return
+        steps = self.project.state["pipeline"]
+        if not (0 <= row < len(steps)) or steps[row].get("type") != "ica":
+            return
+        params = dict(steps[row].get("params", {}))
+        before = list(steps[:row])                  # pasos previos a la ICA
+        sid = self.current_source_id
+        try:
+            rec = self.project.get_recording(sid)
+        except Exception as exc:  # noqa: BLE001
+            self.warn("No se pudo leer la fuente", str(exc))
+            return
+        kept = self.project.kept_indices(rec)
+        names = self.project.kept_display_names(rec)
+        raw = np.ascontiguousarray(rec.data[kept], dtype=np.float64)
+        fs = rec.sample_rate
+        alias = (self.project.get_source(sid) or {}).get("alias", "")
+
+        self._busy("Calculando componentes ICA…")
+
+        def work():
+            pre = preprocessing.apply_pipeline(raw, fs, before) if before else raw
+            return preprocessing.ica_decompose(
+                pre, int(params.get("n_components", 0)),
+                float(params.get("kurt_threshold", 5.0)))
+
+        def done(result):
+            self._idle()
+            if not result:
+                self.warn("ICA no disponible",
+                          "No se pudo descomponer la señal (ICA no convergió o hay "
+                          "muy pocos datos en la fuente).")
+                return
+            ica_topomap_view.show_ica_topomaps_dialog(
+                self, result["mixing"], names, result["kurtosis"],
+                result["artifact"],
+                title=f"Mapas espaciales ICA — {alias}" if alias else "Mapas espaciales ICA",
+                kurt_threshold=float(params.get("kurt_threshold", 5.0)))
+
+        self._spawn(work, done)
 
     def relabel_segment(self, segment_id: str) -> None:
         labels = self.project.labels()
