@@ -41,6 +41,23 @@ def _source_arcname(source_id: str, path: str) -> str:
     return prefix + base
 
 
+def source_filename(arcname: str, source_id: str | None = None) -> str:
+    """Nombre con el que guardar en disco un CSV que viene de un bundle.
+
+    Dentro del ZIP viaja prefijado (``<id>__señal.csv``) para que dos fuentes que se
+    llamen igual no choquen **dentro del paquete**. Al extraerlo se **quita** el
+    prefijo, para que el archivo se llame como la señal (y coincida con lo que se ve
+    en la interfaz); si ese nombre ya estuviera ocupado, quien lo guarda le añade un
+    sufijo.
+    """
+    base = os.path.basename(arcname)
+    if source_id:
+        prefix = f"{source_id}__"
+        while base.startswith(prefix):
+            base = base[len(prefix):]
+    return base
+
+
 def _compress_type(name: str) -> int:
     """No recomprime lo que ya está comprimido (.gz/.npz/.joblib); comprime el resto."""
     already = name.lower().endswith((".gz", ".npz", ".joblib", ".zip"))

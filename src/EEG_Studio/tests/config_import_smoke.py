@@ -164,24 +164,52 @@ def main() -> int:
     assert len(win.project.model_configs()) == n_cfg, win.project.model_configs()
     print(f"    siguen siendo {n_cfg}")
 
-    print("[11] Ciclos importar→exportar: el prefijo del id NO se acumula")
-    # Regresión: el CSV se guardaba como «<id>__nombre.csv», y al re-exportar se le
-    # añadía OTRO prefijo («<id>__<id>__nombre.csv»), encadenando uno por ciclo.
+    print("[11] El CSV importado se llama como la señal, y el nombre no degenera")
+    # Regresión: se guardaba como «<id>__nombre.csv» y al re-exportar se añadía OTRO
+    # prefijo, encadenando uno por ciclo («<id>__<id>__nombre.csv»).
     src_id = win.project.sources[0]["id"]
-    prev = os.path.basename(win.project.get_source(src_id)["path"])
-    assert prev.count("__") == 1, prev
+    disco = os.path.basename(win.project.get_source(src_id)["path"])
+    assert "__" not in disco, f"el archivo no debería llevar el prefijo del id: {disco}"
+    assert disco.startswith("sig."), disco             # se llama como la señal
     bcyc = os.path.join(tempfile.mkdtemp(), "ciclo" + config_export.BUNDLE_EXT)
     config_export.export_bundle(win.project, {}, {"sources"}, bcyc)
-    for ciclo in range(2):
+    for ciclo in range(2):                             # varios ciclos importar→exportar
         wc = MainWindow()
         wc.project = Project.create(tempfile.mkdtemp(), f"ciclo{ciclo}")
         wc._apply_config(*config_export.read_bundle(bcyc))
         disco = os.path.basename(wc.project.sources[0]["path"])
-        assert disco.count("__") == 1, f"prefijo repetido tras {ciclo + 1} ciclo(s): {disco}"
+        assert "__" not in disco, f"nombre degenerado tras {ciclo + 1} ciclo(s): {disco}"
         bcyc = os.path.join(wc.project.path, f"c{ciclo}" + config_export.BUNDLE_EXT)
         config_export.export_bundle(wc.project, {}, {"sources"}, bcyc)
         wc.acq_panel.shutdown()
-    print(f"    tras 3 ciclos sigue con un solo prefijo ({disco})")
+    print(f"    tras 3 ciclos sigue limpio ({disco})")
+
+    print("[11c] Dos grabaciones DISTINTAS con el mismo nombre: sufijo, no se pierde")
+    def _mk_src_bundle(nombre):
+        p = Project.create(tempfile.mkdtemp(), nombre)
+        d = os.path.join(p.path, IMPORTED_DIR)
+        os.makedirs(d, exist_ok=True)
+        c = os.path.join(d, "senal.csv")               # MISMO nombre, id distinto
+        write_openvibe_csv(c, np.random.default_rng(2).normal(0, 1, (300, 3)).astype(
+            np.float32), 250.0, ["C3", "Cz", "C4"], [(50, "a")])
+        p.add_source(c)
+        out = os.path.join(p.path, nombre + config_export.BUNDLE_EXT)
+        config_export.export_bundle(p, {}, {"sources"}, out)
+        return out
+
+    bx, by = _mk_src_bundle("X"), _mk_src_bundle("Y")
+    win7 = MainWindow()
+    win7.project = Project.create(tempfile.mkdtemp(), "colision")
+    win7._apply_config(*config_export.read_bundle(bx))
+    win7._apply_config(*config_export.read_bundle(by))
+    files = sorted(os.path.basename(s["path"]) for s in win7.project.sources)
+    assert files == ["senal.csv", "senal_2.csv"], files    # ninguna se perdió
+    assert len(win7.project.sources) == 2
+    n_before = len(win7.project.sources)
+    win7._apply_config(*config_export.read_bundle(bx))     # reimportar: dedup por id
+    assert len(win7.project.sources) == n_before, "duplicó al reimportar"
+    win7.acq_panel.shutdown()
+    print(f"    {files} · reimportar no duplica (dedup por id)")
 
     print("[11b] Renombrar una fuente y exportar: no se pierde ningún archivo")
     # El export usa la ruta ACTUAL, así que renombrar en la app no debe romperlo.

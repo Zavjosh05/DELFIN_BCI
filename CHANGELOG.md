@@ -84,12 +84,18 @@ cambios se agrupan por fecha de trabajo.
     rehacer dejan el CSV, su lateral y el proyecto siempre coherentes.
   - Los **segmentos** no estaban afectados (referencian el id de la fuente, no su
     nombre) y siguen igual. Los archivos **externos** al proyecto se siguen sin tocar.
-- **El prefijo del id ya no se encadena al re-exportar un bundle**. Dentro del bundle
-  cada CSV va como `<id>__señal.csv` (el prefijo evita choques de nombres). Al importar
-  ese archivo y **volver a exportarlo**, se le añadía **otro** prefijo, así que cada
-  ciclo importar→exportar encadenaba uno más
-  (`id__id__id__señal.csv`) y los nombres se volvían ilegibles. Ahora el prefijo se
-  **normaliza a uno solo**, sin importar cuántos ciclos lleve el archivo.
+- **Los CSV importados de un bundle se llaman como la señal**. Antes se guardaban con
+  el id delante (`<id>__señal.csv`), así que el archivo **no coincidía** con el nombre
+  que se ve en la interfaz; y como al re-exportar se le añadía **otro** prefijo, cada
+  ciclo importar→exportar encadenaba uno más (`id__id__id__señal.csv`) hasta volverlos
+  ilegibles. Ahora el prefijo se usa **solo dentro del ZIP** (para que no choquen dos
+  señales homónimas) y **al extraer se quita**: el archivo se llama como la señal. Si
+  ese nombre ya estuviera ocupado, se guarda con un sufijo (`señal_2.csv`).
+  - En consecuencia, las fuentes ya presentes se omiten **solo por id** (que es lo que
+    identifica de verdad a una fuente, y se conserva entre proyectos). Antes también se
+    omitían por nombre de archivo, lo que ahora habría descartado en silencio
+    grabaciones **distintas** que casualmente se llamaran igual.
+  - Los archivos ya importados con el nombre antiguo **no se tocan**: siguen funcionando.
 - **Importar un bundle ya no borra tus pipelines**. Al traer el preprocesamiento se
   **reemplazaban TODOS** los pipelines del proyecto por los del bundle, así que perdías
   los tuyos (y recuperarlos exigía deshacer varias veces, porque una importación son

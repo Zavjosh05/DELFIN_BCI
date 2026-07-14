@@ -1163,6 +1163,8 @@ class MainWindow(QMainWindow):
         """Aplica una configuración/bundle al proyecto actual. Devuelve un resumen.
 
         ``sections`` limita qué se importa (``None`` = todo lo que traiga)."""
+        from ..core import config_export
+
         def want(name: str) -> bool:
             return sections is None or name in sections
 
@@ -1172,19 +1174,24 @@ class MainWindow(QMainWindow):
         if srcs and src_blobs and want("sources"):
             imp = os.path.join(self.project.path, IMPORTED_DIR)
             os.makedirs(imp, exist_ok=True)
-            # Dedup: NO reimportar fuentes ya presentes (por id o por nombre de archivo).
+            # Dedup por **id**, que es lo que identifica de verdad a una fuente (se
+            # conserva entre proyectos). NO se deduplica por nombre de archivo: dos
+            # grabaciones distintas pueden llamarse igual, y omitirlas por eso haría
+            # perder datos en silencio; si el nombre choca se guarda con un sufijo.
             existing_ids = {s["id"] for s in self.project.sources}
-            existing_names = {os.path.basename(s.get("path", "")).lower()
-                              for s in self.project.sources}
             n_src, n_skip = 0, 0
             for meta in srcs:
                 arc = meta.get("file")
                 if not arc or arc not in src_blobs:
                     continue
-                if meta.get("id") in existing_ids or os.path.basename(arc).lower() in existing_names:
+                # El CSV se guarda con el nombre de la señal (sin el prefijo del id
+                # que lleva dentro del ZIP), para que coincida con lo que se ve en la
+                # interfaz. Si ese nombre ya está ocupado, se le añade un sufijo.
+                fname = config_export.source_filename(arc, meta.get("id"))
+                if meta.get("id") in existing_ids:
                     n_skip += 1
                     continue                          # ya importada: se ignora
-                dest = os.path.join(imp, os.path.basename(arc))
+                dest = self._unique_file(imp, fname)
                 with open(dest, "wb") as f:
                     f.write(src_blobs[arc])
                 try:
