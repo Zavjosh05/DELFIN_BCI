@@ -47,6 +47,33 @@ def main() -> int:
     sp = sgetter()
     assert sp["kernel"] == "linear" and sp["C"] == 4.0, sp
 
+    print("[2b] Parámetros nuevos: RF (min_leaf/class_weight), SVM (coef0/class_weight), LDA (solver/shrinkage)")
+    # RF: el editor prellena y devuelve los campos nuevos, y el entrenamiento los aplica.
+    _, rget2 = model_config._rf_editor({"min_samples_leaf": 3, "class_weight": "balanced"})   # noqa: SLF001
+    rp = rget2()
+    assert rp["min_samples_leaf"] == 3 and rp["class_weight"] == "balanced", rp
+    rf2 = classification.train(_ds(), "random_forest", clf_params=rp)
+    rclf = rf2.model.named_steps["clf"]
+    assert rclf.min_samples_leaf == 3 and rclf.class_weight == "balanced"
+    # SVM: coef0 + class_weight.
+    _, sget2 = model_config._svm_editor({"kernel": "poly", "coef0": 2.0, "class_weight": "balanced"})   # noqa: SLF001
+    spp = sget2()
+    assert spp["coef0"] == 2.0 and spp["class_weight"] == "balanced", spp
+    svm2 = classification.train(_ds(), "svm", clf_params=spp)
+    sclf = svm2.model.named_steps["clf"]
+    assert sclf.coef0 == 2.0 and sclf.class_weight == "balanced"
+    # LDA: antes NO tenía parámetros; ahora solver + shrinkage.
+    _, lget = model_config._lda_editor({"solver": "lsqr", "shrinkage": "auto"})   # noqa: SLF001
+    lp = lget()
+    assert lp == {"solver": "lsqr", "shrinkage": "auto"}, lp
+    lda2 = classification.train(_ds(), "lda", clf_params=lp)
+    lclf = lda2.model.named_steps["clf"]
+    assert lclf.solver == "lsqr" and lclf.shrinkage == "auto"
+    # guarda: el solver 'svd' NO admite shrinkage (debe quedar en None, sin reventar).
+    lda3 = classification.train(_ds(), "lda", clf_params={"solver": "svd", "shrinkage": "auto"})
+    assert lda3.model.named_steps["clf"].shrinkage is None
+    print("    RF/SVM/LDA: parámetros nuevos aplicados al estimador y entrenados")
+
     print("[3] Reentrenar clásico con nuevos parámetros (mismo flujo que el controlador)")
     new = classification.train(_ds(), "random_forest", clf_params=params)
     assert new.model.named_steps["clf"].n_estimators == 123

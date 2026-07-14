@@ -40,9 +40,11 @@ y disponen de **deshacer/rehacer** e historial.
   de línea, parámetros de Hjorth…).
 - **Construcción de datasets**: aísla segmentos de varios CSV, etiquétalos y
   genera una matriz de características (extracción **en multiproceso**).
-- **Clasificación**: **Random Forest** (nº de árboles, profundidad, criterio…),
+- **Clasificación**: **Random Forest** (nº de árboles, profundidad, mín. para
+  dividir, **mín. por hoja**, máx. características, criterio y **peso de clases**),
   **SVM** (kernel seleccionable: lineal, RBF, polinomial o sigmoide, con
-  C/gamma/grado) o LDA; **geometría de Riemann** (MDM,
+  C/gamma/grado, **coef0** y **peso de clases**) o **LDA** (**solver** svd/lsqr/eigen
+  y **shrinkage** ninguno/auto); **geometría de Riemann** (MDM,
   *tangent space* + regresión logística) y **CSP + LDA** sobre señal cruda
   (scikit-learn / pyriemann); y **redes neuronales** (PyTorch) configurables en
   detalle — MLP, CNN 1D, LSTM y **EEGNet** sobre señal cruda, con activación por

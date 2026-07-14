@@ -49,6 +49,15 @@ SVM_KERNELS = {
 }
 
 
+def _class_weight(value):
+    """Normaliza el parámetro ``class_weight`` de la interfaz.
+
+    La interfaz lo pasa como texto: ``"balanced"`` compensa clases desbalanceadas
+    (útil en MI, donde no siempre hay el mismo nº de ensayos por clase);
+    cualquier otro valor (``"none"``/``None``) = sin ponderar."""
+    return "balanced" if value == "balanced" else None
+
+
 def _make_classifier(name: str, params: dict | None):
     """Construye el estimador clásico, aplicando parámetros si los hay."""
     params = params or {}
@@ -58,8 +67,10 @@ def _make_classifier(name: str, params: dict | None):
             n_estimators=int(params.get("n_estimators", 200)),
             max_depth=(int(max_depth) if max_depth else None),  # 0 = sin límite
             min_samples_split=int(params.get("min_samples_split", 2)),
+            min_samples_leaf=int(params.get("min_samples_leaf", 1)),
             max_features=params.get("max_features", "sqrt"),
             criterion=params.get("criterion", "gini"),
+            class_weight=_class_weight(params.get("class_weight")),
             random_state=0,
         )
     if name == "svm":
@@ -70,10 +81,18 @@ def _make_classifier(name: str, params: dict | None):
             C=float(params.get("C", 1.0)),
             gamma=params.get("gamma", "scale"),
             degree=int(params.get("degree", 3)),
+            coef0=float(params.get("coef0", 0.0)),       # término libre (poly/sigmoide)
+            class_weight=_class_weight(params.get("class_weight")),
             random_state=0,
         )
     if name == "lda":
-        return LinearDiscriminantAnalysis()
+        solver = params.get("solver", "svd")
+        shrinkage = params.get("shrinkage")
+        # El shrinkage (regularización, útil con pocas muestras y muchas
+        # características, típico en EEG) solo es válido con lsqr/eigen, NO con svd.
+        if solver == "svd" or shrinkage in ("none", "", None):
+            shrinkage = None
+        return LinearDiscriminantAnalysis(solver=solver, shrinkage=shrinkage)
     raise ValueError(f"Clasificador desconocido: {name}")
 
 

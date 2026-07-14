@@ -42,25 +42,34 @@ def _rf_editor(params: dict):
     depth = QSpinBox(); depth.setRange(0, 200); depth.setValue(int(params.get("max_depth", 0) or 0))
     depth.setToolTip("0 = sin límite")
     split = QSpinBox(); split.setRange(2, 100); split.setValue(int(params.get("min_samples_split", 2)))
+    leaf = QSpinBox(); leaf.setRange(1, 100); leaf.setValue(int(params.get("min_samples_leaf", 1)))
+    leaf.setToolTip("Mínimo de muestras por hoja (mayor = menos sobreajuste).")
     feats = QComboBox()
     feats.addItem("sqrt", "sqrt"); feats.addItem("log2", "log2"); feats.addItem("todas", None)
     cur = params.get("max_features", "sqrt")
     feats.setCurrentIndex({"sqrt": 0, "log2": 1, None: 2}.get(cur, 0))
     crit = QComboBox(); crit.addItems(["gini", "entropy", "log_loss"])
     crit.setCurrentText(params.get("criterion", "gini"))
+    cw = QComboBox(); cw.addItem("ninguno", "none"); cw.addItem("balanced", "balanced")
+    cw.setCurrentIndex(1 if params.get("class_weight") == "balanced" else 0)
+    cw.setToolTip("«balanced» compensa clases desbalanceadas.")
     form.addRow("Nº de árboles:", n_est)
     form.addRow("Profundidad máx.:", depth)
     form.addRow("Mín. para dividir:", split)
+    form.addRow("Mín. por hoja:", leaf)
     form.addRow("Máx. características:", feats)
     form.addRow("Criterio:", crit)
+    form.addRow("Peso de clases:", cw)
 
     def getter():
         return {
             "n_estimators": n_est.value(),
             "max_depth": depth.value(),
             "min_samples_split": split.value(),
+            "min_samples_leaf": leaf.value(),
             "max_features": feats.currentData(),
             "criterion": crit.currentText(),
+            "class_weight": cw.currentData(),
         }
     return box, getter
 
@@ -78,15 +87,24 @@ def _svm_editor(params: dict):
     c = QDoubleSpinBox(); c.setRange(0.01, 1000.0); c.setDecimals(2); c.setValue(float(params.get("C", 1.0)))
     gamma = QComboBox(); gamma.addItems(["scale", "auto"]); gamma.setCurrentText(params.get("gamma", "scale"))
     degree = QSpinBox(); degree.setRange(1, 10); degree.setValue(int(params.get("degree", 3)))
+    coef0 = QDoubleSpinBox(); coef0.setRange(-100.0, 100.0); coef0.setDecimals(2)
+    coef0.setValue(float(params.get("coef0", 0.0)))
+    coef0.setToolTip("Término independiente del kernel (solo poly/sigmoide).")
+    cw = QComboBox(); cw.addItem("ninguno", "none"); cw.addItem("balanced", "balanced")
+    cw.setCurrentIndex(1 if params.get("class_weight") == "balanced" else 0)
+    cw.setToolTip("«balanced» compensa clases desbalanceadas.")
     form.addRow("Kernel:", kernel)
     form.addRow("C:", c)
     form.addRow("gamma:", gamma)
     form.addRow("Grado (poly):", degree)
+    form.addRow("coef0 (poly/sigmoide):", coef0)
+    form.addRow("Peso de clases:", cw)
 
     def _sync():
         k = kernel.currentData()
         degree.setEnabled(k == "poly")
         gamma.setEnabled(k in ("rbf", "poly", "sigmoid"))
+        coef0.setEnabled(k in ("poly", "sigmoid"))
     kernel.currentIndexChanged.connect(_sync)
     _sync()
 
@@ -96,6 +114,8 @@ def _svm_editor(params: dict):
             "C": float(c.value()),
             "gamma": gamma.currentText(),
             "degree": degree.value(),
+            "coef0": float(coef0.value()),
+            "class_weight": cw.currentData(),
         }
     return box, getter
 
@@ -140,6 +160,30 @@ def _nn_editor(config: dict):
     return box, getter
 
 
+def _lda_editor(params: dict):
+    """Widgets del LDA (solver + shrinkage). Devuelve (groupbox, getter)."""
+    params = params or {}
+    box = QGroupBox("Parámetros del LDA")
+    form = QFormLayout(box)
+    solver = QComboBox(); solver.addItems(["svd", "lsqr", "eigen"])
+    solver.setCurrentText(params.get("solver", "svd"))
+    shrink = QComboBox()
+    shrink.addItem("ninguno", "none"); shrink.addItem("auto (Ledoit-Wolf)", "auto")
+    shrink.setCurrentIndex(1 if params.get("shrinkage") == "auto" else 0)
+    shrink.setToolTip("Regularización (solo lsqr/eigen); útil con pocas muestras (EEG).")
+    form.addRow("Solver:", solver)
+    form.addRow("Shrinkage:", shrink)
+
+    def _sync():
+        shrink.setEnabled(solver.currentText() != "svd")
+    solver.currentIndexChanged.connect(_sync)
+    _sync()
+
+    def getter():
+        return {"solver": solver.currentText(), "shrinkage": shrink.currentData()}
+    return box, getter
+
+
 def _riemann_editor(result):
     box = QGroupBox("Señal cruda (Riemann/CSP)")
     form = QFormLayout(box)
@@ -176,14 +220,13 @@ def edit_model_config(parent, name: str, result, retrainable: bool, reason: str 
 
     getter = None
     kind = None
-    if result.classifier_name == "lda":
-        info = QLabel("El Análisis Discriminante Lineal (LDA) no tiene "
-                      "hiperparámetros configurables.")
-        info.setWordWrap(True)
-        lay.addWidget(info)
-    elif fam == "classic":
-        box, getter = (_svm_editor(result.clf_params) if result.classifier_name == "svm"
-                       else _rf_editor(result.clf_params))
+    if fam == "classic":
+        if result.classifier_name == "svm":
+            box, getter = _svm_editor(result.clf_params)
+        elif result.classifier_name == "lda":
+            box, getter = _lda_editor(result.clf_params)
+        else:
+            box, getter = _rf_editor(result.clf_params)
         lay.addWidget(box)
         kind = "classic"
     elif fam == "nn":
