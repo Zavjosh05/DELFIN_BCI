@@ -48,9 +48,15 @@ def main() -> int:
     dataset_mod.save_dataset(src, ds, "dataset")
     res = classification.train(ds, "random_forest", clf_params={
         "n_estimators": 40, "min_samples_leaf": 2, "class_weight": "balanced"})
+    # Recetas de hiperparámetros guardadas SIN entrenar (también viajan al bundle).
+    src.save_model_config({"name": "lda_receta", "classifier_name": "lda",
+                           "clf_params": {"solver": "lsqr", "shrinkage": "auto"}})
+    src.save_model_config({"name": "ts_receta", "classifier_name": "riemann_ts",
+                           "raw_window": 256})
     bundle = os.path.join(tmp, "origen" + config_export.BUNDLE_EXT)
-    config_export.export_bundle(src, {"rf_1": res},
-                                {"preprocessing", "dataset", "models", "sources"}, bundle)
+    config_export.export_bundle(
+        src, {"rf_1": res},
+        {"preprocessing", "dataset", "models", "model_configs", "sources"}, bundle)
     print(f"    bundle creado: {os.path.basename(bundle)}")
 
     print("[2] Importar el bundle en un proyecto NUEVO (otra 'máquina')")
@@ -98,7 +104,7 @@ def main() -> int:
     print(f"    entradas del bundle: {names}")
 
     print("[5] El bundle trae los HIPERPARÁMETROS del modelo y se detectan")
-    entries = config_export.model_configs(cfg)
+    entries = config_export.reusable_model_configs(cfg)
     assert entries and entries[0]["classifier_name"] == "random_forest", entries
     e = entries[0]
     assert e["clf_params"]["n_estimators"] == 40, e["clf_params"]
@@ -121,7 +127,7 @@ def main() -> int:
     print("[6b] La oferta al importar entrena y AÑADE el modelo (sin pisar el importado)")
     import time
     orig = mc.choose_imported_configs
-    mc.choose_imported_configs = staticmethod(lambda *a, **k: entries)   # simula «sí, entrena»
+    mc.choose_imported_configs = staticmethod(lambda *a, **k: entries[:1])  # simula «sí»
     try:
         win.offer_imported_model_configs(cfg)
         end = time.time() + 30
@@ -139,6 +145,32 @@ def main() -> int:
     assert win._task_for_config(e) is None, "sin dataset no debería poder entrenar"
     win.dataset = saved
     print("    sin dataset -> no disponible")
+
+    print("[7] Las configuraciones SIN entrenar viajan en el bundle y se importan")
+    assert {c["name"] for c in cfg["model_configs"]} == {"lda_receta", "ts_receta"}, \
+        cfg["model_configs"]
+    got = {c["name"]: c for c in win.project.model_configs()}
+    assert set(got) == {"lda_receta", "ts_receta"}, list(got)     # llegaron al destino
+    assert got["lda_receta"]["clf_params"] == {"solver": "lsqr", "shrinkage": "auto"}
+    assert got["ts_receta"]["raw_window"] == 256, got["ts_receta"]
+    # y se ofrecen para reentrenar junto a los modelos entrenados
+    names = {x.get("name") for x in config_export.reusable_model_configs(cfg)}
+    assert {"rf_1", "lda_receta", "ts_receta"} <= names, names
+    print(f"    importadas: {sorted(got)} · reutilizables: {sorted(names)}")
+
+    print("[7b] Reimportar NO duplica las configuraciones ya presentes")
+    n_cfg = len(win.project.model_configs())
+    win._apply_config(*config_export.read_bundle(bundle))
+    assert len(win.project.model_configs()) == n_cfg, win.project.model_configs()
+    print(f"    siguen siendo {n_cfg}")
+
+    print("[7c] Sin marcar la casilla, el bundle NO las lleva")
+    b2 = os.path.join(tmp, "sin_cfg" + config_export.BUNDLE_EXT)
+    config_export.export_bundle(src, {"rf_1": res}, {"preprocessing", "models"}, b2)
+    cfg2, _m, _d, _s = config_export.read_bundle(b2)
+    assert "model_configs" not in cfg2, cfg2.get("model_configs")
+    assert "model_configs" in config_export.SECTIONS
+    print("    sección opcional respetada")
 
     win.acq_panel.shutdown()
     print("\nIMPORTAR BUNDLE OK ✓")

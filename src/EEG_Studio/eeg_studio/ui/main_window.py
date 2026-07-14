@@ -891,12 +891,19 @@ class MainWindow(QMainWindow):
         chk_pre = QCheckBox("Preprocesamiento (pipelines, canales excluidos, alias)")
         chk_ds = QCheckBox("Dataset (características, segmentos etiquetados, recortes)")
         chk_mdl = QCheckBox(f"Modelos de clasificación ({len(self.models)})")
+        n_cfg = len(self.project.model_configs()) if self.project else 0
+        chk_cfg = QCheckBox(f"Configuraciones de modelo sin entrenar ({n_cfg})")
+        chk_cfg.setToolTip("Las recetas de hiperparámetros guardadas en el proyecto. "
+                           "Son solo texto (no pesan) y al importarlas se pueden "
+                           "entrenar con los datos del otro proyecto.")
         n_src = len(self.project.sources) if self.project else 0
         chk_src = QCheckBox(f"Señales de origen — CSV ({n_src})")
         chk_pre.setChecked(True)
         chk_ds.setChecked(True)
         chk_mdl.setChecked(bool(self.models))
         chk_mdl.setEnabled(bool(self.models))
+        chk_cfg.setChecked(n_cfg > 0)
+        chk_cfg.setEnabled(n_cfg > 0)
         chk_src.setEnabled(n_src > 0)                # opcional: aumenta el tamaño
         lay.addWidget(chk_pre)
 
@@ -938,7 +945,7 @@ class MainWindow(QMainWindow):
         chk_pre.toggled.connect(pl_box.setEnabled)
         lay.addWidget(pl_box)
 
-        for c in (chk_ds, chk_mdl, chk_src):
+        for c in (chk_ds, chk_mdl, chk_cfg, chk_src):
             lay.addWidget(c)
         hint = QLabel("El bundle NO incluye la caché (regenerable), por lo que suele "
                       "pesar menos que la carpeta del proyecto aunque incluyas las señales.")
@@ -961,6 +968,8 @@ class MainWindow(QMainWindow):
             sections.add("dataset")
         if chk_mdl.isChecked():
             sections.add("models")
+        if chk_cfg.isChecked():
+            sections.add("model_configs")
         if chk_src.isChecked():
             sections.add("sources")
         if not sections:
@@ -1154,6 +1163,22 @@ class MainWindow(QMainWindow):
                 except Exception:  # noqa: BLE001
                     pass
             parts.append(f"{len(model_blobs)} modelo(s)")
+        # Configuraciones de modelo sin entrenar: se añaden las que falten (por
+        # nombre); las ya presentes NO se pisan.
+        incoming = cfg.get("model_configs") or []
+        if incoming:
+            existing = {c.get("name") for c in self.project.model_configs()}
+            added = 0
+            for c in incoming:
+                if not isinstance(c, dict) or not c.get("name") or not c.get(
+                        "classifier_name"):
+                    continue
+                if c["name"] in existing:
+                    continue
+                self.project.save_model_config(c)
+                added += 1
+            if added:
+                parts.append(f"{added} configuración(es) de modelo")
         self.clf_panel.refresh()
         return ", ".join(parts) or "nada"
 
@@ -2010,7 +2035,7 @@ class MainWindow(QMainWindow):
         con ellos sobre los datos de ESTE proyecto (se añaden como modelos nuevos;
         no sustituyen a los modelos importados)."""
         from ..core import config_export
-        entries = config_export.model_configs(cfg)
+        entries = config_export.reusable_model_configs(cfg)
         if not entries or self.project is None:
             return
         can_features = self.dataset is not None

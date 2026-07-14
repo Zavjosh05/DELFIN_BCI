@@ -61,6 +61,11 @@ cambios se agrupan por fecha de trabajo.
   **deshabilitadas indicando qué falta**.
 - El bundle incluye ahora también la **ventana de señal cruda** (`raw_window`) de cada
   modelo, necesaria para poder reentrenar Riemann/CSP/redes en otro proyecto.
+- **Las configuraciones de modelo sin entrenar también se exportan/importan**: nueva
+  casilla **«Configuraciones de modelo sin entrenar (N)»** al exportar el bundle (son
+  solo texto, no pesan). Al importar se **añaden al proyecto** las que falten —las ya
+  presentes, por nombre, no se pisan— y aparecen junto a los modelos entrenados en la
+  oferta de **entrenar con los datos locales**.
 
 ### Corregido / reforzado
 - **Barra de controles del visor reacomodable (señal y tiempo real)**: antes, con

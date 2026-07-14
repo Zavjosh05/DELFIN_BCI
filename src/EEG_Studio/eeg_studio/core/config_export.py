@@ -21,7 +21,7 @@ import zipfile
 
 from ..config import APP_NAME, APP_VERSION, DATASETS_DIR
 
-SECTIONS = ("preprocessing", "dataset", "models", "sources")
+SECTIONS = ("preprocessing", "dataset", "models", "model_configs", "sources")
 CONFIG_EXT = ".eegcfg"        # JSON legible (solo configuración, sin binarios)
 BUNDLE_EXT = ".eegbundle"     # ZIP autónomo: configuración + modelos + datasets
 
@@ -49,19 +49,32 @@ def _model_entry(name: str, res) -> dict:
     }
 
 
-def model_configs(cfg: dict) -> list[dict]:
+def reusable_model_configs(cfg: dict) -> list[dict]:
     """Configuraciones de modelo **reutilizables** que trae una config/bundle.
 
-    Devuelve las entradas de ``cfg["models"]`` que llevan hiperparámetros con los
-    que se podría **volver a entrenar** sobre los datos de otro proyecto (clásicos
-    con ``clf_params``, redes con ``nn_config``, o Riemann/CSP con ``raw_window``).
+    Reúne dos orígenes, ambos con los mismos campos de hiperparámetros:
+
+    * ``cfg["models"]`` — los modelos **entrenados** que viajan en el bundle (de
+      cada uno se puede reaprovechar su receta).
+    * ``cfg["model_configs"]`` — las configuraciones **sin entrenar** guardadas en
+      el proyecto de origen.
+
+    Devuelve las que sirven para **volver a entrenar** en otro proyecto (clásicos
+    con ``clf_params``, redes con ``nn_config``, o Riemann/CSP con ``raw_window``),
+    sin repetir nombres.
     """
     out: list[dict] = []
-    for m in (cfg.get("models") or []):
+    seen: set = set()
+    for m in list(cfg.get("models") or []) + list(cfg.get("model_configs") or []):
         if not isinstance(m, dict) or not m.get("classifier_name"):
             continue
-        if m.get("clf_params") or m.get("nn_config") or m.get("raw_window"):
-            out.append(m)
+        if not (m.get("clf_params") or m.get("nn_config") or m.get("raw_window")):
+            continue
+        key = (m.get("name"), m.get("classifier_name"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(m)
     return out
 
 
@@ -109,6 +122,10 @@ def build_config(project, models: dict, sections, pipeline_indices=None) -> dict
         }
     if "models" in sections:
         cfg["models"] = [_model_entry(n, r) for n, r in (models or {}).items()]
+    if "model_configs" in sections:
+        # Recetas de hiperparámetros guardadas en el proyecto (sin entrenar): son
+        # solo JSON, no llevan binarios asociados.
+        cfg["model_configs"] = copy.deepcopy(project.model_configs())
     if "sources" in sections:
         cfg["sources"] = [{"id": s["id"], "alias": s["alias"], "file": None}
                           for s in project.sources]
