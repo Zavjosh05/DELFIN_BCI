@@ -972,18 +972,27 @@ class AcquisitionPanel(QWidget):
                 return                                     # cancelar
 
         search_dir, added, updated, skipped = None, 0, 0, 0
+        gave_up = False                                # el usuario canceló la búsqueda
+        missing: list[str] = []
         for cfg, dup in pairs:
             if dup is not None and not overwrite:
                 skipped += 1
                 continue
             vp = cfg.get("path", "")
+            # Busca la ruta original, luego la carpeta indicada y luego data/videos.
             resolved = stim_core.relocate_video(vp, search_dir)
-            if resolved is None:               # no se encuentra: pregunta la ubicación
+            if resolved is None and not gave_up:   # no aparece: pregunta la ubicación
                 folder = QFileDialog.getExistingDirectory(
                     self, f"¿Dónde están los videos? (falta «{os.path.basename(vp)}»)")
                 if folder:
+                    # Se recuerda para los demás; si alguno vive en otra carpeta, se
+                    # vuelve a preguntar por ese.
                     search_dir = folder
                     resolved = stim_core.relocate_video(vp, search_dir)
+                else:
+                    gave_up = True             # canceló: no se insiste con los demás
+            if resolved is None:
+                missing.append(os.path.basename(vp) or str(cfg.get("label", "?")))
             new_cfg = dict(cfg)
             new_cfg["path"] = resolved or vp               # deja la original si no se ubicó
             if dup is not None:                            # sobrescribe el existente (mismo id)
@@ -1000,7 +1009,20 @@ class AcquisitionPanel(QWidget):
             parts.append(f"{updated} sobrescrito(s)")
         if skipped:
             parts.append(f"{skipped} ignorado(s)")
+        if missing:
+            parts.append(f"{len(missing)} sin video")
         self.status.setText("Estímulos importados: " + ", ".join(parts) + ".")
+        if missing:
+            # Antes se guardaba la ruta inexistente sin avisar y el estímulo quedaba
+            # inservible sin que se notara.
+            self.controller.warn(
+                "Videos no encontrados",
+                "La configuración se importó (marcas y segmentos), pero NO se "
+                "localizaron estos videos:\n\n• " + "\n• ".join(missing[:12])
+                + ("\n…" if len(missing) > 12 else "")
+                + "\n\nNo podrás reproducir esos estímulos hasta que el video esté "
+                  "disponible. Colócalos en «data/videos» (se buscan ahí solos) o "
+                  "vuelve a configurar el estímulo eligiendo el archivo.")
 
     def _ask_stim_overwrite(self, dups: list) -> bool | None:
         """Pregunta qué hacer con estímulos repetidos al importar.

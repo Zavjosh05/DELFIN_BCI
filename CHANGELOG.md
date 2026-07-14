@@ -73,6 +73,19 @@ cambios se agrupan por fecha de trabajo.
   del proyecto. Antes se importaba todo sin preguntar.
 
 ### Corregido / reforzado
+- **Importar una configuración de estímulos localiza los videos sola**. Al traer una
+  configuración de **otro equipo**, la ruta guardada no existe aquí, y la app pedía la
+  carpeta **aunque los videos estuvieran en `data/videos`** (su sitio de siempre, que
+  la app ya sabe encontrar). Ahora `relocate_video` busca por orden: la ruta original →
+  la carpeta que indiques → **`data/videos`**; en el caso normal no pregunta nada.
+  Además:
+  - Si un video **no aparece en ningún lado**, antes se guardaba la ruta inexistente
+    **sin avisar** y el estímulo quedaba inservible sin que se notara. Ahora **avisa**
+    de cuáles faltan (y el estado lo cuenta como «N sin video»), conservando igualmente
+    las marcas y segmentos de la configuración.
+  - Si aun así no aparece, **sigues pudiendo indicar la carpeta**: la que elijas se
+    recuerda para los demás videos, y si alguno vive en **otra** carpeta se te vuelve a
+    preguntar por ese. Si **cancelas**, no se insiste con el resto.
 - **Renombrar una señal ya no pierde sus marcas ni rompe la fuente al deshacer**. Al
   renombrar un CSV interno del proyecto pasaban dos cosas:
   - Las **marcas** viven en un archivo lateral llamado según el CSV

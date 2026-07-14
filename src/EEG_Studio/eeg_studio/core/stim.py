@@ -103,14 +103,25 @@ def project_classes(project) -> list[str]:
     return sorted(classes)
 
 
-def relocate_video(path: str, search_dir: str | None) -> str | None:
-    """Ruta válida del video: la original si existe, o una con el MISMO nombre
-    dentro de ``search_dir`` (para reubicar al importar en otro equipo/proyecto).
-    Devuelve ``None`` si no se encuentra."""
+def relocate_video(path: str, search_dir: str | None = None) -> str | None:
+    """Ruta válida del video, buscando por orden:
+
+    1. la ruta original, si existe (mismo equipo);
+    2. el MISMO nombre dentro de ``search_dir`` (la carpeta que indique el usuario);
+    3. el MISMO nombre en la carpeta **``data/videos``** del proyecto — así, al
+       importar una configuración de otro equipo, los videos de siempre se
+       encuentran solos y no hace falta preguntar nada.
+
+    Devuelve ``None`` si no aparece en ninguna."""
     if path and os.path.isfile(path):
         return path
-    if search_dir and path:
-        cand = os.path.join(search_dir, os.path.basename(path))
+    if not path:
+        return None
+    base = os.path.basename(path)
+    for folder in (search_dir, find_videos_dir()):
+        if not folder:
+            continue
+        cand = os.path.join(folder, base)
         if os.path.isfile(cand):
             return cand
     return None

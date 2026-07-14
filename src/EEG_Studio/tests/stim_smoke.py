@@ -56,6 +56,11 @@ def main() -> int:
     assert stim_core.relocate_video("/no/existe/" + videos[0]["name"],
                                     os.path.dirname(vp)) == vp
     assert stim_core.relocate_video("/no/existe/nada.mp4", "/tampoco") is None
+    # Sin carpeta indicada, cae en data/videos: una config traída de otro equipo
+    # encuentra sus videos sola.
+    assert stim_core.relocate_video(r"D:\OtroEquipo\videos\\" + videos[0]["name"],
+                                    None) == vp
+    print("    original -> carpeta indicada -> data/videos")
 
     print("[5] Exportar/importar configuración (round-trip con reubicación)")
     tmp = tempfile.mkdtemp()
@@ -181,6 +186,76 @@ def main() -> int:
         assert "nuevo" in ipanel.status.text().lower(), ipanel.status.text()
     finally:
         apmod.QFileDialog.getOpenFileName = orig_open
+
+    print("[11] Importar config de OTRO equipo: localiza los videos sola (data/videos)")
+    # Regresión: no se buscaba en data/videos, así que siempre pedía la carpeta; y si
+    # el usuario cancelaba, se guardaba la ruta inexistente SIN avisar.
+    import eeg_studio.ui.acquisition_panel as apmod
+
+    def _import_cfg(entries):
+        d = tempfile.mkdtemp()
+        fjson = os.path.join(d, "e.json")
+        with open(fjson, "w", encoding="utf-8") as fh:
+            json.dump({"stim_videos": entries}, fh, ensure_ascii=False)
+        w = MainWindow()
+        w.project = Project.create(tempfile.mkdtemp(), "imp")
+        apmod.QFileDialog.getOpenFileName = staticmethod(
+            lambda *a, **k: (fjson, "JSON (*.json)"))
+        asks = {"n": 0}
+        apmod.QFileDialog.getExistingDirectory = staticmethod(
+            lambda *a, **k: (asks.update(n=asks["n"] + 1), "")[1])
+        warns = {"n": 0}
+        w.warn = lambda *a, **k: warns.update(n=warns["n"] + 1)
+        w.acq_panel._import_stim()
+        return w, asks["n"], warns["n"]
+
+    ajena = [{"id": "otro1", "label": "arriba", "name": videos[0]["name"],
+              "path": r"D:\OtroEquipo\videos\\" + videos[0]["name"],
+              "events": [{"kind": "segment", "start": 0, "stop": 900, "label": "arriba"}]}]
+    w, asks, warns = _import_cfg(ajena)
+    got = w.project.stim_videos()[0]
+    assert os.path.isfile(got["path"]), f"no localizó el video: {got['path']}"
+    assert asks == 0, "no debería preguntar: el video está en data/videos"
+    assert warns == 0 and got["events"], "no debería avisar; y conserva los segmentos"
+    w.acq_panel.shutdown()
+    print("    video localizado solo, sin preguntar ni avisar")
+
+    print("[11b] Video que no aparece: si CANCELAS no insiste, y AVISA (no lo calla)")
+    faltan = [{"id": "f1", "label": "abajo", "name": "no_existe.mp4",
+               "path": r"D:\Otro\no_existe.mp4", "events": []},
+              {"id": "f2", "label": "arriba", "name": "tampoco.mp4",
+               "path": r"D:\Otro\tampoco.mp4", "events": []}]
+    w2, asks2, warns2 = _import_cfg(faltan)
+    assert asks2 == 1, f"tras cancelar no debe insistir con los demás ({asks2})"
+    assert warns2 == 1, "debe avisar de los videos no encontrados"
+    assert "sin video" in w2.acq_panel.status.text(), w2.acq_panel.status.text()
+    w2.acq_panel.shutdown()
+    print("    una sola pregunta + aviso de los que faltan")
+
+    print("[11c] Puedes elegir una carpeta DISTINTA para cada video que falte")
+    import shutil
+    c1, c2 = tempfile.mkdtemp(), tempfile.mkdtemp()
+    shutil.copy(videos[0]["path"], os.path.join(c1, "peliA.mp4"))
+    shutil.copy(videos[1]["path"], os.path.join(c2, "peliB.mp4"))
+    dos = [{"id": "d1", "label": "arriba", "name": "peliA.mp4",
+            "path": r"D:\Otro\peliA.mp4", "events": []},
+           {"id": "d2", "label": "abajo", "name": "peliB.mp4",
+            "path": r"D:\Otro\peliB.mp4", "events": []}]
+    dj = os.path.join(tempfile.mkdtemp(), "dos.json")
+    with open(dj, "w", encoding="utf-8") as fh:
+        json.dump({"stim_videos": dos}, fh, ensure_ascii=False)
+    w3 = MainWindow()
+    w3.project = Project.create(tempfile.mkdtemp(), "dos_carpetas")
+    apmod.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (dj, "JSON (*.json)"))
+    elecciones = [c1, c2]                      # el usuario indica una carpeta y luego otra
+    apmod.QFileDialog.getExistingDirectory = staticmethod(
+        lambda *a, **k: elecciones.pop(0) if elecciones else "")
+    w3.warn = lambda *a, **k: (_ for _ in ()).throw(AssertionError("no debía avisar"))
+    w3.acq_panel._import_stim()
+    got3 = w3.project.stim_videos()
+    assert len(got3) == 2 and all(os.path.isfile(v["path"]) for v in got3), got3
+    w3.acq_panel.shutdown()
+    print("    localizados desde dos carpetas distintas")
 
     print("\nESTIMULACIÓN SINCRONIZADA (GENERAL) OK ✓")
     return 0
