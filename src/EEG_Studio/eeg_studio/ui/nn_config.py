@@ -195,8 +195,16 @@ class NNConfigWidget(QGroupBox):
     # --- Tipo de red ------------------------------------------------------
     def set_net_type(self, net_type: str) -> None:
         """Reinicia el editor con los valores por defecto del tipo dado."""
+        self.load_config(default_config(net_type))
+
+    def load_config(self, config: dict) -> None:
+        """Carga una configuración CONCRETA en el editor (p. ej. un preset).
+
+        Las claves que falten se completan con los valores por defecto del tipo
+        de red, así una configuración parcial no rompe el editor."""
+        net_type = config.get("type", "mlp")
+        cfg = {**default_config(net_type), **config}
         self.net_type = net_type
-        cfg = default_config(net_type)
         is_eegnet = net_type == "eegnet"
 
         # EEGNet tiene arquitectura fija: se oculta la lista de capas.

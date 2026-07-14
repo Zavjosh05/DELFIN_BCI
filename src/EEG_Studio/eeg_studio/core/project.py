@@ -71,6 +71,9 @@ def _default_state() -> dict:
         "cuts": {},              # source_id -> [[inicio, fin], ...] tramos eliminados
         "dataset": {"use_bands": True, "use_time": True},
         "stim_videos": [],       # estímulos configurados (video -> marcas/segmentos en tiempo)
+        # Configuraciones de modelo guardadas (hiperparámetros SIN entrenar):
+        # {"name", "classifier_name", "clf_params"|"nn_config"|"raw_window"}
+        "model_configs": [],
     }
 
 
@@ -573,6 +576,35 @@ class Project:
     def remove_stim_video(self, video_id: str) -> None:
         keep = [v for v in self.state.get("stim_videos", []) if v.get("id") != video_id]
         self._commit("stim_videos", keep, "Quitar estímulo")
+
+    # --- Configuraciones de modelo (hiperparámetros, SIN entrenar) ---------
+    def model_configs(self) -> list[dict]:
+        """Configuraciones de modelo guardadas en el proyecto."""
+        return [dict(c) for c in self.state.get("model_configs", [])]
+
+    def save_model_config(self, config: dict) -> dict:
+        """Guarda (o actualiza, por ``name``) una configuración de modelo.
+
+        Es solo la **receta** de hiperparámetros: no entrena ni necesita datos."""
+        cfg = dict(config)
+        name = str(cfg.get("name", "")).strip()
+        if not name:
+            raise ValueError("La configuración necesita un nombre.")
+        cfg["name"] = name
+        configs = [dict(c) for c in self.state.get("model_configs", [])]
+        for i, c in enumerate(configs):
+            if c.get("name") == name:
+                configs[i] = cfg
+                break
+        else:
+            configs.append(cfg)
+        self._commit("model_configs", configs, f"Guardar configuración «{name}»")
+        return cfg
+
+    def remove_model_config(self, name: str) -> None:
+        keep = [c for c in self.state.get("model_configs", []) if c.get("name") != name]
+        if len(keep) != len(self.state.get("model_configs", [])):
+            self._commit("model_configs", keep, f"Quitar configuración «{name}»")
 
     def repeat_segment(self, segment_id: str, period: int, count: int | None = None,
                        n_samples: int | None = None) -> int:

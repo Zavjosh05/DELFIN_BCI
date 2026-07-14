@@ -1059,6 +1059,8 @@ class MainWindow(QMainWindow):
         summary = self._apply_config(cfg, model_blobs, ds_blobs, src_blobs)
         self._after_state_change()
         self.statusBar().showMessage(f"Importado: {summary}")
+        # Si trae hiperparámetros de modelos, ofrece reutilizarlos con los datos locales.
+        self.offer_imported_model_configs(cfg)
 
     def _apply_config(self, cfg: dict, model_blobs: dict, ds_blobs: dict,
                       src_blobs: dict | None = None) -> str:
@@ -2001,6 +2003,163 @@ class MainWindow(QMainWindow):
             self.progress.setRange(0, total)
         self.progress.setValue(done_n)
         self.statusBar().showMessage(f"Entrenando red… época {done_n}/{total}")
+
+    # --- Reutilizar los hiperparámetros que trae una config/bundle ---------
+    def offer_imported_model_configs(self, cfg: dict) -> None:
+        """Si la config/bundle trae **hiperparámetros de modelos**, ofrece entrenar
+        con ellos sobre los datos de ESTE proyecto (se añaden como modelos nuevos;
+        no sustituyen a los modelos importados)."""
+        from ..core import config_export
+        entries = config_export.model_configs(cfg)
+        if not entries or self.project is None:
+            return
+        can_features = self.dataset is not None
+        can_raw = bool(self.project.state.get("segments"))
+        from . import model_config
+        chosen = model_config.choose_imported_configs(self, entries, can_features, can_raw)
+        if chosen:
+            self._train_config_queue(list(chosen))
+
+    def train_all_saved_configs(self) -> None:
+        """Entrena un modelo por cada configuración guardada en el proyecto.
+
+        Para hacerlo «todo de una vez»: recorre las configuraciones guardadas (de
+        cualquier clasificador) y las entrena una tras otra. Las que necesiten
+        datos que no hay (dataset o segmentos) se omiten."""
+        if not self._require_project():
+            return
+        configs = self.project.model_configs()
+        if not configs:
+            self.info("Sin configuraciones",
+                      "No hay configuraciones guardadas en el proyecto. Ajusta los "
+                      "parámetros de un modelo y pulsa «Guardar actual…».")
+            return
+        ready = [c for c in configs if self._task_for_config(c) is not None]
+        skipped = len(configs) - len(ready)
+        if not ready:
+            self.info("Faltan datos",
+                      "Ninguna configuración se puede entrenar todavía: construye el "
+                      "dataset (clásicos/MLP) o crea segmentos etiquetados "
+                      "(Riemann/CSP/redes de señal cruda).")
+            return
+        extra = f"\n\nSe omitirán {skipped} por falta de datos." if skipped else ""
+        if QMessageBox.question(
+                self, "Entrenar todas",
+                f"Se entrenarán {len(ready)} configuración(es) guardada(s), una tras "
+                f"otra. Puede tardar.{extra}\n\n¿Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes) != QMessageBox.StandardButton.Yes:
+            return
+        entries = []
+        for c in ready:                                # nombre del modelo = el de la config
+            name = c.get("name") or c.get("classifier_name")
+            target = name if name not in self.models else self._auto_model_name(
+                c["classifier_name"])
+            entries.append({**c, "_target_name": target})
+        self._train_config_queue(entries)
+
+    def retrain_all_models(self) -> None:
+        """Reentrena TODOS los modelos ya entrenados con los datos actuales.
+
+        Conserva los hiperparámetros de cada modelo y su nombre: es lo que hace
+        falta cuando cambia el dataset o los segmentos."""
+        if not self._require_project() or not self.models:
+            self.info("Sin modelos", "Todavía no hay modelos entrenados.")
+            return
+        entries = []
+        for name, res in self.models.items():
+            entry = {
+                "name": name,
+                "classifier_name": res.classifier_name,
+                "clf_params": getattr(res, "clf_params", None),
+                "nn_config": getattr(res, "nn_config", None),
+                "raw_window": int(getattr(res, "raw_window", 0) or 0),
+                "_target_name": name,                  # sustituye al modelo actual
+            }
+            if self._task_for_config(entry) is not None:
+                entries.append(entry)
+        skipped = len(self.models) - len(entries)
+        if not entries:
+            self.info("Faltan datos",
+                      "No se puede reentrenar: construye el dataset o crea segmentos "
+                      "etiquetados según el tipo de modelo.")
+            return
+        extra = f"\n\nSe omitirán {skipped} por falta de datos." if skipped else ""
+        if QMessageBox.question(
+                self, "Reentrenar todos",
+                f"Se reentrenarán {len(entries)} modelo(s) con los datos actuales del "
+                f"proyecto, conservando sus hiperparámetros.\n\nCada modelo será "
+                f"SUSTITUIDO por su versión nueva (mismo nombre).{extra}\n\n¿Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._train_config_queue(entries)
+
+    def _task_for_config(self, entry: dict):
+        """Tarea de entrenamiento para una config de modelo importada (o ``None``
+        si su clasificador no existe o faltan los datos que necesita)."""
+        key = entry.get("classifier_name")
+        if key not in classification.MODEL_FAMILY:
+            return None
+        if classification.is_nn(key):
+            nn_cfg = entry.get("nn_config")
+            if not nn_cfg:
+                return None
+            if classification.requires_raw(key):
+                if not self.project.state.get("segments"):
+                    return None
+                window = int(nn_cfg.get("window_samples", 512))
+                return lambda progress=None: classification.train_raw(
+                    dataset_mod.build_raw_dataset(self.project, window), key, nn_cfg,
+                    progress=progress)
+            if self.dataset is None:
+                return None
+            return lambda progress=None: classification.train(
+                self.dataset, key, nn_config=nn_cfg, progress=progress)
+        if classification.is_riemann(key):
+            if not self.project.state.get("segments"):
+                return None
+            window = int(entry.get("raw_window") or 512)
+            return lambda progress=None: classification.train_riemann(
+                dataset_mod.build_raw_dataset(self.project, window), key,
+                raw_window=window)
+        if self.dataset is None:                       # clásicos: necesitan dataset
+            return None
+        return lambda progress=None: classification.train(
+            self.dataset, key, clf_params=(entry.get("clf_params") or None),
+            progress=progress)
+
+    def _train_config_queue(self, entries: list) -> None:
+        """Entrena, uno tras otro, los modelos de las configuraciones elegidas."""
+        if not entries:
+            self.clf_panel.refresh()
+            return
+        entry, rest = entries[0], entries[1:]
+        key = entry.get("classifier_name")
+        task = self._task_for_config(entry)
+        if task is None:                               # sin datos o desconocido: siguiente
+            self._train_config_queue(rest)
+            return
+        target = entry.get("_target_name")             # nombre exacto (reentrenar)
+        if target:
+            name = target
+        else:                                          # no pisa al modelo importado
+            base = f"{entry.get('name', key)}_local"
+            name = base if base not in self.models else self._auto_model_name(key)
+        self._busy(f"Entrenando «{name}» con los parámetros importados…")
+        self.progress.setRange(0, 0)
+        self.progress.show()
+
+        def done(result):
+            self._idle()
+            self._register_model(result, name=name)
+            cv = result.cv_scores
+            acc = f"  ·  exactitud≈{float(cv.mean()):.0%}" if getattr(cv, "size", 0) else ""
+            self.statusBar().showMessage(
+                f"Modelo «{name}» entrenado con los parámetros importados.{acc}")
+            self._train_config_queue(rest)             # continúa con el siguiente
+
+        self._spawn(task, done, on_progress=self._on_train_progress)
 
     # --- Registro de varios modelos por proyecto --------------------------
     def _auto_model_name(self, classifier_name: str) -> str:

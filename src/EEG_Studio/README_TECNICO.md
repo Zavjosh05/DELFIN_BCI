@@ -52,6 +52,19 @@ y disponen de **deshacer/rehacer** e historial.
   Se pueden entrenar **varios modelos por proyecto**, ver sus **métricas**
   (exactitud, matriz de confusión, precisión/recall/F1 por clase), **activar** uno,
   **exportarlo/importarlo** (.joblib) y predecir la región seleccionada.
+- **Configuraciones de modelo (sin entrenar)**: ajusta los hiperparámetros de cualquier
+  clasificador y **guárdalos con un nombre** en el proyecto sin entrenar; cárgalos
+  cuando quieras. Siempre está disponible **«· Valores por defecto ·»** para volver a
+  los valores originales. Se persisten en `model_configs` (con deshacer/rehacer).
+  Además: **entrenar todas las configuraciones guardadas** de una vez, y **reentrenar
+  todos los modelos ya entrenados** con los datos actuales (útil si cambia el dataset).
+- **Compartir configuraciones de modelo (`.eegbundle` / `.eegcfg`)**: los bundles
+  llevan los **hiperparámetros** de cada modelo (clásicos, red y ventana de señal
+  cruda). Al importarlos, la app los **detecta** y ofrece **entrenarlos con los datos
+  del proyecto actual**: eliges qué configuraciones usar y se añaden como modelos
+  nuevos (sufijo `_local`), sin sustituir a los modelos importados — útil para
+  comparar «el modelo de otro equipo» con «sus parámetros sobre mis datos». Las que
+  requieren datos ausentes (dataset o segmentos) se muestran deshabilitadas.
 - **Control de cambios no destructivo**: cada edición se registra con
   deshacer/rehacer y queda en `changelog.json`. El CSV original es de solo lectura.
 - **Adquisición en tiempo real (opcional)**: visor en vivo y grabación a CSV
@@ -586,7 +599,10 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `dataset_build_smoke`, `theme_smoke`, `train_progress_smoke`,
 `pipeline_toggle_smoke`, `emotiv_mode_smoke`, `quality_smoke`,
 `filter_design_smoke`, `eog_exclude_smoke`, `signal_edit_smoke`,
-`preload_smoke`, `config_export_smoke`, `config_import_smoke`,
+`preload_smoke`, `config_export_smoke`,
+`config_import_smoke` (bundle: además detecta los hiperparámetros que trae y los
+entrena con los datos locales),
+`model_configs_smoke` (configuraciones de modelo: guardar/cargar sin entrenar),
 `metrics_plot_smoke`, `split_report_smoke`, `channel_isolate_smoke`,
 `model_config_smoke`, `history_tree_smoke`, `signal_tabs_smoke`,
 `multi_pipeline_smoke`, `pipeline_ui_smoke`, `live_scale_smoke`,

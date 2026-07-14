@@ -41,9 +41,28 @@ def _model_entry(name: str, res) -> dict:
         "classes": list(res.classes),
         "clf_params": getattr(res, "clf_params", None),   # hiperparámetros clásicos
         "nn_config": getattr(res, "nn_config", None),      # config de la red (si es NN)
+        # Ventana de señal cruda (Riemann/CSP/redes): hace falta para poder
+        # RE-ENTRENAR el modelo con los datos de otro proyecto.
+        "raw_window": int(getattr(res, "raw_window", 0) or 0),
         "cv_mean": (float(cv.mean()) if cv is not None and cv.size else None),
         "metrics": getattr(res, "metrics", None),
     }
+
+
+def model_configs(cfg: dict) -> list[dict]:
+    """Configuraciones de modelo **reutilizables** que trae una config/bundle.
+
+    Devuelve las entradas de ``cfg["models"]`` que llevan hiperparámetros con los
+    que se podría **volver a entrenar** sobre los datos de otro proyecto (clásicos
+    con ``clf_params``, redes con ``nn_config``, o Riemann/CSP con ``raw_window``).
+    """
+    out: list[dict] = []
+    for m in (cfg.get("models") or []):
+        if not isinstance(m, dict) or not m.get("classifier_name"):
+            continue
+        if m.get("clf_params") or m.get("nn_config") or m.get("raw_window"):
+            out.append(m)
+    return out
 
 
 def build_config(project, models: dict, sections, pipeline_indices=None) -> dict:

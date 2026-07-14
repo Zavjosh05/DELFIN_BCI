@@ -33,6 +33,35 @@ cambios se agrupan por fecha de trabajo.
     **rojo y azul base más claros y vivos** (en vez del `RdBu` de matplotlib, cuyos
     extremos vino/azul marino oscuros costaba diferenciar entre tonos).
 
+- **Configuraciones de modelo guardables, SIN entrenar**. En el panel de
+  *Clasificación*, nueva sección **«Configuraciones de modelo (sin entrenar)»**: ajusta
+  los hiperparámetros de cualquier clasificador y **guárdalos con un nombre** en el
+  proyecto sin entrenar nada; cárgalos cuando quieras (**Cargar / Guardar actual… /
+  Eliminar**). Cada clasificador ofrece siempre **«· Valores por defecto ·»** para
+  volver a los valores originales del programa. Las configuraciones viven en el
+  proyecto (`model_configs`) con **deshacer/rehacer** e historial, como el resto de
+  ediciones; los proyectos anteriores siguen abriendo sin problema.
+- **Entrenar todas las configuraciones guardadas de una vez**: botón que recorre las
+  configuraciones del proyecto y entrena un modelo por cada una, una tras otra
+  (nombrando cada modelo como su configuración). Avisa de cuántas entrenará y **omite
+  las que necesiten datos que aún no existen** (dataset o segmentos).
+- **Reentrenar todos los modelos entrenados**: botón en la caja de modelos que vuelve a
+  entrenar cada modelo con **sus mismos hiperparámetros** pero con los **datos actuales**
+  del proyecto, conservando su nombre — pensado para cuando **cambia el dataset** o los
+  segmentos. Avisa antes de sustituirlos.
+- **Los bundles/configuraciones llevan los hiperparámetros de los modelos y se pueden
+  reutilizar con TUS datos**. Al **importar** un `.eegbundle` (o un `.eegcfg`), si trae
+  configuraciones de clasificador, la app las **detecta** y ofrece **entrenarlas sobre
+  los datos de este proyecto**: aparece una lista con cada configuración (modelo,
+  clasificador y resumen de sus hiperparámetros) para elegir cuáles usar. Los modelos
+  resultantes se **añaden** (sufijo `_local`) y **no sustituyen** a los modelos
+  importados, así puedes comparar «el modelo de otro» con «sus parámetros sobre mis
+  datos». Las configuraciones que necesitan datos que aún no existen (un dataset
+  construido, o segmentos etiquetados para Riemann/CSP/redes) se muestran
+  **deshabilitadas indicando qué falta**.
+- El bundle incluye ahora también la **ventana de señal cruda** (`raw_window`) de cada
+  modelo, necesaria para poder reentrenar Riemann/CSP/redes en otro proyecto.
+
 ### Corregido / reforzado
 - **Barra de controles del visor reacomodable (señal y tiempo real)**: antes, con
   muchos botones/configuraciones, la barra superior del visor se **recortaba o

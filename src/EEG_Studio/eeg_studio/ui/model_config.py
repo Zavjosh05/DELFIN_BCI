@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,6 +24,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QSpinBox,
     QVBoxLayout,
 )
@@ -195,6 +198,75 @@ def _riemann_editor(result):
     def getter():
         return win.value()
     return box, getter
+
+
+def describe_model_config(entry: dict) -> str:
+    """Resumen legible de los hiperparámetros de una configuración de modelo."""
+    key = entry.get("classifier_name", "")
+    if classification.is_nn(key):
+        cfg = entry.get("nn_config") or {}
+        bits = [f"{k}={cfg[k]}" for k in
+                ("type", "epochs", "batch_size", "learning_rate", "window_samples")
+                if k in cfg]
+        return ", ".join(bits) or "configuración de red"
+    if classification.is_riemann(key):
+        return f"ventana={entry.get('raw_window') or '—'} muestras"
+    params = entry.get("clf_params") or {}
+    return ", ".join(f"{k}={v}" for k, v in params.items()) or "sin hiperparámetros"
+
+
+def choose_imported_configs(parent, entries: list, can_features: bool, can_raw: bool):
+    """Ofrece **reutilizar** los hiperparámetros de una config/bundle importada
+    entrenando con los datos del proyecto actual.
+
+    Marca como no disponibles las que necesitan datos que aún no existen (dataset
+    de características o segmentos etiquetados). Devuelve la lista de entradas
+    elegidas, o ``None`` si se cancela.
+    """
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Configuraciones de modelo importadas")
+    dlg.resize(580, 400)
+    lay = QVBoxLayout(dlg)
+    info = QLabel(
+        "El archivo importado trae <b>configuraciones de clasificador</b> "
+        "(hiperparámetros). Puedes entrenarlas con los datos de <b>este</b> proyecto; "
+        "se añaden como modelos nuevos y no sustituyen a los modelos importados.")
+    info.setWordWrap(True)
+    lay.addWidget(info)
+
+    lst = QListWidget()
+    lst.setWordWrap(True)                            # evita el desplazamiento horizontal
+    for e in entries:
+        key = e.get("classifier_name", "")
+        label = classification.CLASSIFIER_LABELS.get(key, key)
+        needs_raw = classification.requires_raw(key)
+        available = can_raw if needs_raw else can_features
+        text = f"{e.get('name', key)}  —  {label}\n{describe_model_config(e)}"
+        if not available:
+            text += ("\n⚠ Necesita segmentos etiquetados en este proyecto."
+                     if needs_raw else "\n⚠ Necesita un dataset construido en este proyecto.")
+        it = QListWidgetItem(text)
+        it.setData(Qt.ItemDataRole.UserRole, e)
+        if available:
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked)
+        else:
+            it.setFlags(Qt.ItemFlag.NoItemFlags)     # no seleccionable: faltan datos
+        lst.addItem(it)
+    lay.addWidget(lst)
+
+    bb = QDialogButtonBox()
+    train_btn = bb.addButton("Entrenar con mis datos",
+                             QDialogButtonBox.ButtonRole.AcceptRole)
+    bb.addButton("Ahora no", QDialogButtonBox.ButtonRole.RejectRole)
+    train_btn.clicked.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    lay.addWidget(bb)
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return [lst.item(i).data(Qt.ItemDataRole.UserRole) for i in range(lst.count())
+            if lst.item(i).checkState() == Qt.CheckState.Checked]
 
 
 def edit_model_config(parent, name: str, result, retrainable: bool, reason: str = ""):

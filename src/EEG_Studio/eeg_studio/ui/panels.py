@@ -5,6 +5,8 @@ principal), que centraliza el acceso al modelo y los refrescos de la vista.
 """
 from __future__ import annotations
 
+import copy
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -28,6 +30,10 @@ from PyQt6.QtWidgets import (
 
 from ..core import classification, neuralnet, preprocessing
 from .nn_config import NNConfigWidget
+
+# Entrada siempre presente en la lista de configuraciones: los valores por
+# defecto del programa (no se guardan en el proyecto ni se pueden borrar).
+DEFAULT_CONFIG_NAME = "· Valores por defecto ·"
 
 
 # ====================================================================== #
@@ -668,6 +674,38 @@ class ClassificationPanel(QWidget):
         self._on_svm_kernel_changed()
         self._on_lda_solver_changed()
 
+        # Configuraciones de modelo: hiperparámetros con nombre, guardables en el
+        # proyecto SIN entrenar nada (recetas reutilizables).
+        self.cfg_box = QGroupBox("Configuraciones de modelo (sin entrenar)")
+        cfg_lay = QVBoxLayout(self.cfg_box)
+        self.cfg_combo = QComboBox()
+        self.cfg_combo.setToolTip(
+            "Configuraciones guardadas para este clasificador (solo hiperparámetros). "
+            "Cárgalas en los campos y entrena cuando quieras.")
+        cfg_lay.addWidget(self.cfg_combo)
+        cfg_row = QHBoxLayout()
+        for text, slot, tip in (
+                ("Cargar", self.load_selected_config,
+                 "Vuelca la configuración elegida en los campos. No entrena."),
+                ("Guardar actual…", self.save_current_config,
+                 "Guarda los valores actuales en el proyecto con un nombre. No entrena."),
+                ("Eliminar", self.remove_selected_config,
+                 "Quita la configuración guardada del proyecto.")):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            cfg_row.addWidget(b)
+        cfg_lay.addLayout(cfg_row)
+        self.train_all_btn = QPushButton("Entrenar TODAS las configuraciones guardadas")
+        self.train_all_btn.setToolTip(
+            "Entrena, una tras otra, un modelo por cada configuración guardada en el "
+            "proyecto (de cualquier clasificador). Las que necesiten datos que no "
+            "tienes se omiten.")
+        self.train_all_btn.clicked.connect(
+            lambda: self.controller.train_all_saved_configs())
+        cfg_lay.addWidget(self.train_all_btn)
+        layout.addWidget(self.cfg_box)
+
         train_btn = QPushButton("Entrenar y añadir al proyecto")
         train_btn.clicked.connect(self.controller.train_model)
         layout.addWidget(train_btn)
@@ -696,6 +734,14 @@ class ClassificationPanel(QWidget):
         row2.addWidget(exp)
         row2.addWidget(imp)
         mlay.addLayout(row2)
+        self.retrain_all_btn = QPushButton("Reentrenar TODOS con los datos actuales")
+        self.retrain_all_btn.setToolTip(
+            "Vuelve a entrenar cada modelo ya entrenado con sus MISMOS "
+            "hiperparámetros pero con los datos actuales del proyecto (útil si "
+            "cambiaste el dataset o los segmentos). Sustituye cada modelo por su "
+            "versión nueva, conservando el nombre.")
+        self.retrain_all_btn.clicked.connect(lambda: self.controller.retrain_all_models())
+        mlay.addWidget(self.retrain_all_btn)
         layout.addWidget(models_box)
 
         predict_btn = QPushButton("Clasificar selección")
@@ -709,6 +755,34 @@ class ClassificationPanel(QWidget):
         layout.addWidget(self.result_label)
         layout.addStretch(1)
 
+        self._snapshot_defaults()
+
+    def _snapshot_defaults(self) -> None:
+        """Guarda los valores POR DEFECTO de cada clasificador, leyéndolos de los
+        propios campos recién construidos (no se duplican en ningún sitio).
+
+        Sirven para ofrecer «Valores por defecto» y poder volver atrás."""
+        self._default_configs: dict[str, dict] = {
+            "random_forest": {"classifier_name": "random_forest",
+                              "clf_params": self.rf_params()},
+            "svm": {"classifier_name": "svm", "clf_params": self.svm_params()},
+            "lda": {"classifier_name": "lda", "clf_params": self.lda_params()},
+        }
+        for key in classification.CLASSIFIER_LABELS:
+            if classification.is_nn(key):
+                self._default_configs[key] = {
+                    "classifier_name": key,
+                    "nn_config": neuralnet.default_config(classification.net_type(key))}
+            elif classification.is_riemann(key):
+                self._default_configs[key] = {"classifier_name": key,
+                                              "raw_window": self.raw_window.value()}
+
+    def default_config_dict(self, classifier_name: str | None = None) -> dict | None:
+        """Configuración por defecto del clasificador (la de fábrica del programa)."""
+        key = classifier_name or self.classifier_key
+        cfg = self._default_configs.get(key)
+        return copy.deepcopy(cfg) if cfg else None
+
     def _on_clf_changed(self) -> None:
         key = self.classifier_key
         is_nn = classification.is_nn(key)
@@ -720,6 +794,7 @@ class ClassificationPanel(QWidget):
         if is_nn:
             self.nn_config_widget.set_net_type(classification.net_type(key))
             self.update_io_info()
+        self.refresh_model_configs()
 
     def _on_svm_kernel_changed(self) -> None:
         kernel = self.svm_kernel.currentData()
@@ -730,6 +805,151 @@ class ClassificationPanel(QWidget):
     def _on_lda_solver_changed(self) -> None:
         # El shrinkage solo aplica a lsqr/eigen (no a svd).
         self.lda_shrinkage.setEnabled(self.lda_solver.currentText() != "svd")
+
+    # --- Configuraciones de modelo (hiperparámetros, sin entrenar) --------
+    def current_config_dict(self) -> dict:
+        """Los valores actuales de los campos como configuración de modelo."""
+        key = self.classifier_key
+        cfg: dict = {"classifier_name": key}
+        if classification.is_nn(key):
+            cfg["nn_config"] = self.nn_config()
+        elif classification.is_riemann(key):
+            cfg["raw_window"] = self.raw_window_value()
+        else:
+            cfg["clf_params"] = self.classic_params()
+        return cfg
+
+    def apply_config_dict(self, config: dict) -> bool:
+        """Vuelca una configuración en los campos. **No entrena**: solo rellena.
+
+        Devuelve si se aplicó (la config debe ser del clasificador actual)."""
+        if not config or config.get("classifier_name") != self.classifier_key:
+            return False
+        key = self.classifier_key
+        if config.get("nn_config"):
+            self.nn_config_widget.load_config(config["nn_config"])
+            self.update_io_info()
+        if config.get("raw_window"):
+            self.raw_window.setValue(int(config["raw_window"]))
+        # Tolerante: una config antigua (o de un bundle) puede no traer todas las
+        # claves; lo que falte conserva el valor actual del campo.
+        p = config.get("clf_params") or {}
+        if key == "random_forest":
+            self.rf_estimators.setValue(int(p.get("n_estimators", self.rf_estimators.value())))
+            self.rf_max_depth.setValue(int(p.get("max_depth", self.rf_max_depth.value()) or 0))
+            self.rf_min_split.setValue(int(p.get("min_samples_split", self.rf_min_split.value())))
+            self.rf_min_leaf.setValue(int(p.get("min_samples_leaf", self.rf_min_leaf.value())))
+            if "max_features" in p:
+                self._select_data(self.rf_max_features, p["max_features"])
+            if "criterion" in p:
+                self.rf_criterion.setCurrentText(p["criterion"])
+            if "class_weight" in p:
+                self._select_data(self.rf_class_weight, p["class_weight"])
+        elif key == "svm":
+            if "kernel" in p:
+                self._select_data(self.svm_kernel, p["kernel"])
+            self.svm_C.setValue(float(p.get("C", self.svm_C.value())))
+            if "gamma" in p:
+                self.svm_gamma.setCurrentText(str(p["gamma"]))
+            self.svm_degree.setValue(int(p.get("degree", self.svm_degree.value())))
+            self.svm_coef0.setValue(float(p.get("coef0", self.svm_coef0.value())))
+            if "class_weight" in p:
+                self._select_data(self.svm_class_weight, p["class_weight"])
+            self._on_svm_kernel_changed()
+        elif key == "lda":
+            if "solver" in p:
+                self.lda_solver.setCurrentText(p["solver"])
+            if "shrinkage" in p:
+                self._select_data(self.lda_shrinkage, p["shrinkage"])
+            self._on_lda_solver_changed()
+        return True
+
+    def refresh_model_configs(self) -> None:
+        """Repuebla la lista con las configuraciones **guardadas en el proyecto**
+        para el clasificador actual. Los valores por defecto de cada modelo son
+        los de siempre: aquí solo aparece lo que se haya guardado."""
+        if not hasattr(self, "cfg_combo"):
+            return
+        key = self.classifier_key
+        prev = self.cfg_combo.currentText()
+        self.cfg_combo.blockSignals(True)
+        self.cfg_combo.clear()
+        # Siempre disponible: volver a los valores por defecto del programa.
+        default = self.default_config_dict(key)
+        if default:
+            self.cfg_combo.addItem(DEFAULT_CONFIG_NAME, {**default, "is_default": True})
+        proj = getattr(self.controller, "project", None)
+        entries = [c for c in proj.model_configs()
+                   if c.get("classifier_name") == key] if proj is not None else []
+        for e in entries:
+            self.cfg_combo.addItem(e.get("name", "—"), e)
+        i = self.cfg_combo.findText(prev)
+        if i >= 0:
+            self.cfg_combo.setCurrentIndex(i)
+        self.cfg_combo.blockSignals(False)
+
+    def selected_config(self) -> dict | None:
+        return self.cfg_combo.currentData() if self.cfg_combo.count() else None
+
+    def load_selected_config(self) -> None:
+        cfg = self.selected_config()
+        if not cfg:
+            return
+        if self.apply_config_dict(cfg):
+            self._status(f"Configuración «{cfg.get('name')}» cargada en los campos "
+                         "(aún sin entrenar).")
+
+    def save_current_config(self) -> None:
+        """Guarda los valores actuales como configuración con nombre. No entrena."""
+        if getattr(self.controller, "project", None) is None:
+            return
+        suggested = f"{self.classifier_key}_1"
+        name, ok = QInputDialog.getText(self, "Guardar configuración",
+                                        "Nombre de la configuración:", text=suggested)
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        if name == DEFAULT_CONFIG_NAME:
+            self.controller.warn("Nombre reservado",
+                                 "Ese nombre lo usa la entrada de valores por defecto. "
+                                 "Elige otro.")
+            return
+        self.controller.project.save_model_config({**self.current_config_dict(),
+                                                   "name": name})
+        self.controller.request_autosave()
+        self.refresh_model_configs()
+        i = self.cfg_combo.findText(name)
+        if i >= 0:
+            self.cfg_combo.setCurrentIndex(i)
+        self._status(f"Configuración «{name}» guardada (sin entrenar).")
+
+    def remove_selected_config(self) -> None:
+        cfg = self.selected_config()
+        if not cfg or getattr(self.controller, "project", None) is None:
+            return
+        if cfg.get("is_default"):
+            self.controller.warn(
+                "Valores por defecto",
+                "«{}» no es una configuración guardada: son los valores por defecto "
+                "del programa y siempre están disponibles.".format(DEFAULT_CONFIG_NAME))
+            return
+        self.controller.project.remove_model_config(cfg["name"])
+        self.controller.request_autosave()
+        self.refresh_model_configs()
+        self._status(f"Configuración «{cfg['name']}» eliminada.")
+
+    def _status(self, msg: str) -> None:
+        try:
+            self.controller.statusBar().showMessage(msg, 4000)
+        except Exception:  # noqa: BLE001 — el aviso es opcional
+            pass
+
+    @staticmethod
+    def _select_data(combo: QComboBox, value) -> None:
+        """Selecciona en el combo la opción cuyo ``data`` es ``value``."""
+        i = combo.findData(value)
+        if i >= 0:
+            combo.setCurrentIndex(i)
 
     @property
     def classifier_key(self) -> str:
@@ -804,6 +1024,7 @@ class ClassificationPanel(QWidget):
     def refresh(self) -> None:
         self.update_io_info()
         self.refresh_models()
+        self.refresh_model_configs()     # las guardadas viven en el proyecto
 
     # --- Registro de modelos ---------------------------------------------
     def refresh_models(self) -> None:

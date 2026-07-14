@@ -46,7 +46,8 @@ def main() -> int:
                  feature_names=[f"f{i}" for i in range(6)],
                  segment_ids=[str(i) for i in range(24)])
     dataset_mod.save_dataset(src, ds, "dataset")
-    res = classification.train(ds, "random_forest", clf_params={"n_estimators": 40})
+    res = classification.train(ds, "random_forest", clf_params={
+        "n_estimators": 40, "min_samples_leaf": 2, "class_weight": "balanced"})
     bundle = os.path.join(tmp, "origen" + config_export.BUNDLE_EXT)
     config_export.export_bundle(src, {"rf_1": res},
                                 {"preprocessing", "dataset", "models", "sources"}, bundle)
@@ -95,6 +96,49 @@ def main() -> int:
     assert not any(n.lower().endswith((".png", ".jpg", ".jpeg", ".svg", ".pdf"))
                    for n in names), names
     print(f"    entradas del bundle: {names}")
+
+    print("[5] El bundle trae los HIPERPARÁMETROS del modelo y se detectan")
+    entries = config_export.model_configs(cfg)
+    assert entries and entries[0]["classifier_name"] == "random_forest", entries
+    e = entries[0]
+    assert e["clf_params"]["n_estimators"] == 40, e["clf_params"]
+    assert e["clf_params"]["min_samples_leaf"] == 2, e["clf_params"]
+    assert e["clf_params"]["class_weight"] == "balanced", e["clf_params"]
+    assert "raw_window" in e, "falta raw_window (necesario para reentrenar Riemann/CSP/redes)"
+    from eeg_studio.ui import model_config as mc
+    assert "n_estimators=40" in mc.describe_model_config(e), mc.describe_model_config(e)
+    print(f"    detectado: {e['name']} · {mc.describe_model_config(e)}")
+
+    print("[6] Usar esos parámetros con los datos del proyecto DESTINO")
+    task = win._task_for_config(e)
+    assert task is not None, "debería poder entrenar (hay dataset)"
+    out = task()
+    clf = out.model.named_steps["clf"]
+    assert (clf.n_estimators, clf.min_samples_leaf, clf.class_weight) == (40, 2, "balanced")
+    print(f"    entrenado local: n_estimators={clf.n_estimators}, "
+          f"min_samples_leaf={clf.min_samples_leaf}, class_weight={clf.class_weight}")
+
+    print("[6b] La oferta al importar entrena y AÑADE el modelo (sin pisar el importado)")
+    import time
+    orig = mc.choose_imported_configs
+    mc.choose_imported_configs = staticmethod(lambda *a, **k: entries)   # simula «sí, entrena»
+    try:
+        win.offer_imported_model_configs(cfg)
+        end = time.time() + 30
+        while time.time() < end and "rf_1_local" not in win.models:
+            app.processEvents()
+            time.sleep(0.02)
+    finally:
+        mc.choose_imported_configs = orig
+    assert "rf_1_local" in win.models, list(win.models)
+    assert "rf_1" in win.models, "no debe pisar el modelo importado"
+    print(f"    modelos ahora: {sorted(win.models)}")
+
+    print("[6c] Sin los datos necesarios, la configuración no se ofrece")
+    saved, win.dataset = win.dataset, None
+    assert win._task_for_config(e) is None, "sin dataset no debería poder entrenar"
+    win.dataset = saved
+    print("    sin dataset -> no disponible")
 
     win.acq_panel.shutdown()
     print("\nIMPORTAR BUNDLE OK ✓")
