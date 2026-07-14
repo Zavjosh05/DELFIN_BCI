@@ -29,6 +29,9 @@ cambios se agrupan por fecha de trabajo.
     `core/preprocessing.ica_decompose()` (descompone y devuelve la matriz de mezcla
     + kurtosis + flags, con el mismo ajuste que `ica_artifact`: lo que se ve = lo
     que se elimina).
+  - **Paleta más legible**: los mapas usan un degradado divergente propio con
+    **rojo y azul base más claros y vivos** (en vez del `RdBu` de matplotlib, cuyos
+    extremos vino/azul marino oscuros costaba diferenciar entre tonos).
 
 ### Corregido / reforzado
 - **Barra de controles del visor reacomodable (señal y tiempo real)**: antes, con

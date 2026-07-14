@@ -30,9 +30,21 @@ from ..core.montage import positions_2d
 
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.colors import LinearSegmentedColormap
     from matplotlib.figure import Figure
+    # Mapa de color divergente PROPIO: rojo y azul base más CLAROS y vivos que el
+    # "RdBu_r" de matplotlib, cuyos extremos son vino y azul marino muy oscuros
+    # (cuesta diferenciar entre tonos). Azul (−) → casi blanco (0) → rojo (+).
+    _ICA_CMAP = LinearSegmentedColormap.from_list("ica_div", [
+        "#3d7ff0",   # azul base (más claro que el navy de RdBu)
+        "#a9c9f7",   # azul claro
+        "#f4f6f8",   # centro (peso ~0)
+        "#f9b0a9",   # rojo claro
+        "#f5564a",   # rojo base (más claro que el vino de RdBu)
+    ])
     _MPL_OK = True
 except Exception:  # noqa: BLE001
+    _ICA_CMAP = None
     _MPL_OK = False
 
 _BG = "#15191e"
@@ -74,7 +86,7 @@ def _draw_one(ax, weights: np.ndarray, xy: list, title: str,
         zi = np.where(np.isnan(zi), zi_lin, zi)              # rellena huecos del cúbico
         zi[gx ** 2 + gy ** 2 > 1.0] = np.nan                 # fuera de la cabeza
         vmax = float(np.nanmax(np.abs(w))) or 1.0
-        ax.contourf(gx, gy, zi, levels=14, cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+        ax.contourf(gx, gy, zi, levels=14, cmap=_ICA_CMAP, vmin=-vmax, vmax=vmax)
         ax.contour(gx, gy, zi, levels=6, colors="#00000022", linewidths=0.4)
 
     ax.scatter(pts[:, 0], pts[:, 1], s=6, c="#1a1a1a", zorder=5)  # electrodos
