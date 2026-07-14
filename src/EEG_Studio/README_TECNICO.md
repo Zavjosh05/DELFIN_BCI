@@ -67,7 +67,9 @@ y disponen de **deshacer/rehacer** e historial.
   a los modelos importados — útil para comparar «el modelo de otro equipo» con «sus
   parámetros sobre mis datos». Las que requieren datos ausentes (dataset o segmentos)
   se muestran deshabilitadas. Las configuraciones sin entrenar se añaden al proyecto
-  (sin duplicar por nombre).
+  (sin duplicar por nombre). **Al importar se elige qué traer** (una casilla por parte,
+  todo marcado por defecto). Lo importado se guarda **dentro del proyecto**: las señales
+  en `imported/`, los datasets en `datasets/` y los modelos en `models/`.
 - **Control de cambios no destructivo**: cada edición se registra con
   deshacer/rehacer y queda en `changelog.json`. El CSV original es de solo lectura.
 - **Adquisición en tiempo real (opcional)**: visor en vivo y grabación a CSV

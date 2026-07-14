@@ -164,6 +164,107 @@ def main() -> int:
     assert len(win.project.model_configs()) == n_cfg, win.project.model_configs()
     print(f"    siguen siendo {n_cfg}")
 
+    print("[10] Importar NO borra los pipelines/canales propios (los añade)")
+    # Regresión: set_pipelines REEMPLAZABA todos los pipelines, así que importar un
+    # bundle borraba los que tenía el usuario (y recuperarlos exigía varios undo).
+    o2 = Project.create(tempfile.mkdtemp(), "otro_origen")
+    o2.set_pipelines([{"name": "Pipeline del bundle", "steps": [
+        {"type": "bandpass", "params": {"low": 8.0, "high": 30.0}, "enabled": True}]}], 0)
+    o2.state["excluded_channels"] = ["EOG-left"]
+    b3 = os.path.join(o2.path, "pre" + config_export.BUNDLE_EXT)
+    config_export.export_bundle(o2, {}, {"preprocessing"}, b3)
+
+    win4 = MainWindow()
+    win4.project = Project.create(tempfile.mkdtemp(), "con_pipelines")
+    win4.project.set_pipelines([
+        {"name": "Mi pipeline A", "steps": [{"type": "car", "params": {}, "enabled": True}]},
+        {"name": "Mi pipeline B", "steps": [
+            {"type": "notch", "params": {"freq": 60.0}, "enabled": True}]}], 1)
+    win4.project.edit("excluded_channels", ["P7"], "propio")
+    win4._apply_config(*config_export.read_bundle(b3))
+    got = [p["name"] for p in win4.project.pipelines_snapshot()]
+    assert got == ["Mi pipeline A", "Mi pipeline B", "Pipeline del bundle"], got
+    assert win4.project.active_pipeline_index() == 1, "no debe cambiar el activo"
+    # canales excluidos: se fusionan, no se pisan
+    assert set(win4.project.excluded_channels()) == {"P7", "EOG-left"}, \
+        win4.project.excluded_channels()
+    win4._apply_config(*config_export.read_bundle(b3))          # reimportar
+    assert len(win4.project.pipelines_snapshot()) == 3, "duplicó pipelines al reimportar"
+    # Un proyecto en blanco (un pipeline vacío) sí adopta el del bundle.
+    win5 = MainWindow()
+    win5.project = Project.create(tempfile.mkdtemp(), "en_blanco")
+    win5._apply_config(*config_export.read_bundle(b3))
+    assert [p["name"] for p in win5.project.pipelines_snapshot()] == ["Pipeline del bundle"]
+    win4.acq_panel.shutdown(); win5.acq_panel.shutdown()
+    print(f"    {got} · activo conservado · excluidos fusionados · sin duplicar")
+
+    print("[9] Importar VARIOS bundles: el segundo NO pisa lo del primero")
+    # Regresión: todos los bundles traen su dataset como «dataset.npz» y suelen
+    # repetir nombres de modelo (rf_1), así que el segundo import borraba en
+    # silencio el dataset y el modelo del primero.
+    from eeg_studio.config import DATASETS_DIR, MODELS_DIR
+
+    def _mk_bundle(name, n_feats, label):
+        p = Project.create(tempfile.mkdtemp(), name)
+        r = np.random.default_rng(0)
+        d = Dataset(X=r.normal(0, 1, (20, n_feats)),
+                    y=np.array([label, "z"] * 10, dtype=object),
+                    feature_names=[f"f{i}" for i in range(n_feats)],
+                    segment_ids=[str(i) for i in range(20)])
+        dataset_mod.save_dataset(p, d, "dataset")            # siempre «dataset.npz»
+        r2 = classification.train(d, "random_forest", clf_params={"n_estimators": 10})
+        out = os.path.join(p.path, name + config_export.BUNDLE_EXT)
+        config_export.export_bundle(p, {"rf_1": r2}, {"dataset", "models"}, out)
+        return out
+
+    bA, bB = _mk_bundle("A", 6, "claseA"), _mk_bundle("B", 9, "claseB")
+    win3 = MainWindow()
+    win3.project = Project.create(tempfile.mkdtemp(), "varios")
+    win3._apply_config(*config_export.read_bundle(bA))
+    win3._apply_config(*config_export.read_bundle(bB))
+    dsdir = os.path.join(win3.project.path, DATASETS_DIR)
+    assert sorted(os.listdir(dsdir)) == ["dataset.npz", "dataset_2.npz"], os.listdir(dsdir)
+    d1 = dataset_mod.load_dataset(os.path.join(dsdir, "dataset.npz"))
+    d2 = dataset_mod.load_dataset(os.path.join(dsdir, "dataset_2.npz"))
+    assert d1.y[0] == "claseA", "¡el dataset del primer bundle se perdió!"
+    assert d2.y[0] == "claseB" and d2.X.shape[1] == 9, (d2.y[0], d2.X.shape)
+    assert set(win3.models) == {"rf_1", "rf_1_2"}, list(win3.models)   # ninguno pisado
+    mdir = os.path.join(win3.project.path, MODELS_DIR)
+    assert sorted(os.listdir(mdir)) == ["rf_1.joblib", "rf_1_2.joblib"], os.listdir(mdir)
+    win3.acq_panel.shutdown()
+    print("    datasets y modelos de ambos bundles conviven (renombrando el 2º)")
+
+    print("[8] Ventana de importación: elegir QUÉ importar (todo marcado por defecto)")
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QCheckBox
+    win2 = MainWindow()
+    win2.project = Project.create(tempfile.mkdtemp(), "seleccion")
+    seen = {}
+
+    def _shoot():
+        w = app.activeModalWidget()
+        if w:
+            cbs = w.findChildren(QCheckBox)
+            seen["labels"] = [c.text() for c in cbs]
+            seen["all_checked"] = all(c.isChecked() for c in cbs)
+            w.reject()                                   # cancelar
+    QTimer.singleShot(300, _shoot)
+    assert win2._ask_import_sections(cfg, model_blobs, ds_blobs, src_blobs) is None
+    assert seen.get("all_checked") is True, seen
+    assert len(seen["labels"]) == 5, seen["labels"]      # las 5 partes del bundle
+    print(f"    {len(seen['labels'])} casillas, todas marcadas; cancelar no importa nada")
+
+    print("[8b] Importar solo una parte respeta la selección")
+    win2._apply_config(cfg, model_blobs, ds_blobs, src_blobs,
+                       sections={"preprocessing", "model_configs"})
+    assert win2.project.state["pipeline"][0]["params"]["low"] == 8.0     # sí
+    assert len(win2.project.sources) == 0, "no debía importar fuentes"
+    assert win2.dataset is None, "no debía importar el dataset"
+    assert win2.models == {}, "no debía importar modelos"
+    assert {c["name"] for c in win2.project.model_configs()} == {"lda_receta", "ts_receta"}
+    win2.acq_panel.shutdown()
+    print("    solo preprocesamiento + configuraciones (nada más)")
+
     print("[7c] Sin marcar la casilla, el bundle NO las lleva")
     b2 = os.path.join(tmp, "sin_cfg" + config_export.BUNDLE_EXT)
     config_export.export_bundle(src, {"rf_1": res}, {"preprocessing", "models"}, b2)

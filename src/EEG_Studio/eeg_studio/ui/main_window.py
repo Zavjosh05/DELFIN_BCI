@@ -1065,19 +1065,111 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self.warn("No se pudo leer", f"{path}\n\n{exc}")
             return
-        summary = self._apply_config(cfg, model_blobs, ds_blobs, src_blobs)
+        sections = self._ask_import_sections(cfg, model_blobs, ds_blobs, src_blobs)
+        if sections is None:
+            return                                     # cancelado
+        summary = self._apply_config(cfg, model_blobs, ds_blobs, src_blobs,
+                                     sections=sections)
         self._after_state_change()
         self.statusBar().showMessage(f"Importado: {summary}")
         # Si trae hiperparámetros de modelos, ofrece reutilizarlos con los datos locales.
-        self.offer_imported_model_configs(cfg)
+        if {"models", "model_configs"} & sections:
+            self.offer_imported_model_configs(cfg)
+
+    def _ask_import_sections(self, cfg: dict, model_blobs: dict, ds_blobs: dict,
+                             src_blobs: dict | None):
+        """Diálogo para elegir **qué importar** del bundle/configuración.
+
+        Solo ofrece lo que el archivo trae realmente, y viene **todo marcado**.
+        Devuelve el conjunto de secciones elegidas, o ``None`` si se cancela."""
+        src_blobs = src_blobs or {}
+        pre = cfg.get("preprocessing") or {}
+        ds = cfg.get("dataset") or {}
+        n_cfgs = len(cfg.get("model_configs") or [])
+
+        items: list[tuple[str, str]] = []
+        if pre:
+            n_pipes = len(pre.get("pipelines") or [1])
+            items.append(("preprocessing",
+                          f"Preprocesamiento — {n_pipes} pipeline(s), canales "
+                          "excluidos y alias"))
+        if ds:
+            det = []
+            if ds.get("segments"):
+                det.append(f"{len(ds['segments'])} segmento(s) etiquetado(s)")
+            if ds_blobs:
+                det.append(f"{len(ds_blobs)} archivo(s) .npz")
+            items.append(("dataset", "Dataset — " + (", ".join(det) or "configuración")))
+        if model_blobs:
+            items.append(("models", f"Modelos entrenados ({len(model_blobs)})"))
+        if n_cfgs:
+            items.append(("model_configs",
+                          f"Configuraciones de modelo sin entrenar ({n_cfgs})"))
+        if src_blobs:
+            items.append(("sources", f"Señales de origen — CSV ({len(src_blobs)})"))
+        if not items:
+            return set()                               # el archivo no trae nada
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Importar configuración")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Selecciona qué importar de este archivo:"))
+        checks: dict[str, QCheckBox] = {}
+        for section, label in items:
+            c = QCheckBox(label)
+            c.setChecked(True)                         # por defecto, todo
+            lay.addWidget(c)
+            checks[section] = c
+        hint = QLabel(
+            "Lo que importes se guarda DENTRO del proyecto: las señales en «imported/», "
+            "los datasets en «datasets/» y los modelos en «models/». Lo que ya tengas "
+            "no se duplica.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8a929b; font-size: 11px;")
+        lay.addWidget(hint)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return {s for s, c in checks.items() if c.isChecked()}
+
+    @staticmethod
+    def _unique_file(folder: str, filename: str) -> str:
+        """Ruta libre en ``folder``: si el nombre ya existe, añade un sufijo
+        (``dataset.npz`` → ``dataset_2.npz``). Nunca pisa un archivo."""
+        base, ext = os.path.splitext(filename)
+        dest = os.path.join(folder, filename)
+        i = 2
+        while os.path.exists(dest):
+            dest = os.path.join(folder, f"{base}_{i}{ext}")
+            i += 1
+        return dest
+
+    def _unique_model_name(self, name: str) -> str:
+        """Nombre de modelo libre: si ya existe, añade un sufijo (``rf_1`` →
+        ``rf_1_2``). Nunca sustituye un modelo ya presente."""
+        if name not in self.models:
+            return name
+        i = 2
+        while f"{name}_{i}" in self.models:
+            i += 1
+        return f"{name}_{i}"
 
     def _apply_config(self, cfg: dict, model_blobs: dict, ds_blobs: dict,
-                      src_blobs: dict | None = None) -> str:
-        """Aplica una configuración/bundle al proyecto actual. Devuelve un resumen."""
+                      src_blobs: dict | None = None, sections=None) -> str:
+        """Aplica una configuración/bundle al proyecto actual. Devuelve un resumen.
+
+        ``sections`` limita qué se importa (``None`` = todo lo que traiga)."""
+        def want(name: str) -> bool:
+            return sections is None or name in sections
+
         parts: list[str] = []
         # Fuentes primero (conservando su id) para que los segmentos sigan válidos.
         srcs = cfg.get("sources")
-        if srcs and src_blobs:
+        if srcs and src_blobs and want("sources"):
             imp = os.path.join(self.project.path, IMPORTED_DIR)
             os.makedirs(imp, exist_ok=True)
             # Dedup: NO reimportar fuentes ya presentes (por id o por nombre de archivo).
@@ -1109,20 +1201,56 @@ class MainWindow(QMainWindow):
                 extra = f" ({n_skip} ya existentes, omitidas)" if n_skip else ""
                 parts.append(f"{n_src} fuente(s) nueva(s){extra}")
         pre = cfg.get("preprocessing")
-        if pre:
-            if pre.get("pipelines"):     # bundles nuevos: todos los pipelines
-                self.project.set_pipelines(pre["pipelines"], pre.get("active_pipeline", 0),
+        if pre and want("preprocessing"):
+            # Los pipelines del bundle se AÑADEN a los que ya tienes. Antes los
+            # REEMPLAZABAN todos, así que importar un bundle borraba tus pipelines.
+            # Si el proyecto está en blanco (un único pipeline vacío) sí se sustituye,
+            # que es lo natural al empezar de cero.
+            incoming = [dict(p) for p in (pre.get("pipelines") or [
+                {"name": "Pipeline importado", "steps": pre.get("pipeline", [])}])]
+            existing = self.project.pipelines_snapshot()
+            pristine = len(existing) == 1 and not (existing[0].get("steps") or [])
+            if pristine:
+                self.project.set_pipelines(incoming, pre.get("active_pipeline", 0),
                                            "Importar pipelines")
-            else:                        # bundles antiguos: un solo pipeline
-                self.project.set_active_pipeline_steps(pre.get("pipeline", []), "Importar pipeline")
-            self.project.edit("excluded_channels", pre.get("excluded_channels", []),
-                              "Importar canales excluidos")
+                parts.append(f"{len(incoming)} pipeline(s)")
+            else:
+                names = {p.get("name") for p in existing}
+                added = []
+                for p in incoming:
+                    if any(p.get("steps") == e.get("steps") for e in existing):
+                        continue                   # ya tienes uno idéntico
+                    name = p.get("name") or "Pipeline"
+                    if name in names:              # no repite nombres
+                        i = 2
+                        while f"{name} ({i})" in names:
+                            i += 1
+                        name = f"{name} ({i})"
+                    p["name"] = name
+                    names.add(name)
+                    added.append(p)
+                if added:
+                    # Conserva el pipeline activo del usuario: no le cambia la vista.
+                    self.project.set_pipelines(existing + added,
+                                               self.project.active_pipeline_index(),
+                                               f"Importar {len(added)} pipeline(s)")
+                    parts.append(f"{len(added)} pipeline(s) nuevo(s)")
+            # Canales excluidos y alias: se FUSIONAN (lo tuyo manda), no se pisan.
+            excl = list(pre.get("excluded_channels") or [])
+            if excl:
+                cur = list(self.project.excluded_channels())
+                merged = list(dict.fromkeys(cur + excl))
+                if merged != cur:
+                    self.project.edit("excluded_channels", merged,
+                                      "Importar canales excluidos")
             if pre.get("channel_aliases"):
-                self.project.edit("channel_aliases", pre["channel_aliases"],
-                                  "Importar alias de canal")
-            parts.append("preprocesamiento")
+                cur_al = dict(self.project.state.get("channel_aliases", {}))
+                merged_al = {**pre["channel_aliases"], **cur_al}   # los tuyos ganan
+                if merged_al != cur_al:
+                    self.project.edit("channel_aliases", merged_al,
+                                      "Importar alias de canal")
         ds = cfg.get("dataset")
-        if ds:
+        if ds and want("dataset"):
             if ds.get("config"):
                 self.project.edit("dataset", ds["config"], "Importar config de dataset")
             if ds.get("segments"):
@@ -1146,27 +1274,46 @@ class MainWindow(QMainWindow):
             if ds_blobs:
                 out_dir = os.path.join(self.project.path, DATASETS_DIR)
                 os.makedirs(out_dir, exist_ok=True)
-                for fname, data in ds_blobs.items():
-                    with open(os.path.join(out_dir, fname), "wb") as f:
+                # NO se pisa un dataset ya presente: si el nombre está ocupado se
+                # guarda con un sufijo (dataset.npz -> dataset_2.npz). Todos los
+                # bundles traen su .npz como «dataset.npz», así que sin esto el
+                # segundo import borraba el del primero.
+                written: list[str] = []
+                for fname, data in sorted(ds_blobs.items()):
+                    dest = self._unique_file(out_dir, fname)
+                    with open(dest, "wb") as f:
                         f.write(data)
+                    written.append(os.path.basename(dest))
                 try:                                    # carga el primero en memoria
                     self.dataset = dataset_mod.load_dataset(
-                        os.path.join(out_dir, sorted(ds_blobs)[0]))
+                        os.path.join(out_dir, written[0]))
                 except Exception:  # noqa: BLE001
                     pass
-            parts.append(f"dataset ({len(ds_blobs)} archivo(s))")
-        if model_blobs:
-            for name, data in model_blobs.items():
+                renamed = [n for n, o in zip(written, sorted(ds_blobs)) if n != o]
+                extra = f" (renombrado: {', '.join(renamed)})" if renamed else ""
+                parts.append(f"dataset ({len(written)} archivo(s)){extra}")
+            else:
+                parts.append("dataset")
+        if model_blobs and want("models"):
+            # NO se pisa un modelo ya presente con el mismo nombre: se registra con
+            # un sufijo (rf_1 -> rf_1_2). Dos bundles suelen traer nombres iguales.
+            n_mdl, renamed = 0, []
+            for name, data in sorted(model_blobs.items()):
                 try:
                     res = classification.result_from_bytes(data)
-                    self._register_model(res, name=name, persist=True)
                 except Exception:  # noqa: BLE001
-                    pass
-            parts.append(f"{len(model_blobs)} modelo(s)")
+                    continue
+                target = self._unique_model_name(name)
+                self._register_model(res, name=target, persist=True)
+                n_mdl += 1
+                if target != name:
+                    renamed.append(f"{name}→{target}")
+            extra = f" (renombrado: {', '.join(renamed)})" if renamed else ""
+            parts.append(f"{n_mdl} modelo(s){extra}")
         # Configuraciones de modelo sin entrenar: se añaden las que falten (por
         # nombre); las ya presentes NO se pisan.
         incoming = cfg.get("model_configs") or []
-        if incoming:
+        if incoming and want("model_configs"):
             existing = {c.get("name") for c in self.project.model_configs()}
             added = 0
             for c in incoming:

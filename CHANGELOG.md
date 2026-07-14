@@ -66,8 +66,29 @@ cambios se agrupan por fecha de trabajo.
   solo texto, no pesan). Al importar se **añaden al proyecto** las que falten —las ya
   presentes, por nombre, no se pisan— y aparecen junto a los modelos entrenados en la
   oferta de **entrenar con los datos locales**.
+- **Al importar se puede elegir QUÉ importar**: nueva ventana con una casilla por cada
+  parte que trae el archivo (preprocesamiento, dataset, modelos entrenados,
+  configuraciones sin entrenar y señales de origen), con el **número de elementos** de
+  cada una y **todo marcado por defecto**. Recuerda además dónde queda cada cosa dentro
+  del proyecto. Antes se importaba todo sin preguntar.
 
 ### Corregido / reforzado
+- **Importar un bundle ya no borra tus pipelines**. Al traer el preprocesamiento se
+  **reemplazaban TODOS** los pipelines del proyecto por los del bundle, así que perdías
+  los tuyos (y recuperarlos exigía deshacer varias veces, porque una importación son
+  muchos pasos). Ahora los pipelines del bundle **se añaden** a los que ya tienes
+  —renombrando los que repitan nombre y omitiendo los idénticos—, **sin cambiar tu
+  pipeline activo**; solo se sustituyen si el proyecto está en blanco (un único
+  pipeline vacío), que es lo natural al empezar. Los **canales excluidos** y los
+  **alias de canal** también se **fusionan** en vez de pisarse (los tuyos mandan).
+- **Importar varios bundles ya no borra en silencio lo del anterior**. Todos los
+  bundles traen su dataset con el mismo nombre (`dataset.npz`) y suelen repetir los
+  nombres de modelo (`rf_1`), así que al importar un **segundo** bundle en el mismo
+  proyecto **se sobrescribían sin aviso** el dataset y los modelos del primero (tanto
+  en memoria como en `datasets/` y `models/`), y parecía que lo importado antes había
+  desaparecido. Ahora **nada se pisa**: si el nombre está ocupado, lo nuevo se guarda
+  con un sufijo (`dataset_2.npz`, `rf_1_2`) y el resumen de importación indica qué se
+  renombró. Las fuentes y los segmentos ya se fusionaban bien y no cambian.
 - **Barra de controles del visor reacomodable (señal y tiempo real)**: antes, con
   muchos botones/configuraciones, la barra superior del visor se **recortaba o
   desbordaba** y no se veían todos los controles. Ahora los controles se reparten
