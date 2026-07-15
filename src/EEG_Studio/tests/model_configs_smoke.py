@@ -94,7 +94,8 @@ def main() -> int:
     n_models = len(win.models)
     panel.cfg_combo.setCurrentIndex(panel.cfg_combo.findText("lda_shrink"))
     panel.load_selected_config()
-    assert panel.classic_params() == {"solver": "lsqr", "shrinkage": "auto"}
+    assert panel.classic_params() == {"solver": "lsqr", "shrinkage": "auto",
+                                      "multiclass": "nativa"}
     assert len(win.models) == n_models, "cargar una configuración NO debe entrenar"
     # Un clasificador sin configuraciones guardadas: solo los valores por defecto.
     panel.clf_combo.setCurrentIndex(panel.clf_combo.findData("svm"))

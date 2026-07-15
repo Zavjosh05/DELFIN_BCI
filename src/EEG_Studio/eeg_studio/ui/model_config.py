@@ -36,6 +36,31 @@ _OPTIMIZERS = ["adam", "sgd", "rmsprop"]
 _ACTIVATIONS = ["relu", "tanh", "sigmoid", "elu", "leaky_relu"]
 
 
+def _multiclass_row(form, params: dict):
+    """Añade el selector de estrategia multiclase a un formulario.
+
+    Devuelve un getter con la estrategia elegida. Compartido por los editores de
+    clásicos y de Riemann/CSP (las redes no lo usan)."""
+    params = params or {}
+    combo = QComboBox()
+    for key, label in classification.MULTICLASS_STRATEGIES.items():
+        combo.addItem(label, key)
+    i = combo.findData(params.get("multiclass", "nativa"))
+    combo.setCurrentIndex(i if i >= 0 else 0)
+    help_lbl = QLabel()
+    help_lbl.setWordWrap(True)
+    help_lbl.setStyleSheet("color: #8a929b; font-size: 11px;")
+
+    def _sync():
+        help_lbl.setText(
+            classification.MULTICLASS_DESCRIPTIONS.get(combo.currentData(), ""))
+    combo.currentIndexChanged.connect(_sync)
+    _sync()
+    form.addRow("Estrategia multiclase:", combo)
+    form.addRow(help_lbl)
+    return lambda: combo.currentData() or "nativa"
+
+
 def _rf_editor(params: dict):
     """Widgets del Random Forest, prellenados. Devuelve (groupbox, getter)."""
     params = params or {}
@@ -63,6 +88,7 @@ def _rf_editor(params: dict):
     form.addRow("Máx. características:", feats)
     form.addRow("Criterio:", crit)
     form.addRow("Peso de clases:", cw)
+    get_mc = _multiclass_row(form, params)
 
     def getter():
         return {
@@ -73,6 +99,7 @@ def _rf_editor(params: dict):
             "max_features": feats.currentData(),
             "criterion": crit.currentText(),
             "class_weight": cw.currentData(),
+            "multiclass": get_mc(),
         }
     return box, getter
 
@@ -102,6 +129,7 @@ def _svm_editor(params: dict):
     form.addRow("Grado (poly):", degree)
     form.addRow("coef0 (poly/sigmoide):", coef0)
     form.addRow("Peso de clases:", cw)
+    get_mc = _multiclass_row(form, params)
 
     def _sync():
         k = kernel.currentData()
@@ -119,6 +147,7 @@ def _svm_editor(params: dict):
             "degree": degree.value(),
             "coef0": float(coef0.value()),
             "class_weight": cw.currentData(),
+            "multiclass": get_mc(),
         }
     return box, getter
 
@@ -176,6 +205,7 @@ def _lda_editor(params: dict):
     shrink.setToolTip("Regularización (solo lsqr/eigen); útil con pocas muestras (EEG).")
     form.addRow("Solver:", solver)
     form.addRow("Shrinkage:", shrink)
+    get_mc = _multiclass_row(form, params)
 
     def _sync():
         shrink.setEnabled(solver.currentText() != "svd")
@@ -183,20 +213,23 @@ def _lda_editor(params: dict):
     _sync()
 
     def getter():
-        return {"solver": solver.currentText(), "shrinkage": shrink.currentData()}
+        return {"solver": solver.currentText(), "shrinkage": shrink.currentData(),
+                "multiclass": get_mc()}
     return box, getter
 
 
 def _riemann_editor(result):
+    """Ventana + estrategia multiclase. Devuelve (groupbox, getter -> dict)."""
     box = QGroupBox("Señal cruda (Riemann/CSP)")
     form = QFormLayout(box)
     win = QSpinBox(); win.setRange(16, 8192); win.setSingleStep(32)
     win.setValue(int(getattr(result, "raw_window", 0) or 512))
     win.setToolTip("Longitud fija (muestras) a la que se ajusta cada segmento.")
     form.addRow("Ventana (muestras):", win)
+    get_mc = _multiclass_row(form, getattr(result, "clf_params", None) or {})
 
     def getter():
-        return win.value()
+        return {"raw_window": win.value(), "multiclass": get_mc()}
     return box, getter
 
 

@@ -62,10 +62,10 @@ def main() -> int:
     svm2 = classification.train(_ds(), "svm", clf_params=spp)
     sclf = svm2.model.named_steps["clf"]
     assert sclf.coef0 == 2.0 and sclf.class_weight == "balanced"
-    # LDA: antes NO tenía parámetros; ahora solver + shrinkage.
+    # LDA: antes NO tenía parámetros; ahora solver + shrinkage (+ estrategia multiclase).
     _, lget = model_config._lda_editor({"solver": "lsqr", "shrinkage": "auto"})   # noqa: SLF001
     lp = lget()
-    assert lp == {"solver": "lsqr", "shrinkage": "auto"}, lp
+    assert lp == {"solver": "lsqr", "shrinkage": "auto", "multiclass": "nativa"}, lp
     lda2 = classification.train(_ds(), "lda", clf_params=lp)
     lclf = lda2.model.named_steps["clf"]
     assert lclf.solver == "lsqr" and lclf.shrinkage == "auto"
@@ -84,8 +84,10 @@ def main() -> int:
                                       classes=["a", "b"], feature_names=[], raw_window=384)
     r2 = classification.result_from_bytes(classification.result_to_bytes(r))
     assert r2.raw_window == 384, r2.raw_window
+    # El editor devuelve un dict: la ventana + la estrategia multiclase (para que
+    # al reentrenar Riemann/CSP se pueda cambiar la descomposición binaria).
     _, rget = model_config._riemann_editor(r2)   # noqa: SLF001
-    assert rget() == 384, rget()
+    assert rget() == {"raw_window": 384, "multiclass": "nativa"}, rget()
 
     print("[5] Editor NN edita escalares y deja las capas fijas")
     from eeg_studio.core import neuralnet

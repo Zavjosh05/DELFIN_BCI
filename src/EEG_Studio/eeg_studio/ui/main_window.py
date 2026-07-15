@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 
@@ -24,6 +25,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QSpinBox,
     QListWidget,
     QListWidgetItem,
@@ -75,8 +77,20 @@ from .theme import ACCENT, BG, BORDER, ELEVATED, MUTED, SURFACE, TEXT
 
 # Indicador de contenido de una fuente: un punto pequeño y discreto a la derecha.
 _MARK_COLOR_ROLE = Qt.ItemDataRole.UserRole + 1
+_GROUP_ROLE = Qt.ItemDataRole.UserRole + 2   # grupo («carpeta») de la fila
 COLOR_HAS_SEGMENTS = QColor("#57c98a")   # verde: tiene segmentos etiquetados
 COLOR_HAS_MARKERS = QColor("#d6a341")    # ámbar: solo tiene marcadores (Event Id)
+
+
+def source_group(alias: str) -> str:
+    """Grupo («carpeta») de una fuente: el prefijo del nombre hasta el primer
+    separador. ``sujeto007-abajo`` y ``sujeto007_arriba`` → ``sujeto007``.
+
+    Sirve para agrupar por sujeto una lista larga de señales. Si el nombre no
+    tiene separador no hay grupo propio y va a «Otras».
+    """
+    parts = re.split(r"[-_ ]", str(alias).strip(), maxsplit=1)
+    return parts[0] if len(parts) > 1 and parts[0] else "Otras"
 
 
 class _SourceListWidget(QListWidget):
@@ -385,6 +399,7 @@ class MainWindow(QMainWindow):
         if self._source_sort not in self._SORT_MODES:
             self._source_sort = "custom"
         self._src_event_counts: dict[str, int] = {}   # caché de nº de marcadores
+        self._collapsed_groups: set[str] = set()      # grupos plegados (modo agrupado)
         self._reordering = False
         self._scanning_markers = False
         self._scan_project = None
@@ -408,6 +423,8 @@ class MainWindow(QMainWindow):
         self.sources_list.customContextMenuRequested.connect(self._on_sources_menu)
         # Reordenar arrastrando (solo tiene efecto en modo «orden propio»).
         self.sources_list.reordered.connect(self._on_sources_reordered)
+        # Clic en una fila-cabecera (modo agrupado): despliega/pliega el grupo.
+        self.sources_list.itemClicked.connect(self._on_source_item_clicked)
 
         # Cabecera: selector de orden (barra discreta sobre la lista).
         self.source_sort_combo = QComboBox()
@@ -419,15 +436,30 @@ class MainWindow(QMainWindow):
         self.source_sort_combo.setToolTip("Orden de la lista de fuentes.")
         self.source_sort_combo.currentIndexChanged.connect(self._on_source_sort_changed)
 
+        # Buscador: filtra la lista por nombre (con muchas señales por sujeto,
+        # localizar una concreta a ojo es lento).
+        self.source_filter = QLineEdit()
+        self.source_filter.setObjectName("sourcesFilter")
+        self.source_filter.setPlaceholderText("Buscar señal…")
+        self.source_filter.setClearButtonEnabled(True)
+        self.source_filter.setToolTip(
+            "Filtra las señales por nombre. Con el filtro activo los grupos "
+            "plegados se despliegan solos para mostrar lo que coincide.")
+        self.source_filter.textChanged.connect(self._apply_source_filter)
+
         sort_label = QLabel("ORDEN")
         sort_label.setObjectName("sourcesSortLabel")
         sort_bar = QWidget()
         sort_bar.setObjectName("sourcesHeader")
-        sort_lay = QHBoxLayout(sort_bar)
-        sort_lay.setContentsMargins(8, 4, 6, 4)
+        header_lay = QVBoxLayout(sort_bar)
+        header_lay.setContentsMargins(8, 4, 6, 4)
+        header_lay.setSpacing(4)
+        sort_lay = QHBoxLayout()
         sort_lay.setSpacing(6)
         sort_lay.addWidget(sort_label)
         sort_lay.addWidget(self.source_sort_combo, 1)
+        header_lay.addLayout(sort_lay)
+        header_lay.addWidget(self.source_filter)
 
         src_container = QWidget()
         src_container.setObjectName("sourcesPanel")
@@ -2147,9 +2179,10 @@ class MainWindow(QMainWindow):
                 )
             else:  # Riemann / CSP
                 window = self.clf_panel.raw_window_value()
+                riemann_params = self.clf_panel.riemann_params()
                 task = lambda progress=None: classification.train_riemann(
                     dataset_mod.build_raw_dataset(self.project, window), key,
-                    raw_window=window
+                    raw_window=window, clf_params=riemann_params
                 )
         else:
             if self.dataset is None:
@@ -2461,9 +2494,12 @@ class MainWindow(QMainWindow):
                 task = lambda progress=None: classification.train(
                     self.dataset, key, nn_config=payload, progress=progress)
         elif kind == "riemann":
-            window = int(payload)
+            # payload: {"raw_window": int, "multiclass": str}
+            window = int(payload.get("raw_window", 512))
+            r_params = {"multiclass": payload.get("multiclass", "nativa")}
             task = lambda progress=None: classification.train_riemann(
-                dataset_mod.build_raw_dataset(self.project, window), key, raw_window=window)
+                dataset_mod.build_raw_dataset(self.project, window), key,
+                raw_window=window, clf_params=r_params)
         else:
             return
 
@@ -2741,6 +2777,7 @@ class MainWindow(QMainWindow):
     _SORT_MODES = {
         "custom":   "Orden propio",
         "alpha":    "Alfabético (A→Z)",
+        "group":    "Agrupado por sujeto",
         "created":  "Fecha de creación",
         "modified": "Última modificación",
     }
@@ -2761,6 +2798,9 @@ class MainWindow(QMainWindow):
         mode = self._source_sort
         if mode == "alpha":
             srcs.sort(key=lambda s: s.get("alias", "").lower())
+        elif mode == "group":                # por grupo (sujeto) y, dentro, por nombre
+            srcs.sort(key=lambda s: (source_group(s.get("alias", "")).lower(),
+                                     s.get("alias", "").lower()))
         elif mode in ("created", "modified"):
             getter = os.path.getctime if mode == "created" else os.path.getmtime
 
@@ -2786,6 +2826,11 @@ class MainWindow(QMainWindow):
             border-radius: 4px; padding: 2px 6px; min-height: 18px;
         }}
         #sourcesSortCombo:hover {{ border-color: {ACCENT}; }}
+        #sourcesFilter {{
+            background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 4px;
+            padding: 3px 6px; color: {TEXT}; min-height: 18px;
+        }}
+        #sourcesFilter:focus {{ border-color: {ACCENT}; }}
         QListWidget#sourcesList {{
             background: {SURFACE}; border: none; outline: 0; padding: 4px;
         }}
@@ -2817,26 +2862,97 @@ class MainWindow(QMainWindow):
             item.setData(_MARK_COLOR_ROLE, None)
             item.setToolTip("Sin segmentos ni marcadores.  ·  Clic para renombrar (F2).")
 
+    def _add_group_header(self, group: str, n: int) -> None:
+        """Fila-cabecera de un grupo (modo agrupado): ni seleccionable ni editable,
+        solo un separador plegable. Al no llevar id de fuente, el resto del código
+        (selección, renombrado, ``_item_for_sid``) la ignora sola."""
+        collapsed = group in self._collapsed_groups
+        item = QListWidgetItem(f"{'▸' if collapsed else '▾'}  {group}   ({n})")
+        item.setData(_GROUP_ROLE, group)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)     # clicable, no seleccionable
+        font = item.font(); font.setBold(True); item.setFont(font)
+        item.setForeground(QColor(MUTED))
+        item.setToolTip(f"Clic para desplegar/plegar «{group}» "
+                        f"({n} señal{'es' if n != 1 else ''}).")
+        self.sources_list.addItem(item)
+
+    def _add_source_item(self, src: dict, seg_counts: dict, group: str | None = None) -> None:
+        sid = src["id"]
+        item = QListWidgetItem(src["alias"])
+        item.setData(Qt.ItemDataRole.UserRole, sid)
+        if group is not None:
+            item.setData(_GROUP_ROLE, group)
+        # Editable en el sitio para renombrar (clic izquierdo / F2).
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self._decorate_source_item(item, seg_counts.get(sid, 0),
+                                   self._src_event_counts.get(sid, 0))
+        self.sources_list.addItem(item)
+
     def _refresh_sources(self) -> None:
         self.sources_list.blockSignals(True)
         self.sources_list.clear()
         if self.project:
             seg_counts = self._segment_counts()
-            for src in self._sorted_sources():
-                sid = src["id"]
-                item = QListWidgetItem(src["alias"])
-                item.setData(Qt.ItemDataRole.UserRole, sid)
-                # Editable en el sitio para renombrar (clic izquierdo / F2).
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-                self._decorate_source_item(item, seg_counts.get(sid, 0),
-                                           self._src_event_counts.get(sid, 0))
-                self.sources_list.addItem(item)
+            srcs = self._sorted_sources()
+            if self._source_sort == "group":
+                by_group: dict[str, list] = {}
+                for src in srcs:                      # ya vienen ordenadas por grupo
+                    by_group.setdefault(source_group(src.get("alias", "")), []).append(src)
+                for group, members in by_group.items():
+                    self._add_group_header(group, len(members))
+                    for src in members:
+                        self._add_source_item(src, seg_counts, group)
+            else:
+                for src in srcs:
+                    self._add_source_item(src, seg_counts)
             if self.current_source_id:
                 it = self._item_for_sid(self.current_source_id)
                 if it is not None:
                     self.sources_list.setCurrentRow(self.sources_list.row(it))
         self.sources_list.blockSignals(False)
+        self._apply_source_filter()      # respeta plegados y el texto del buscador
         self._scan_markers_async()
+
+    def _on_source_item_clicked(self, item) -> None:
+        """Clic en una fila-cabecera: despliega o pliega ese grupo."""
+        if item is None or item.data(Qt.ItemDataRole.UserRole) is not None:
+            return                                    # es una señal, no una cabecera
+        group = item.data(_GROUP_ROLE)
+        if group is None:
+            return
+        if group in self._collapsed_groups:
+            self._collapsed_groups.discard(group)
+        else:
+            self._collapsed_groups.add(group)
+        self._refresh_sources()
+
+    def _apply_source_filter(self, *_args) -> None:
+        """Aplica el buscador. Sin texto manda el estado de plegado; con texto se
+        muestra todo lo que coincide (aunque su grupo esté plegado) y se ocultan
+        las cabeceras que se quedan sin nada visible."""
+        if not hasattr(self, "source_filter"):
+            return
+        lst = self.sources_list
+        query = (self.source_filter.text() or "").strip().lower()
+        visible: dict[str, int] = {}
+        for i in range(lst.count()):                  # 1) las señales
+            item = lst.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) is None:
+                continue
+            group = item.data(_GROUP_ROLE)
+            if query:
+                show = query in item.text().lower()
+            else:
+                show = group is None or group not in self._collapsed_groups
+            item.setHidden(not show)
+            if query and show and group is not None:
+                visible[group] = visible.get(group, 0) + 1
+        for i in range(lst.count()):                  # 2) las cabeceras
+            item = lst.item(i)
+            group = item.data(_GROUP_ROLE)
+            if item.data(Qt.ItemDataRole.UserRole) is not None or group is None:
+                continue
+            item.setHidden(bool(query) and not visible.get(group))
 
     def _item_for_sid(self, sid: str):
         for i in range(self.sources_list.count()):

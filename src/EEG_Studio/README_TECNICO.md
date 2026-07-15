@@ -52,6 +52,13 @@ y disponen de **deshacer/rehacer** e historial.
   Se pueden entrenar **varios modelos por proyecto**, ver sus **métricas**
   (exactitud, matriz de confusión, precisión/recall/F1 por clase), **activar** uno,
   **exportarlo/importarlo** (.joblib) y predecir la región seleccionada.
+- **Estrategia multiclase**: además de la nativa de cada clasificador, se puede
+  **descomponer** un problema de N clases en clasificadores **binarios** —
+  **Uno contra Uno (OvO)**, un binario por par (6 clases → 15) con mayoría de votos,
+  o **Uno contra el Resto (OvR)**, un binario por clase (6 clases → 6). Disponible
+  para RF/SVM/LDA y para Riemann/CSP; en **CSP+LDA** cada binario aprende **sus
+  propios filtros espaciales** (el CSP es binario por naturaleza), que es el enfoque
+  estándar en imaginación motora multiclase.
 - **Configuraciones de modelo (sin entrenar)**: ajusta los hiperparámetros de cualquier
   clasificador y **guárdalos con un nombre** en el proyecto sin entrenar; cárgalos
   cuando quieras. Siempre está disponible **«· Valores por defecto ·»** para volver a
@@ -632,4 +639,7 @@ y corrección de la línea base),
 `ica_topomap_smoke` (mapas topográficos de los componentes ICA: descomposición,
 posiciones de electrodos, figura y botón/cableado en el panel),
 `signal_controls_smoke` (barra de controles reacomodable del visor de señal y del
-visor en vivo, con expandir/compactar).
+visor en vivo, con expandir/compactar),
+`multiclass_smoke` (estrategia multiclase OvO/OvR: nº de binarios, compatibilidad de
+«nativa», persistencia, CSP dentro de cada binario y selector en la interfaz),
+`sources_group_smoke` (panel de Fuentes: agrupado por sujeto plegable + buscador).

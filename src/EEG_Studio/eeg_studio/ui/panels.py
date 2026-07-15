@@ -666,6 +666,22 @@ class ClassificationPanel(QWidget):
         self.raw_box.setVisible(False)
         layout.addWidget(self.raw_box)
 
+        # Estrategia multiclase: descomponer N clases en clasificadores binarios.
+        # Aplica a clásicos y a Riemann/CSP (las redes ya salen con N neuronas).
+        self.multiclass_box = QGroupBox("Estrategia multiclase")
+        mc_form = QFormLayout(self.multiclass_box)
+        self.multiclass_combo = QComboBox()
+        for key, label in classification.MULTICLASS_STRATEGIES.items():
+            self.multiclass_combo.addItem(label, key)
+        self.multiclass_combo.currentIndexChanged.connect(self._on_multiclass_changed)
+        mc_form.addRow("Estrategia:", self.multiclass_combo)
+        self.multiclass_help = QLabel()
+        self.multiclass_help.setWordWrap(True)
+        self.multiclass_help.setStyleSheet("color: #8a929b; font-size: 11px;")
+        mc_form.addRow(self.multiclass_help)
+        self.multiclass_box.setVisible(False)
+        layout.addWidget(self.multiclass_box)
+
         # Configuración detallada de la red (visible solo para redes).
         self.nn_config_widget = NNConfigWidget()
         self.nn_config_widget.setVisible(False)
@@ -775,13 +791,26 @@ class ClassificationPanel(QWidget):
                     "nn_config": neuralnet.default_config(classification.net_type(key))}
             elif classification.is_riemann(key):
                 self._default_configs[key] = {"classifier_name": key,
-                                              "raw_window": self.raw_window.value()}
+                                              "raw_window": self.raw_window.value(),
+                                              "clf_params": self.riemann_params()}
 
     def default_config_dict(self, classifier_name: str | None = None) -> dict | None:
         """Configuración por defecto del clasificador (la de fábrica del programa)."""
         key = classifier_name or self.classifier_key
         cfg = self._default_configs.get(key)
         return copy.deepcopy(cfg) if cfg else None
+
+    def _on_multiclass_changed(self) -> None:
+        """Muestra qué hace la estrategia elegida (y su coste en nº de modelos)."""
+        key = self.multiclass_combo.currentData() or "nativa"
+        text = classification.MULTICLASS_DESCRIPTIONS.get(key, "")
+        n = self.controller.class_count()
+        if n and n > 2:
+            if key == "ovo":
+                text += f"  → con tus {n} clases: {n * (n - 1) // 2} modelos binarios."
+            elif key == "ovr":
+                text += f"  → con tus {n} clases: {n} modelos binarios."
+        self.multiclass_help.setText(text)
 
     def _on_clf_changed(self) -> None:
         key = self.classifier_key
@@ -791,6 +820,9 @@ class ClassificationPanel(QWidget):
         self.rf_box.setVisible(key == "random_forest")
         self.lda_box.setVisible(key == "lda")
         self.raw_box.setVisible(classification.is_riemann(key))
+        # Las redes no usan descomposición binaria (su capa de salida ya es N clases).
+        self.multiclass_box.setVisible(not is_nn)
+        self._on_multiclass_changed()
         if is_nn:
             self.nn_config_widget.set_net_type(classification.net_type(key))
             self.update_io_info()
@@ -815,6 +847,7 @@ class ClassificationPanel(QWidget):
             cfg["nn_config"] = self.nn_config()
         elif classification.is_riemann(key):
             cfg["raw_window"] = self.raw_window_value()
+            cfg["clf_params"] = self.riemann_params()
         else:
             cfg["clf_params"] = self.classic_params()
         return cfg
@@ -834,6 +867,9 @@ class ClassificationPanel(QWidget):
         # Tolerante: una config antigua (o de un bundle) puede no traer todas las
         # claves; lo que falte conserva el valor actual del campo.
         p = config.get("clf_params") or {}
+        if "multiclass" in p:                    # común a clásicos y Riemann/CSP
+            self._select_data(self.multiclass_combo, p["multiclass"])
+            self._on_multiclass_changed()
         if key == "random_forest":
             self.rf_estimators.setValue(int(p.get("n_estimators", self.rf_estimators.value())))
             self.rf_max_depth.setValue(int(p.get("max_depth", self.rf_max_depth.value()) or 0))
@@ -958,6 +994,10 @@ class ClassificationPanel(QWidget):
     def nn_config(self) -> dict:
         return self.nn_config_widget.config()
 
+    def multiclass_strategy(self) -> str:
+        """Estrategia multiclase elegida (nativa / ovo / ovr)."""
+        return self.multiclass_combo.currentData() or "nativa"
+
     def svm_params(self) -> dict:
         return {
             "kernel": self.svm_kernel.currentData(),
@@ -966,6 +1006,7 @@ class ClassificationPanel(QWidget):
             "degree": self.svm_degree.value(),
             "coef0": float(self.svm_coef0.value()),
             "class_weight": self.svm_class_weight.currentData(),
+            "multiclass": self.multiclass_strategy(),
         }
 
     def rf_params(self) -> dict:
@@ -977,13 +1018,19 @@ class ClassificationPanel(QWidget):
             "max_features": self.rf_max_features.currentData(),
             "criterion": self.rf_criterion.currentText(),
             "class_weight": self.rf_class_weight.currentData(),
+            "multiclass": self.multiclass_strategy(),
         }
 
     def lda_params(self) -> dict:
         return {
             "solver": self.lda_solver.currentText(),
             "shrinkage": self.lda_shrinkage.currentData(),
+            "multiclass": self.multiclass_strategy(),
         }
+
+    def riemann_params(self) -> dict:
+        """Parámetros de los modelos Riemann/CSP (solo la estrategia multiclase)."""
+        return {"multiclass": self.multiclass_strategy()}
 
     def classic_params(self) -> dict | None:
         """Parámetros del clasificador clásico seleccionado (SVM, RF o LDA)."""

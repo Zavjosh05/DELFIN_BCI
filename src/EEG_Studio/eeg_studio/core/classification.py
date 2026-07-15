@@ -20,6 +20,7 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.multiclass import OneVsOneClassifier, OneVsRestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -56,6 +57,54 @@ def _class_weight(value):
     (útil en MI, donde no siempre hay el mismo nº de ensayos por clase);
     cualquier otro valor (``"none"``/``None``) = sin ponderar."""
     return "balanced" if value == "balanced" else None
+
+
+# --- Estrategia multiclase (reducción a clasificación binaria) --------------
+# Con muchas clases (p. ej. las 6 acciones Delfin) la literatura BCI sugiere no
+# entrenar un único modelo multiclase, sino descomponer el problema en varios
+# clasificadores BINARIOS y decidir por votación.
+MULTICLASS_STRATEGIES = {
+    "nativa": "Nativa (la del propio clasificador)",
+    "ovo": "Uno contra Uno (OvO)",
+    "ovr": "Uno contra el Resto (OvR)",
+}
+
+MULTICLASS_DESCRIPTIONS = {
+    "nativa": "Cada clasificador resuelve las N clases como sabe (el SVM ya usa "
+              "OvO internamente; RF y LDA son multiclase de forma nativa).",
+    "ovo": "Entrena un clasificador binario por CADA PAR de clases —N·(N−1)/2, "
+           "donde N son las clases que traiga el dataset— y decide por mayoría de "
+           "votos. Cada binario ve solo los datos de sus 2 clases: frontera más "
+           "limpia, pero más modelos.",
+    "ovr": "Entrena un binario por clase («esta clase vs. todas las demás»), o sea "
+           "N binarios. Usa todos los datos, pero cada problema queda desbalanceado "
+           "(1 vs N−1) — conviene combinarlo con «Peso de clases = balanced».",
+}
+
+
+def _wrap_multiclass(estimator, strategy: str, n_classes: int):
+    """Envuelve ``estimator`` en la estrategia multiclase pedida.
+
+    Devuelve el estimador **sin envolver** si la estrategia es ``"nativa"`` o si el
+    problema es binario (con 2 clases, OvO y OvR son el mismo clasificador único:
+    envolver solo añadiría coste). Mantener el estimador desnudo por defecto
+    conserva la compatibilidad: ``pipeline.named_steps["clf"]`` sigue siendo el
+    RF/SVC/LDA de siempre.
+    """
+    if int(n_classes) <= 2 or strategy not in ("ovo", "ovr"):
+        return estimator
+    wrapper = OneVsOneClassifier if strategy == "ovo" else OneVsRestClassifier
+    return wrapper(estimator)
+
+
+def _split_multiclass(clf_params: dict | None) -> tuple[dict, str]:
+    """Separa la estrategia multiclase del resto de parámetros.
+
+    ``multiclass`` NO es un parámetro del estimador de sklearn: hay que sacarlo
+    antes de construirlo o ``SVC(multiclass=…)`` reventaría."""
+    params = dict(clf_params or {})
+    strategy = str(params.pop("multiclass", "nativa") or "nativa")
+    return params, strategy
 
 
 def _make_classifier(name: str, params: dict | None):
@@ -230,13 +279,22 @@ class TrainingResult:
         return "Exactitud (holdout)" if self.is_nn else "Validación cruzada"
 
 
-def build_pipeline(classifier_name: str, clf_params: dict | None = None) -> Pipeline:
+def build_pipeline(classifier_name: str, clf_params: dict | None = None,
+                   n_classes: int = 0) -> Pipeline:
+    """Pipeline de un clasificador clásico (imputar → escalar → clasificar).
+
+    ``clf_params`` puede incluir ``"multiclass"`` (``nativa``/``ovo``/``ovr``); con
+    ``nativa`` (por defecto) el paso ``"clf"`` es el estimador desnudo de siempre.
+    ``n_classes`` decide si merece la pena envolver (con ≤2 clases no se envuelve).
+    """
     if classifier_name not in CLASSIFIERS:
         raise ValueError(f"Clasificador desconocido: {classifier_name}")
+    params, strategy = _split_multiclass(clf_params)
+    clf = _wrap_multiclass(_make_classifier(classifier_name, params), strategy, n_classes)
     return Pipeline([
         ("impute", SimpleImputer(strategy="mean")),
         ("scale", StandardScaler()),
-        ("clf", _make_classifier(classifier_name, clf_params)),
+        ("clf", clf),
     ])
 
 
@@ -254,11 +312,12 @@ def train(dataset, classifier_name: str = "random_forest", cv: int = 5,
 
     classes, counts = np.unique(y, return_counts=True)
     labels = sorted(classes.tolist())
+    n_cls = len(labels)
     cv_scores, metrics, folds = _classic_cv(
-        lambda: build_pipeline(classifier_name, clf_params),
+        lambda: build_pipeline(classifier_name, clf_params, n_cls),
         X, y, labels, counts.min(), cv)
 
-    pipe = build_pipeline(classifier_name, clf_params)
+    pipe = build_pipeline(classifier_name, clf_params, n_cls)
     pipe.fit(X, y)
     return TrainingResult(
         model=pipe,
@@ -347,41 +406,59 @@ def _train_nn(X, y, classifier_name: str, input_kind: str,
     )
 
 
-def build_riemann_pipeline(name: str) -> Pipeline:
+def build_riemann_pipeline(name: str, clf_params: dict | None = None,
+                           n_classes: int = 0) -> Pipeline:
     """Pipeline de geometría de Riemann / CSP sobre señal cruda (n, canales, T).
+
+    Admite ``clf_params["multiclass"]`` (``nativa``/``ovo``/``ovr``).
+
+    **CSP es binario por naturaleza** (maximiza el cociente de varianzas entre DOS
+    clases), así que con OvO/OvR se envuelve **CSP+LDA JUNTOS**: así cada problema
+    binario aprende **sus propios filtros espaciales**, que es el enfoque estándar
+    en imaginación motora multiclase. Envolver solo el LDA no serviría de nada:
+    reutilizaría unos filtros calculados para todas las clases a la vez.
 
     Referencias: Barachant et al. (Riemannian geometry, arXiv:2407.20250);
     filtrado espacial de Riemann (doi:10.1145/3691521.3691529); CSP clásico.
     """
     if not _PYRIEMANN_OK:
         raise RuntimeError("pyriemann no está instalado (pip install pyriemann).")
+    _params, strategy = _split_multiclass(clf_params)
     cov = Covariances(estimator="oas")
     if name == "riemann_mdm":
-        return Pipeline([("cov", cov), ("mdm", MDM())])
+        clf = _wrap_multiclass(MDM(), strategy, n_classes)
+        return Pipeline([("cov", cov), ("clf", clf)])
     if name == "riemann_ts":
-        return Pipeline([("cov", cov), ("ts", TangentSpace()),
-                         ("lr", LogisticRegression(max_iter=500))])
+        clf = _wrap_multiclass(LogisticRegression(max_iter=500), strategy, n_classes)
+        return Pipeline([("cov", cov), ("ts", TangentSpace()), ("clf", clf)])
     if name == "csp_lda":
-        return Pipeline([("cov", cov), ("csp", CSP(nfilter=6, log=True)),
-                         ("lda", LinearDiscriminantAnalysis())])
+        csp_lda = Pipeline([("csp", CSP(nfilter=6, log=True)),
+                            ("lda", LinearDiscriminantAnalysis())])
+        clf = _wrap_multiclass(csp_lda, strategy, n_classes)
+        return Pipeline([("cov", cov), ("clf", clf)])
     raise ValueError(f"Modelo de Riemann desconocido: {name}")
 
 
 def train_riemann(raw_dataset, classifier_name: str, cv: int = 5,
-                  raw_window: int = 0) -> TrainingResult:
-    """Entrena un modelo de Riemann/CSP con el dataset de señal cruda."""
+                  raw_window: int = 0, clf_params: dict | None = None) -> TrainingResult:
+    """Entrena un modelo de Riemann/CSP con el dataset de señal cruda.
+
+    ``clf_params`` admite ``"multiclass"`` (nativa/ovo/ovr); con OvO/OvR el CSP se
+    reaprende por cada problema binario (ver :func:`build_riemann_pipeline`)."""
     X, y = raw_dataset.X, raw_dataset.y
     if X.shape[0] < 2:
         raise ValueError("Se necesitan al menos 2 segmentos para entrenar.")
     classes, counts = np.unique(y, return_counts=True)
     labels = sorted(classes.tolist())
+    n_cls = len(labels)
     try:
         cv_scores, metrics, folds = _classic_cv(
-            lambda: build_riemann_pipeline(classifier_name), X, y, labels, counts.min(), cv)
+            lambda: build_riemann_pipeline(classifier_name, clf_params, n_cls),
+            X, y, labels, counts.min(), cv)
     except Exception:  # noqa: BLE001
         cv_scores, metrics, folds = np.array([]), None, 0
 
-    pipe = build_riemann_pipeline(classifier_name)
+    pipe = build_riemann_pipeline(classifier_name, clf_params, n_cls)
     pipe.fit(X, y)
     return TrainingResult(
         model=pipe,
@@ -391,6 +468,7 @@ def train_riemann(raw_dataset, classifier_name: str, cv: int = 5,
         cv_scores=cv_scores,
         input_kind="raw",
         metrics=metrics,
+        clf_params=dict(clf_params) if clf_params else None,
         raw_window=int(raw_window),
         n_samples=int(X.shape[0]),
         eval_method="cross_val" if folds >= 2 else "",

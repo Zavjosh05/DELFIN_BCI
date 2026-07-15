@@ -15,6 +15,33 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-14]
 
 ### Añadido
+- **Estrategia multiclase: reducción a clasificadores binarios (OvO / OvR)**. Con
+  muchas clases (las 6 acciones Delfin) la literatura BCI sugiere no entrenar un
+  único modelo multiclase, sino descomponer el problema en varios **binarios** y
+  decidir por votación. Nuevo selector **«Estrategia multiclase»** en el panel de
+  *Clasificación* y en el diálogo **«Configuración…»** (para reentrenar), con la
+  descripción de cada opción y el nº de modelos que implica:
+  - **Uno contra Uno (OvO)**: un binario por cada **par** de clases (6 clases → 15)
+    y mayoría de votos. Cada binario ve solo los datos de sus 2 clases.
+  - **Uno contra el Resto (OvR)**: un binario por clase (6 clases → 6). Usa todos
+    los datos, pero cada problema queda desbalanceado (1 vs N−1): conviene
+    combinarlo con **«Peso de clases» = balanced**.
+  - **Nativa** (por defecto): la de cada clasificador, como hasta ahora — el
+    comportamiento y los modelos ya guardados no cambian.
+  - Aplica a **RF, SVM y LDA** y también a **Riemann/CSP**. En **CSP+LDA** es donde
+    más aporta: el CSP es **binario por naturaleza**, así que con OvO/OvR se envuelve
+    **CSP+LDA juntos** y cada problema binario aprende **sus propios filtros
+    espaciales** (enfoque estándar en imaginación motora multiclase). Nota: el SVM ya
+    usaba OvO internamente, así que ahí el cambio es menor.
+- **Panel de Fuentes: agrupado por sujeto y buscador**. Con decenas de señales
+  (`sujeto001-abajo`, `sujeto001-arriba`…) la lista plana era inmanejable:
+  - Nuevo modo de orden **«Agrupado por sujeto»**: inserta una **cabecera plegable**
+    por sujeto (deducido del prefijo del nombre, tolerando `-`, `_` o espacio) con el
+    nº de señales; un clic **despliega/pliega** el grupo.
+  - Nuevo **buscador** sobre la lista: filtra por nombre y **despliega solo lo que
+    coincide**, aunque su grupo esté plegado, ocultando las cabeceras que se quedan
+    sin nada. Al limpiarlo vuelve a mandar el estado de plegado.
+
 - **Mapas topográficos de los componentes ICA**: al seleccionar el paso
   *Eliminar artefactos (ICA)* en el preprocesamiento aparece el botón **«Ver mapas
   espaciales (ICA)…»**, que abre una ventana con un **mapa por componente** dibujado
