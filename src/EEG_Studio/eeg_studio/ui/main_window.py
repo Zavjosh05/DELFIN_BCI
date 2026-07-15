@@ -2200,6 +2200,7 @@ class MainWindow(QMainWindow):
     def train_model(self) -> None:
         key = self.clf_panel.classifier_key
         nn_config = self.clf_panel.nn_config() if classification.is_nn(key) else None
+        aug_config = self.clf_panel.augment_config()   # solo afecta al entrenamiento
 
         # CNN/LSTM trabajan sobre señal cruda: se construye su dataset desde los
         # segmentos. El resto usa el dataset de características ya construido.
@@ -2212,14 +2213,15 @@ class MainWindow(QMainWindow):
                 window = nn_config.get("window_samples", 512)
                 task = lambda progress=None: classification.train_raw(
                     dataset_mod.build_raw_dataset(self.project, window), key, nn_config,
-                    progress=progress
+                    progress=progress, augment_config=aug_config
                 )
             else:  # Riemann / CSP
                 window = self.clf_panel.raw_window_value()
                 riemann_params = self.clf_panel.riemann_params()
                 task = lambda progress=None: classification.train_riemann(
                     dataset_mod.build_raw_dataset(self.project, window), key,
-                    raw_window=window, clf_params=riemann_params
+                    raw_window=window, clf_params=riemann_params,
+                    augment_config=aug_config
                 )
         else:
             if self.dataset is None:
@@ -2228,7 +2230,7 @@ class MainWindow(QMainWindow):
             clf_params = self.clf_panel.classic_params()
             task = lambda progress=None: classification.train(
                 self.dataset, key, nn_config=nn_config, clf_params=clf_params,
-                progress=progress
+                progress=progress, augment_config=aug_config
             )
 
         self._busy("Entrenando modelo…")
@@ -2322,6 +2324,7 @@ class MainWindow(QMainWindow):
                 "classifier_name": res.classifier_name,
                 "clf_params": getattr(res, "clf_params", None),
                 "nn_config": getattr(res, "nn_config", None),
+                "augment_config": getattr(res, "augment_config", None),
                 "raw_window": int(getattr(res, "raw_window", 0) or 0),
                 "_target_name": name,                  # sustituye al modelo actual
             }
@@ -2350,6 +2353,7 @@ class MainWindow(QMainWindow):
         key = entry.get("classifier_name")
         if key not in classification.MODEL_FAMILY:
             return None
+        aug = entry.get("augment_config") or None      # las configs viejas no lo traen
         if classification.is_nn(key):
             nn_cfg = entry.get("nn_config")
             if not nn_cfg:
@@ -2360,23 +2364,27 @@ class MainWindow(QMainWindow):
                 window = int(nn_cfg.get("window_samples", 512))
                 return lambda progress=None: classification.train_raw(
                     dataset_mod.build_raw_dataset(self.project, window), key, nn_cfg,
-                    progress=progress)
+                    progress=progress, augment_config=aug)
             if self.dataset is None:
                 return None
             return lambda progress=None: classification.train(
-                self.dataset, key, nn_config=nn_cfg, progress=progress)
+                self.dataset, key, nn_config=nn_cfg, progress=progress,
+                augment_config=aug)
         if classification.is_riemann(key):
             if not self.project.state.get("segments"):
                 return None
             window = int(entry.get("raw_window") or 512)
+            # clf_params lleva la estrategia multiclase: sin pasarlo, reentrenar un
+            # Riemann/CSP perdía su OvO/OvR y volvía a «nativa» en silencio.
             return lambda progress=None: classification.train_riemann(
                 dataset_mod.build_raw_dataset(self.project, window), key,
-                raw_window=window)
+                raw_window=window, clf_params=(entry.get("clf_params") or None),
+                augment_config=aug)
         if self.dataset is None:                       # clásicos: necesitan dataset
             return None
         return lambda progress=None: classification.train(
             self.dataset, key, clf_params=(entry.get("clf_params") or None),
-            progress=progress)
+            progress=progress, augment_config=aug)
 
     def _train_config_queue(self, entries: list) -> None:
         """Entrena, uno tras otro, los modelos de las configuraciones elegidas."""

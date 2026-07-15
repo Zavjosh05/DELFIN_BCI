@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..core import classification, neuralnet, preprocessing
+from ..core import augment, classification, neuralnet, preprocessing
 from .nn_config import NNConfigWidget
 
 # Entrada siempre presente en la lista de configuraciones: los valores por
@@ -698,6 +698,62 @@ class ClassificationPanel(QWidget):
         self._on_svm_kernel_changed()
         self._on_lda_solver_changed()
 
+        # --- Aumento de datos (data augmentation) -----------------------------
+        self.aug_box = QGroupBox("Aumento de datos (solo al entrenar)")
+        self.aug_box.setCheckable(True)
+        self.aug_box.setChecked(False)
+        self.aug_box.setToolTip(
+            "Genera copias perturbadas de los ensayos para que el modelo aprenda el "
+            "patrón y no el ensayo concreto. Se aplica SOLO a los datos de "
+            "entrenamiento: la validación se mide con los ensayos reales.")
+        aug_lay = QVBoxLayout(self.aug_box)
+        aug_form = QFormLayout()
+        self.aug_copies = QSpinBox()
+        self.aug_copies.setRange(1, 20)
+        self.aug_copies.setValue(1)
+        self.aug_copies.setToolTip("Copias aumentadas por cada ensayo original "
+                                   "(1 = duplica el conjunto de entrenamiento).")
+        self.aug_prob = QDoubleSpinBox()
+        self.aug_prob.setRange(0.0, 1.0)
+        self.aug_prob.setSingleStep(0.1)
+        self.aug_prob.setDecimals(2)
+        self.aug_prob.setValue(0.5)
+        self.aug_prob.setToolTip(
+            "Probabilidad de aplicar CADA técnica activa a cada copia: así cada copia "
+            "es una combinación distinta (aumentación automática).")
+        aug_form.addRow("Copias por ensayo:", self.aug_copies)
+        aug_form.addRow("Prob. por técnica:", self.aug_prob)
+        aug_lay.addLayout(aug_form)
+
+        # Una fila por técnica: casilla + su nivel.
+        self._aug_checks: dict[str, QCheckBox] = {}
+        self._aug_levels: dict[str, QDoubleSpinBox] = {}
+        for key, label in augment.TECHNIQUES.items():
+            row = QHBoxLayout()
+            chk = QCheckBox(label)
+            chk.setChecked(key in ("noise", "amplitude"))
+            chk.setToolTip(augment.TECHNIQUE_DESCRIPTIONS.get(key, ""))
+            lvl = QDoubleSpinBox()
+            lvl.setRange(0.0, 1.0)
+            lvl.setSingleStep(0.05)
+            lvl.setDecimals(2)
+            lvl.setValue(augment.DEFAULT_LEVELS.get(key, 0.1))
+            lvl.setToolTip(augment.TECHNIQUE_DESCRIPTIONS.get(key, ""))
+            row.addWidget(chk, 1)
+            row.addWidget(QLabel("nivel:"))
+            row.addWidget(lvl)
+            aug_lay.addLayout(row)
+            self._aug_checks[key] = chk
+            self._aug_levels[key] = lvl
+        aug_help = QLabel(
+            "Útil sobre todo con las REDES (que sobreajustan con pocos ensayos); a LDA "
+            "con shrinkage o a Riemann les aporta poco. La «Traslación circular» solo "
+            "aplica a modelos de señal cruda.")
+        aug_help.setWordWrap(True)
+        aug_help.setStyleSheet("color: #8a929b; font-size: 11px;")
+        aug_lay.addWidget(aug_help)
+        layout.addWidget(self.aug_box)
+
         # Configuraciones de modelo: hiperparámetros con nombre, guardables en el
         # proyecto SIN entrenar nada (recetas reutilizables).
         self.cfg_box = QGroupBox("Configuraciones de modelo (sin entrenar)")
@@ -786,8 +842,10 @@ class ClassificationPanel(QWidget):
         propios campos recién construidos (no se duplican en ningún sitio).
 
         Sirven para ofrecer «Valores por defecto» y poder volver atrás."""
+        aug = augment.default_config()          # apagado, como recién abierto
         self._default_configs: dict[str, dict] = {
             "random_forest": {"classifier_name": "random_forest",
+                              "augment_config": aug,
                               "clf_params": self.rf_params()},
             "svm": {"classifier_name": "svm", "clf_params": self.svm_params()},
             "lda": {"classifier_name": "lda", "clf_params": self.lda_params()},
@@ -795,12 +853,16 @@ class ClassificationPanel(QWidget):
         for key in classification.CLASSIFIER_LABELS:
             if classification.is_nn(key):
                 self._default_configs[key] = {
-                    "classifier_name": key,
+                    "classifier_name": key, "augment_config": aug,
                     "nn_config": neuralnet.default_config(classification.net_type(key))}
             elif classification.is_riemann(key):
                 self._default_configs[key] = {"classifier_name": key,
+                                              "augment_config": aug,
                                               "raw_window": self.raw_window.value(),
                                               "clf_params": self.riemann_params()}
+            else:
+                self._default_configs.setdefault(key, {}).setdefault(
+                    "augment_config", aug)
 
     def default_config_dict(self, classifier_name: str | None = None) -> dict | None:
         """Configuración por defecto del clasificador (la de fábrica del programa)."""
@@ -847,6 +909,29 @@ class ClassificationPanel(QWidget):
         self.lda_shrinkage.setEnabled(self.lda_solver.currentText() != "svd")
 
     # --- Configuraciones de modelo (hiperparámetros, sin entrenar) --------
+    # --- Aumento de datos --------------------------------------------------
+    def augment_config(self) -> dict:
+        """Configuración de aumento según los campos (siempre un dict completo)."""
+        cfg = augment.default_config()
+        cfg["enabled"] = self.aug_box.isChecked()
+        cfg["copies"] = self.aug_copies.value()
+        cfg["probability"] = float(self.aug_prob.value())
+        cfg["techniques"] = {k: c.isChecked() for k, c in self._aug_checks.items()}
+        cfg["levels"] = {k: float(s.value()) for k, s in self._aug_levels.items()}
+        return cfg
+
+    def set_augment_config(self, cfg: dict | None) -> None:
+        """Vuelca una configuración de aumento en los campos."""
+        cfg = cfg or augment.default_config()
+        self.aug_box.setChecked(bool(cfg.get("enabled")))
+        self.aug_copies.setValue(int(cfg.get("copies", 1)))
+        self.aug_prob.setValue(float(cfg.get("probability", 0.5)))
+        for k, chk in self._aug_checks.items():
+            chk.setChecked(bool((cfg.get("techniques") or {}).get(k, False)))
+        for k, spin in self._aug_levels.items():
+            spin.setValue(float((cfg.get("levels") or {}).get(
+                k, augment.DEFAULT_LEVELS.get(k, 0.1))))
+
     def current_config_dict(self) -> dict:
         """Los valores actuales de los campos como configuración de modelo."""
         key = self.classifier_key
@@ -858,6 +943,7 @@ class ClassificationPanel(QWidget):
             cfg["clf_params"] = self.riemann_params()
         else:
             cfg["clf_params"] = self.classic_params()
+        cfg["augment_config"] = self.augment_config()   # viaja con la receta
         return cfg
 
     def apply_config_dict(self, config: dict) -> bool:
@@ -872,6 +958,8 @@ class ClassificationPanel(QWidget):
             self.update_io_info()
         if config.get("raw_window"):
             self.raw_window.setValue(int(config["raw_window"]))
+        # Las configuraciones antiguas no traen aumento: se deja apagado.
+        self.set_augment_config(config.get("augment_config"))
         # Tolerante: una config antigua (o de un bundle) puede no traer todas las
         # claves; lo que falte conserva el valor actual del campo.
         p = config.get("clf_params") or {}

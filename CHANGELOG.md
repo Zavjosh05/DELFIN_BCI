@@ -15,6 +15,27 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-15]
 
 ### Añadido
+- **Aumento de datos (*data augmentation*)**: nueva sección **«Aumento de datos (solo al
+  entrenar)»** en el panel de *Clasificación*. Genera **copias perturbadas** de los
+  ensayos para que el modelo aprenda el patrón y no el ensayo concreto — útil con pocos
+  ensayos por clase, que es lo normal en imaginación motora. Técnicas (con su nivel
+  ajustable y descripción en la interfaz):
+  - **Ruido gaussiano** proporcional a la desviación de cada canal.
+  - **Perturbación de amplitud** (escalado aleatorio del ensayo).
+  - **Traslación circular** en el tiempo (solo modelos de señal cruda).
+  - **Mixup**: combina dos ensayos **de la misma clase**, así la etiqueta sigue siendo
+    válida.
+  - **Aumentación automática**: cada técnica activa se aplica **al azar** (probabilidad
+    configurable), de modo que cada copia es una combinación distinta.
+  - Se aplica **SOLO al pliegue de entrenamiento** (y al *holdout* de las redes): la
+    validación se mide siempre con los ensayos reales. Si se aumentara antes de partir,
+    copias del mismo ensayo caerían en *train* y *test* y la exactitud subiría midiendo
+    **memoria**, no aprendizaje. El modelo final sí se entrena con todo + el aumento.
+  - Viene **apagado por defecto** (aumentar no siempre ayuda: a LDA con shrinkage o a
+    Riemann les aporta poco), es **reproducible** (semilla), viaja con las
+    **configuraciones de modelo** y los **bundles**, y queda guardado en el `.joblib`
+    del modelo. Los modelos y configuraciones anteriores no cambian.
+  - Núcleo reutilizable: `core/augment.py`.
 - **Importar dataset (.npz)** en la pestaña *Dataset*: carga un dataset ya construido
   en **otra sesión** (o que te pasó otra persona) y lo deja **activo y listo para
   entrenar**, sin volver a extraer características ni necesitar los CSV de origen.
@@ -36,6 +57,10 @@ cambios se agrupan por fecha de trabajo.
     hay matplotlib). Núcleo reutilizable: `classification.pairwise_confusion()`.
 
 ### Corregido / reforzado
+- **Reentrenar un modelo de Riemann/CSP ya no pierde su estrategia multiclase**: al
+  reentrenarlo (o al entrenar su configuración desde un bundle) no se le pasaban los
+  `clf_params`, así que un modelo OvO/OvR volvía a **«nativa»** en silencio y no era el
+  mismo modelo. Los clásicos y las redes no estaban afectados.
 - **El visor «Tiempo real» conserva los nombres y colores de los canales**: al
   conectar una **grabación** (fuente «Reproducir grabación»), los canales aparecían
   como `Channel 1`…`Channel 14` y con la paleta cíclica, perdiendo los nombres (AF3,

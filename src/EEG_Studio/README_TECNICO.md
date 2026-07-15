@@ -64,6 +64,13 @@ y disponen de **deshacer/rehacer** e historial.
   para RF/SVM/LDA y para Riemann/CSP; en **CSP+LDA** cada binario aprende **sus
   propios filtros espaciales** (el CSP es binario por naturaleza), que es el enfoque
   estándar en imaginación motora multiclase.
+- **Aumento de datos (solo al entrenar)**: genera copias perturbadas de los ensayos
+  (**ruido gaussiano**, **perturbación de amplitud**, **traslación circular** y
+  **mixup** dentro de la misma clase), aplicadas **al azar** por copia. Se aplica
+  **solo al pliegue de entrenamiento**: la validación se mide con los ensayos reales
+  (aumentar antes de partir inflaría la exactitud midiendo memoria). Apagado por
+  defecto, reproducible, y viaja con las configuraciones y los bundles
+  (`core/augment.py`).
 - **Configuraciones de modelo (sin entrenar)**: ajusta los hiperparámetros de cualquier
   clasificador y **guárdalos con un nombre** en el proyecto sin entrenar; cárgalos
   cuando quieras. Siempre está disponible **«· Valores por defecto ·»** para volver a
@@ -620,6 +627,8 @@ Suites disponibles (`tests/*.py`): `smoke_test`, `gui_smoke`, `acq_smoke`,
 `config_import_smoke` (bundle: además detecta los hiperparámetros que trae y los
 entrena con los datos locales),
 `model_configs_smoke` (configuraciones de modelo: guardar/cargar sin entrenar),
+`augment_smoke` (aumento de datos: técnicas y que solo aumente el pliegue de
+entrenamiento),
 `metrics_plot_smoke`, `split_report_smoke`, `channel_isolate_smoke`,
 `model_config_smoke`, `history_tree_smoke`, `signal_tabs_smoke`,
 `multi_pipeline_smoke`, `pipeline_ui_smoke`, `live_scale_smoke`,

@@ -27,7 +27,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from ..config import MODELS_DIR
-from . import neuralnet
+from . import augment, neuralnet
 
 try:
     from pyriemann.classification import MDM
@@ -257,15 +257,24 @@ def _metrics_dict(y_true, y_pred, labels) -> dict:
     }
 
 
-def _cv_eval(make_estimator, X, y, folds: int):
-    """Validación cruzada estratificada: scores por *fold* y predicciones OOF."""
+def _cv_eval(make_estimator, X, y, folds: int, augment_config: dict | None = None):
+    """Validación cruzada estratificada: scores por *fold* y predicciones OOF.
+
+    El **aumento de datos** se aplica aquí, y SOLO al pliegue de entrenamiento: si
+    se aumentara antes de partir, copias del mismo ensayo caerían en train y test y
+    la exactitud subiría midiendo memoria en vez de aprendizaje."""
     skf = StratifiedKFold(n_splits=folds, shuffle=True, random_state=0)
     scores = []
     y_pred = np.empty(len(y), dtype=object)
-    for tr, te in skf.split(X, y):
+    for k, (tr, te) in enumerate(skf.split(X, y)):
+        X_tr, y_tr = X[tr], y[tr]
+        if augment_config and augment_config.get("enabled"):
+            # Semilla distinta por pliegue: copias distintas, pero reproducible.
+            rng = np.random.default_rng(int(augment_config.get("seed", 0)) + k)
+            X_tr, y_tr = augment.augment(X_tr, y_tr, augment_config, rng)
         est = make_estimator()
-        est.fit(X[tr], y[tr])
-        pred = est.predict(X[te])
+        est.fit(X_tr, y_tr)
+        pred = est.predict(X[te])          # el test NUNCA se aumenta
         y_pred[te] = pred
         scores.append(accuracy_score(y[te], pred))
     return np.array(scores), y_pred
@@ -282,6 +291,7 @@ class TrainingResult:
     nn_config: dict | None = None      # config de la red (si es NN)
     metrics: dict | None = None        # matriz de confusión + métricas por clase
     clf_params: dict | None = None     # hiperparámetros del clasificador clásico
+    augment_config: dict | None = None  # aumento de datos usado al entrenar (o None)
     raw_window: int = 0                 # ventana (muestras) usada por Riemann/CSP (0 = n/a)
     n_samples: int = 0                 # muestras totales del dataset
     n_train: int = 0                   # muestras de entrenamiento (holdout, o por pliegue en CV)
@@ -347,7 +357,7 @@ def build_pipeline(classifier_name: str, clf_params: dict | None = None,
 
 def train(dataset, classifier_name: str = "random_forest", cv: int = 5,
           nn_config: dict | None = None, clf_params: dict | None = None,
-          progress=None) -> TrainingResult:
+          progress=None, augment_config: dict | None = None) -> TrainingResult:
     """Entrena con un dataset de **características** (clásicos y MLP)."""
     X, y = dataset.X, dataset.y
     if X.shape[0] < 2:
@@ -355,17 +365,20 @@ def train(dataset, classifier_name: str = "random_forest", cv: int = 5,
 
     if is_nn(classifier_name):
         return _train_nn(X, y, classifier_name, "features", nn_config,
-                         feature_names=list(dataset.feature_names), progress=progress)
+                         feature_names=list(dataset.feature_names), progress=progress,
+                         augment_config=augment_config)
 
     classes, counts = np.unique(y, return_counts=True)
     labels = sorted(classes.tolist())
     n_cls = len(labels)
     cv_scores, metrics, folds = _classic_cv(
         lambda: build_pipeline(classifier_name, clf_params, n_cls),
-        X, y, labels, counts.min(), cv)
+        X, y, labels, counts.min(), cv, augment_config)
 
     pipe = build_pipeline(classifier_name, clf_params, n_cls)
-    pipe.fit(X, y)
+    # El modelo FINAL sí se entrena con todo + el aumento (la validación de arriba
+    # ya dio la estimación honesta).
+    pipe.fit(*_augmented(X, y, augment_config))
     return TrainingResult(
         model=pipe,
         classifier_name=classifier_name,
@@ -375,38 +388,48 @@ def train(dataset, classifier_name: str = "random_forest", cv: int = 5,
         input_kind="features",
         metrics=metrics,
         clf_params=dict(clf_params) if clf_params else None,
+        augment_config=dict(augment_config) if augment_config else None,
         n_samples=int(X.shape[0]),
         eval_method="cross_val" if folds >= 2 else "",
         cv_folds=folds,
     )
 
 
-def _classic_cv(make_estimator, X, y, labels, min_count, cv):
+def _augmented(X, y, augment_config: dict | None):
+    """``(X, y)`` con las copias aumentadas añadidas, o tal cual si está apagado."""
+    if augment_config and augment_config.get("enabled"):
+        return augment.augment(X, y, augment_config)
+    return X, y
+
+
+def _classic_cv(make_estimator, X, y, labels, min_count, cv, augment_config=None):
     """Validación cruzada + métricas para modelos clásicos/Riemann (si procede).
 
-    Devuelve ``(scores, metrics, folds)``; ``folds=0`` si no se pudo validar.
+    ``augment_config`` se pasa a :func:`_cv_eval`, que aumenta **solo** el pliegue
+    de entrenamiento. Devuelve ``(scores, metrics, folds)``; ``folds=0`` si no se
+    pudo validar.
     """
     if len(labels) >= 2 and min_count >= 2:
         folds = int(min(cv, min_count))
         if folds >= 2:
-            scores, y_pred = _cv_eval(make_estimator, X, y, folds)
+            scores, y_pred = _cv_eval(make_estimator, X, y, folds, augment_config)
             return scores, _metrics_dict(y, y_pred, labels), folds
     return np.array([]), None, 0
 
 
 def train_raw(raw_dataset, classifier_name: str, nn_config: dict | None = None,
-              progress=None) -> TrainingResult:
-    """Entrena una red CNN/LSTM con un dataset de **señal cruda**."""
+              progress=None, augment_config: dict | None = None) -> TrainingResult:
+    """Entrena una red CNN/LSTM/EEGNet con un dataset de **señal cruda**."""
     X, y = raw_dataset.X, raw_dataset.y
     if X.shape[0] < 2:
         raise ValueError("Se necesitan al menos 2 segmentos para entrenar.")
     return _train_nn(X, y, classifier_name, "raw", nn_config, feature_names=[],
-                     progress=progress)
+                     progress=progress, augment_config=augment_config)
 
 
 def _train_nn(X, y, classifier_name: str, input_kind: str,
               nn_config: dict | None, feature_names: list[str],
-              progress=None) -> TrainingResult:
+              progress=None, augment_config: dict | None = None) -> TrainingResult:
     if not neuralnet.torch_available():
         raise RuntimeError(
             "PyTorch no está instalado. Instala 'torch' para usar redes neuronales."
@@ -427,6 +450,9 @@ def _train_nn(X, y, classifier_name: str, input_kind: str,
                 X, y, test_size=0.25, random_state=0, stratify=y
             )
             holdout = neuralnet.TorchClassifier(config)
+            # El aumento va SOLO al entrenamiento; el holdout de evaluación queda
+            # intacto (si no, la exactitud mediría memoria, no aprendizaje).
+            X_tr, y_tr = _augmented(X_tr, y_tr, augment_config)
             holdout.fit(X_tr, y_tr)
             y_pred = holdout.predict(X_te)
             cv_scores = np.array([accuracy_score(y_te, y_pred)])
@@ -436,7 +462,7 @@ def _train_nn(X, y, classifier_name: str, input_kind: str,
             cv_scores = np.array([])
 
     clf = neuralnet.TorchClassifier(config)
-    clf.fit(X, y, progress=progress)
+    clf.fit(*_augmented(X, y, augment_config), progress=progress)
     return TrainingResult(
         model=clf,
         classifier_name=classifier_name,
@@ -446,6 +472,7 @@ def _train_nn(X, y, classifier_name: str, input_kind: str,
         input_kind=input_kind,
         nn_config=config,
         metrics=metrics,
+        augment_config=dict(augment_config) if augment_config else None,
         n_samples=int(X.shape[0]),
         n_train=n_train,
         n_eval=n_eval,
@@ -488,7 +515,8 @@ def build_riemann_pipeline(name: str, clf_params: dict | None = None,
 
 
 def train_riemann(raw_dataset, classifier_name: str, cv: int = 5,
-                  raw_window: int = 0, clf_params: dict | None = None) -> TrainingResult:
+                  raw_window: int = 0, clf_params: dict | None = None,
+                  augment_config: dict | None = None) -> TrainingResult:
     """Entrena un modelo de Riemann/CSP con el dataset de señal cruda.
 
     ``clf_params`` admite ``"multiclass"`` (nativa/ovo/ovr); con OvO/OvR el CSP se
@@ -502,12 +530,12 @@ def train_riemann(raw_dataset, classifier_name: str, cv: int = 5,
     try:
         cv_scores, metrics, folds = _classic_cv(
             lambda: build_riemann_pipeline(classifier_name, clf_params, n_cls),
-            X, y, labels, counts.min(), cv)
+            X, y, labels, counts.min(), cv, augment_config)
     except Exception:  # noqa: BLE001
         cv_scores, metrics, folds = np.array([]), None, 0
 
     pipe = build_riemann_pipeline(classifier_name, clf_params, n_cls)
-    pipe.fit(X, y)
+    pipe.fit(*_augmented(X, y, augment_config))
     return TrainingResult(
         model=pipe,
         classifier_name=classifier_name,
@@ -517,6 +545,7 @@ def train_riemann(raw_dataset, classifier_name: str, cv: int = 5,
         input_kind="raw",
         metrics=metrics,
         clf_params=dict(clf_params) if clf_params else None,
+        augment_config=dict(augment_config) if augment_config else None,
         raw_window=int(raw_window),
         n_samples=int(X.shape[0]),
         eval_method="cross_val" if folds >= 2 else "",
@@ -548,6 +577,7 @@ def _result_blob(result: TrainingResult) -> dict:
         "nn_config": result.nn_config,
         "metrics": result.metrics,
         "clf_params": getattr(result, "clf_params", None),
+        "augment_config": getattr(result, "augment_config", None),
         "raw_window": getattr(result, "raw_window", 0),
         "n_samples": getattr(result, "n_samples", 0),
         "n_train": getattr(result, "n_train", 0),
@@ -582,6 +612,7 @@ def _blob_to_result(blob: dict) -> TrainingResult:
         nn_config=blob.get("nn_config"),
         metrics=blob.get("metrics"),
         clf_params=blob.get("clf_params"),
+        augment_config=blob.get("augment_config"),
         raw_window=blob.get("raw_window", 0),
         n_samples=blob.get("n_samples", 0),
         n_train=blob.get("n_train", 0),

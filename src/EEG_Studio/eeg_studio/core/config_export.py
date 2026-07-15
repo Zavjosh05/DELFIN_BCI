@@ -73,6 +73,8 @@ def _model_entry(name: str, res) -> dict:
         "classes": list(res.classes),
         "clf_params": getattr(res, "clf_params", None),   # hiperparámetros clásicos
         "nn_config": getattr(res, "nn_config", None),      # config de la red (si es NN)
+        # Aumento de datos con el que se entrenó: parte de la receta reproducible.
+        "augment_config": getattr(res, "augment_config", None),
         # Ventana de señal cruda (Riemann/CSP/redes): hace falta para poder
         # RE-ENTRENAR el modelo con los datos de otro proyecto.
         "raw_window": int(getattr(res, "raw_window", 0) or 0),
