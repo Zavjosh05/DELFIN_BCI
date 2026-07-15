@@ -55,8 +55,50 @@ cambios se agrupan por fecha de trabajo.
     aparece (el único par sería la exactitud global).
   - También sale en el informe de **texto** (`Ver texto…`, y el respaldo cuando no
     hay matplotlib). Núcleo reutilizable: `classification.pairwise_confusion()`.
+- **Estabilidad del comando en el control en tiempo real**: nueva sección en la pestaña
+  *Control*. Confirmar una clase no bastaba para controlar nada: con K=3 a 4 Hz se
+  confirma una cada ~750 ms y la siguiente puede llegar 250 ms después, así que el
+  actuador cambiaba de orden **sin completar ningún movimiento útil**. Dos ajustes:
+  - **Confianza mínima** (60 % por defecto): las predicciones dudosas se ignoran *y
+    cortan la racha*, para que el ruido no sume hacia la K. Si el modelo no da
+    probabilidades el filtro no aplica; 0 = aceptar todas.
+  - **Duración de la acción** (1500 ms por defecto): una vez confirmada, la acción se
+    **mantiene** ese tiempo sin atender predicciones nuevas. Con **repetir** activado el
+    comando se reenvía en cada intervalo mientras dura: como cada envío es un
+    pulso/incremento del actuador, repetirlo convierte una orden suelta en un
+    **movimiento sostenido**. Al terminar, la misma clase puede volver a confirmarse, así
+    que mantener la imaginación motora encadena acciones; 0 = comportamiento anterior.
+  - Los tres se pueden tocar **con el control en marcha** (se leen en cada ventana), que
+    es justo cuando se quieren afinar. El panel muestra además el coste por ventana y
+    cuántas se saltaron. Cubierto por `control_online_smoke`.
 
 ### Corregido / reforzado
+- **La ICA ya no destruye la señal cuando el pipeline lleva un CAR** (afecta al
+  entrenamiento *y* al control en vivo). El **CAR** (referencia promedio común) resta la
+  media entre canales, así que los deja linealmente dependientes: el **rango** baja a
+  `nº de canales − 1`. Se le pedían a FastICA tantos componentes como canales, de modo
+  que el blanqueado dividía entre un autovalor ≈ 0, la matriz de mezcla salía mal
+  condicionada (`cond` ≈ 10¹⁷ en una grabación, ≈ 10³³ en una ventana de 2 s) y
+  `inverse_transform` reconstruía **ruido**: un **84–100 % de error** *aunque no se
+  anulara ningún componente*. Ahora el nº de componentes se recorta al **rango real** de
+  los datos, con lo que el error de reconstrucción cae al **0 %** (`cond` ≈ 5) y, de
+  paso, la ICA es **~40× más rápida** (ya no agota `max_iter` persiguiendo una dirección
+  degenerada). Impacto: los datasets y modelos entrenados con un pipeline que combine
+  **CAR + ICA** se construyeron sobre señal corrupta y **conviene reconstruirlos y
+  reentrenarlos**. Cubierto por `ica_smoke` [2]–[4].
+- **La caché de señal procesada caduca al corregir el preprocesamiento**: su firma solo
+  dependía de la *configuración* del pipeline, así que un arreglo como el anterior —que
+  cambia la **salida** sin cambiar la configuración— habría seguido sirviendo desde disco
+  la señal vieja. Ahora la firma incluye `PROCESSING_VERSION`, que se sube con cada
+  arreglo que altere el resultado de `apply_pipeline`.
+- **El control en tiempo real ya no traba la interfaz**: la clasificación de cada ventana
+  corría en el **hilo de la interfaz** (un `QTimer` llamando directamente a
+  `classify_window`). Con un pipeline con ICA eso son ~100 ms cada 250 ms en el mismo
+  hilo donde viven la adquisición y el visor, así que al iniciar el control **todo se
+  trababa**. Ahora el temporizador solo toma la ventana y despacha el trabajo a un hilo;
+  si una ventana tarda más que el intervalo se **salta** la siguiente en vez de
+  encimarlas, y al detener se descartan las ventanas rezagadas (control por id de sesión)
+  para que su resultado no intente escribir en una salida ya cerrada.
 - **Reentrenar un modelo de Riemann/CSP ya no pierde su estrategia multiclase**: al
   reentrenarlo (o al entrenar su configuración desde un bundle) no se le pasaban los
   `clf_params`, así que un modelo OvO/OvR volvía a **«nativa»** en silencio y no era el

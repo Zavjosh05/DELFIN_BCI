@@ -166,8 +166,23 @@ def _fit_ica(data: np.ndarray, n_components: int = 0):
     from sklearn.exceptions import ConvergenceWarning
 
     n_ch = data.shape[0]
-    ncomp = n_ch if not n_components else min(int(n_components), n_ch)
     X = np.asarray(data, dtype=np.float64).T  # (muestras, canales)
+    if X.shape[0] < 2 or n_ch < 2:
+        return None
+    # El RANGO manda, no el nº de canales. Pasos como el CAR (referencia promedio
+    # común) dejan los canales linealmente dependientes: su suma es cero, así que
+    # el rango es n_canales-1. Pedirle a FastICA más componentes que el rango hace
+    # que el blanqueado divida entre un autovalor ~0; la matriz de mezcla queda
+    # mal condicionada (cond ~1e17 en una grabación, ~1e33 en una ventana corta) y
+    # `inverse_transform` devuelve ruido en vez de la señal limpia — un 84-100% de
+    # error de reconstrucción AUNQUE no se anule ningún componente. Recortar al
+    # rango deja cond ~5, error 0% y, de paso, es ~40x más rápido (FastICA ya no
+    # agota max_iter persiguiendo una dirección degenerada).
+    rank = int(np.linalg.matrix_rank(X))
+    if rank < 1:
+        return None                                   # señal plana: nada que separar
+    ncomp = n_ch if not n_components else min(int(n_components), n_ch)
+    ncomp = max(1, min(ncomp, rank))
     # max_iter alto + tol algo más laxa reducen los avisos de no-convergencia;
     # aun sin converger del todo el resultado es utilizable, así que se silencia
     # el ConvergenceWarning (la no-convergencia ya se gestiona con el try/except).

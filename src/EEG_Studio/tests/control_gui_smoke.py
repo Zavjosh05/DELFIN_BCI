@@ -62,6 +62,13 @@ def main(csv_path) -> int:
     cp = win.control_panel
     cp.window.setValue(128)
     cp.smooth_k.setValue(1)
+    # El modelo de esta prueba se entrena con 6 segmentos de una señal cualquiera:
+    # predice ~al azar (≈54% con dos clases), así que el umbral de confianza por
+    # defecto lo rechazaría —correctamente— y no se enviaría ningún comando. Aquí
+    # se comprueba el CABLEADO (que un comando llegue a la salida), no la política
+    # del umbral, que tiene su propia prueba en `control_online_smoke` [3].
+    cp.min_conf.setValue(0)
+    cp.hold_ms.setValue(0)             # sin retención: un comando por confirmación
     cp.sink_combo.setCurrentIndex(0)   # log
     cp._start()
     _pump(app, 1.5)

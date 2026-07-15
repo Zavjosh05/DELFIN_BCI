@@ -492,15 +492,38 @@ detectada a un controlador externo (brazo robótico, carrito…). Pestaña **Con
    **ventana** (muestras a clasificar), el **intervalo**
    y la **confirmación K** (nº de predicciones iguales seguidas para confirmar una
    clase — evita que el controlador oscile).
-4. Define el **comando por clase** (texto que se envía por cada clase; por defecto
+4. Ajusta la **estabilidad del comando** (ver abajo).
+5. Define el **comando por clase** (texto que se envía por cada clase; por defecto
    el nombre de la clase).
-5. Elige la **salida**: *Registro* (solo mostrar), *UDP* (host/puerto) o *Puerto
+6. Elige la **salida**: *Registro* (solo mostrar), *UDP* (host/puerto) o *Puerto
    serie* (Arduino). Pulsa **Iniciar control**.
 
 Cada ventana entrante se procesa con el **mismo pipeline** del proyecto y se
-clasifica; cuando una clase se confirma (K iguales seguidas) se envía su comando
-una sola vez (al cambiar de clase estable). En pantalla ves la predicción actual,
-su confianza y el último comando enviado.
+clasifica; cuando una clase se confirma (K iguales seguidas) se envía su comando.
+En pantalla ves la predicción actual, su confianza y el último comando enviado,
+junto al coste por ventana y cuántas se saltaron.
+
+La clasificación corre **en un hilo aparte**: el temporizador solo toma la ventana
+(barato) y despacha. Si el pipeline es caro —con ICA ronda los 100 ms por ventana—
+la interfaz sigue respondiendo, y si una ventana tarda más que el intervalo se
+**salta** la siguiente en vez de encimarlas (el contador de saltadas lo indica).
+
+### Estabilidad del comando
+
+Confirmar una clase no basta para controlar algo: con K=3 a 4 Hz se confirma cada
+~750 ms y la siguiente puede llegar 250 ms después, así que el actuador cambia de
+orden sin completar ningún movimiento útil. Dos ajustes lo corrigen:
+
+- **Confianza mínima**: las predicciones por debajo del umbral se ignoran y cortan
+  la racha, para que el ruido no sume hacia la K. Si el modelo no da
+  probabilidades, el filtro no aplica. (0 = aceptar todas.)
+- **Duración de la acción**: una vez confirmada una clase, la acción se **mantiene**
+  ese tiempo sin atender predicciones nuevas, dando margen a que el movimiento se
+  complete. Con **repetir** activado, el comando se reenvía en cada intervalo
+  mientras dura: como cada envío es un pulso/incremento del actuador, repetirlo
+  convierte una orden suelta en un movimiento sostenido. Al terminar la retención
+  la misma clase puede volver a confirmarse, así que mantener la imaginación motora
+  encadena acciones. (0 = reaccionar a cada confirmación, como antes.)
 
 > El controlador externo (tu robot/carrito) solo tiene que **escuchar** los
 > comandos: por UDP, un script o microcontrolador que reciba en ese puerto; por
@@ -659,4 +682,8 @@ visor en vivo, con expandir/compactar),
 `sources_group_smoke` (panel de Fuentes: agrupado por sujeto plegable + buscador),
 `live_names_import_smoke` (el visor en vivo usa los alias de canal del proyecto y
 respeta los canales excluidos —mismos nombres, colores y canales que «Análisis
-(CSV)»— sin recortar la grabación; e importar un dataset .npz).
+(CSV)»— sin recortar la grabación; e importar un dataset .npz),
+`control_online_smoke` (control en tiempo real: la clasificación corre fuera del hilo
+de la interfaz sin encimar ventanas, la retención sostiene y repite la acción
+confirmada, el umbral de confianza filtra, y al detener se descartan las ventanas
+rezagadas sin tocar la salida ya cerrada).

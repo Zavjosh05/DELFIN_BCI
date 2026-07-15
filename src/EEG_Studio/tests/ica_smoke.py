@@ -38,6 +38,43 @@ def main() -> int:
     assert out.shape == data.shape, "la forma cambió"
     assert k_after < k_before, "la ICA no redujo el artefacto picudo"
 
+    print("[2] Tras un CAR, la ICA NO debe destruir la señal")
+    # Regresión: el CAR (referencia promedio común) resta la media entre canales,
+    # así que los canales quedan linealmente dependientes -> rango n_canales-1.
+    # Se le pedían a FastICA tantos componentes como canales: el blanqueado dividía
+    # entre un autovalor ~0, la matriz de mezcla salía con cond ~1e17 (~1e33 en una
+    # ventana corta) y `inverse_transform` devolvía ruido. Resultado: un 84-100% de
+    # error de reconstrucción AUNQUE no se anulara ningún componente, tanto al
+    # entrenar como en el control en vivo.
+    car_pipe = [{"type": "car", "params": {}}]
+    ica_step = [{"type": "ica", "params": {"n_components": 0, "kurt_threshold": 5.0}}]
+    clean = rng.normal(0, 10, (8, 2048))     # sin artefactos: la ICA no debe anular nada
+    car = pp.apply_pipeline(clean, 128.0, car_pipe)
+    rank = int(np.linalg.matrix_rank(car.T))
+    out = pp.apply_pipeline(car, 128.0, ica_step)
+    err = float(np.linalg.norm(out - car) / np.linalg.norm(car))
+    print(f"    tras el CAR: rango {rank}/{car.shape[0]} (deficiente por construcción)")
+    print(f"    error de reconstrucción de la ICA: {err * 100:.2f}%")
+    assert rank == car.shape[0] - 1, f"el CAR debería dejar rango n-1, dio {rank}"
+    assert err < 0.05, f"la ICA destruyó la señal tras el CAR: {err * 100:.0f}% de error"
+
+    print("[3] …y tampoco en una ventana corta (el caso del control en vivo)")
+    # 256 muestras = 2 s a 128 Hz: la ventana por defecto de la inferencia online.
+    win = pp.apply_pipeline(rng.normal(0, 10, (8, 256)), 128.0, car_pipe)
+    out_w = pp.apply_pipeline(win, 128.0, ica_step)
+    err_w = float(np.linalg.norm(out_w - win) / np.linalg.norm(win))
+    amp = float(np.linalg.norm(out_w) / np.linalg.norm(win))
+    print(f"    ventana de 256: error {err_w * 100:.2f}%  ·  amplitud salida/entrada {amp:.3f}")
+    assert err_w < 0.05, f"la ICA destruyó la ventana corta: {err_w * 100:.0f}% de error"
+
+    print("[4] El nº de componentes se recorta al rango, no al de canales")
+    fit = pp._fit_ica(car, 0)
+    assert fit is not None, "_fit_ica no debería rendirse con datos válidos"
+    _, sources = fit
+    print(f"    componentes ajustados: {sources.shape[1]} (canales {car.shape[0]}, rango {rank})")
+    assert sources.shape[1] == rank, \
+        f"se pidieron {sources.shape[1]} componentes con rango {rank}"
+
     print("\nICA (artefactos) OK ✓")
     return 0
 

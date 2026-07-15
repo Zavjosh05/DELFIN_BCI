@@ -13,8 +13,9 @@ import time
 import threading
 
 import numpy as np
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -46,7 +47,9 @@ from .sim_arm_view import SimArmView
 from ..core import stim as stim_core
 from ..core.csv_loader import load_recording
 from ..config import (
+    ONLINE_HOLD_MS,
     ONLINE_INTERVAL_MS,
+    ONLINE_MIN_CONFIDENCE,
     ONLINE_SERIAL_BAUD,
     ONLINE_SMOOTH_K,
     ONLINE_UDP_HOST,
@@ -63,6 +66,11 @@ from ..inference import (
 
 
 class ControlPanel(QWidget):
+    # La clasificación corre en un hilo aparte; su resultado vuelve al hilo de la
+    # GUI por esta señal (Qt la encola sola al cruzar de hilo). El payload es
+    # ``(run_id, pred, conf, error)``.
+    _classified = pyqtSignal(int, object, object, object)
+
     def __init__(self, controller) -> None:
         super().__init__()
         self.controller = controller
@@ -76,9 +84,19 @@ class ControlPanel(QWidget):
         self._cmd_buttons: dict[str, QPushButton] = {}
         self._file_path: str | None = None         # grabación para el modo «un archivo → un movimiento»
 
+        # --- Estado del bucle de inferencia ---
+        self._run_id = 0           # sube en cada arranque: descarta resultados rezagados
+        self._inflight = False     # ya hay una ventana clasificándose: no encimar otra
+        self._dropped = 0          # ticks saltados por ir la clasificación más lenta que el timer
+        self._hold_until = 0.0     # monotonic hasta el que la acción en curso se mantiene
+        self._hold_command: str | None = None      # comando que se está sosteniendo
+        self._hold_class: str | None = None
+        self._last_ms = 0.0        # cuánto tardó la última clasificación
+
         self._timer = QTimer(self)
         self._timer.setInterval(ONLINE_INTERVAL_MS)
         self._timer.timeout.connect(self._tick)
+        self._classified.connect(self._on_classified)
 
         self._build_ui()
         self.refresh()
@@ -122,6 +140,38 @@ class ControlPanel(QWidget):
         form.addRow("Intervalo (ms):", self.interval)
         form.addRow("Confirmación (K):", self.smooth_k)
         layout.addWidget(cfg)
+
+        # Estabilidad del comando: que una clase confirmada dé pie a una acción
+        # que dure lo suficiente para ser útil, en vez de cambiar cada 250 ms.
+        stab = QGroupBox("Estabilidad del comando")
+        sform = QFormLayout(stab)
+        self.min_conf = QSpinBox()
+        self.min_conf.setRange(0, 99)
+        self.min_conf.setSuffix(" %")
+        self.min_conf.setValue(int(round(ONLINE_MIN_CONFIDENCE * 100)))
+        self.min_conf.setToolTip(
+            "Las predicciones por debajo de esta confianza se ignoran (no cuentan "
+            "para la confirmación). 0 = aceptar todas.\n"
+            "Si el modelo no da probabilidades, este filtro no se aplica.")
+        self.hold_ms = QSpinBox()
+        self.hold_ms.setRange(0, 10000)
+        self.hold_ms.setSingleStep(250)
+        self.hold_ms.setSuffix(" ms")
+        self.hold_ms.setValue(ONLINE_HOLD_MS)
+        self.hold_ms.setToolTip(
+            "Una vez confirmada una clase, la acción se mantiene este tiempo y no "
+            "se atiende ninguna otra predicción: da margen a que el movimiento se "
+            "complete.\n0 = comportamiento anterior (reaccionar a cada confirmación).")
+        self.hold_repeat = QCheckBox("Repetir el comando mientras dura la acción")
+        self.hold_repeat.setChecked(True)
+        self.hold_repeat.setToolTip(
+            "Reenvía el comando en cada intervalo durante la retención. Como cada "
+            "envío es un pulso/incremento del actuador, repetirlo convierte una "
+            "orden suelta en un movimiento sostenido.")
+        sform.addRow("Confianza mínima:", self.min_conf)
+        sform.addRow("Duración de la acción:", self.hold_ms)
+        sform.addRow(self.hold_repeat)
+        layout.addWidget(stab)
 
         # Mapa clase -> comando.
         self.map_box = QGroupBox("Comando por clase")
@@ -599,6 +649,11 @@ class ControlPanel(QWidget):
             return
         self.smoother = PredictionSmoother(self.smooth_k.value())
         self._n_commands = 0
+        self._run_id += 1          # invalida cualquier resultado del arranque anterior
+        self._inflight = False
+        self._dropped = 0
+        self._last_ms = 0.0
+        self._end_hold()
         self._timer.setInterval(self.interval.value())
         self._timer.start()
         self.start_btn.setText("Detener control")
@@ -607,6 +662,12 @@ class ControlPanel(QWidget):
 
     def _stop(self) -> None:
         self._timer.stop()
+        # Sube el id ANTES de soltar la salida: si hay una ventana clasificándose,
+        # su resultado llegará con un id viejo y se descartará en vez de intentar
+        # enviar por un sink ya cerrado.
+        self._run_id += 1
+        self._inflight = False
+        self._end_hold()
         if self.sink is not None:
             self.sink.close()
             self.sink = None
@@ -627,45 +688,137 @@ class ControlPanel(QWidget):
         return {}
 
     def _set_inputs_enabled(self, enabled: bool) -> None:
+        # `min_conf`, `hold_ms` y `hold_repeat` NO se bloquean a propósito: son los
+        # ajustes que uno quiere afinar viendo el control funcionar, y ninguno se
+        # lee al arrancar (se consultan en cada tick), así que cambiarlos en marcha
+        # es seguro y surte efecto al momento.
         for w in (self.window, self.interval, self.smooth_k, self.sink_combo,
                   self.map_box, self.profile_combo, self.file_btn):
             w.setEnabled(enabled)
 
-    # --- Bucle de inferencia (hilo principal vía QTimer) ------------------
+    # --- Bucle de inferencia ----------------------------------------------
+    # El QTimer solo TOMA la ventana (barato, hilo de la GUI) y despacha; el
+    # trabajo pesado —el pipeline del proyecto, que con ICA ronda los 100 ms por
+    # ventana— corre en un hilo aparte. Antes se hacía aquí mismo: cada 250 ms la
+    # interfaz se quedaba muerta ~100-170 ms, y en ese hilo viven también la
+    # adquisición y el visor, así que todo se trababa.
     def _tick(self) -> None:
         acq = self.controller.acq_panel
         if not acq.is_streaming():
             self.detail_label.setText("Se perdió la señal en vivo. Control detenido.")
             self._stop()
             return
+
+        # Acción en curso: se mantiene (y opcionalmente se repite) sin atender
+        # predicciones nuevas. Es lo que da tiempo a que el movimiento signifique algo.
+        if self._hold_command is not None:
+            if time.monotonic() < self._hold_until:
+                self._hold_tick()
+                return
+            self._end_hold()        # la retención expiró: volver a escuchar
+
+        if self._inflight:
+            self._dropped += 1      # la clasificación va más lenta que el timer: se salta
+            return
         window = acq.latest_window(self.window.value())
         if window is None:
             return   # aún no hay suficientes muestras
-        try:
-            pred, conf = classify_window(
-                self._run_model, self.controller.project, window, acq.stream_fs())
-        except Exception as exc:  # noqa: BLE001
-            self.controller.warn("Error de clasificación", str(exc))
+
+        # `latest_window` devuelve una copia, así que el hilo no comparte el buffer.
+        self._inflight = True
+        run_id, model, project, fs = self._run_id, self._run_model, self.controller.project, acq.stream_fs()
+
+        def job():
+            t0 = time.perf_counter()
+            try:
+                pred, conf = classify_window(model, project, window, fs)
+                err = None
+            except Exception as exc:  # noqa: BLE001
+                pred, conf, err = None, None, str(exc)
+            self._last_ms = (time.perf_counter() - t0) * 1000
+            self._classified.emit(run_id, pred, conf, err)
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _on_classified(self, run_id: int, pred, conf, err) -> None:
+        """Resultado de una ventana, ya de vuelta en el hilo de la GUI."""
+        if run_id != self._run_id:
+            return              # de una sesión de control anterior: ignorar
+        self._inflight = False
+        if err is not None:
+            # DETENER primero y avisar después: `warn` es modal y un modal levanta un
+            # bucle de eventos anidado, así que con el timer aún vivo seguirían
+            # entrando ventanas -> más errores -> más diálogos encima del primero.
             self._stop()
+            self.controller.warn("Error de clasificación", err)
+            return
+        if not self._timer.isActive():
             return
 
         conf_txt = f"  ({conf * 100:.0f}%)" if conf is not None else ""
         self.pred_label.setText(f"{pred}{conf_txt}")
 
+        # Filtro de confianza: una predicción dudosa no confirma nada. Se corta la
+        # racha para que el ruido no sume hacia la K.
+        min_conf = self.min_conf.value() / 100.0
+        if conf is not None and min_conf > 0 and conf < min_conf:
+            self.smoother.reset()
+            self._set_detail(f"Predicción «{pred}» descartada: confianza "
+                             f"{conf * 100:.0f}% < {self.min_conf.value()}%.")
+            return
+
         confirmed = self.smoother.update(pred)
-        if confirmed is not None and self.sink is not None:
-            command = self._command_for(confirmed)
-            try:
-                self.sink.send(command)
-            except Exception as exc:  # noqa: BLE001
-                self.controller.warn("Error de salida", str(exc))
-                self._stop()
+        if confirmed is None or self.sink is None:
+            return
+        command = self._command_for(confirmed)
+        if not self._send(command):
+            return
+        self._n_commands += 1
+        hold = self.hold_ms.value()
+        if hold > 0:
+            self._hold_class, self._hold_command = confirmed, command
+            self._hold_until = time.monotonic() + hold / 1000.0
+        self._set_detail(f"Estable: «{confirmed}» → comando «{command}»  ·  "
+                         f"{time.strftime('%H:%M:%S')}")
+
+    # --- Retención de la acción -------------------------------------------
+    def _holding(self) -> bool:
+        return self._hold_command is not None and time.monotonic() < self._hold_until
+
+    def _hold_tick(self) -> None:
+        """Sostiene la acción confirmada: la repite y muestra lo que queda."""
+        left = max(0.0, self._hold_until - time.monotonic())
+        if self.hold_repeat.isChecked() and self.sink is not None:
+            if not self._send(self._hold_command):
                 return
             self._n_commands += 1
-            ts = time.strftime("%H:%M:%S")
-            self.detail_label.setText(
-                f"Estable: «{confirmed}» → comando «{command}» enviado  ·  {ts}\n"
-                f"Comandos enviados: {self._n_commands}")
+        self._set_detail(f"Acción «{self._hold_command}» en curso  ·  quedan {left:.1f} s"
+                         + ("  (repitiendo)" if self.hold_repeat.isChecked() else ""))
+
+    def _end_hold(self) -> None:
+        """Cierra la retención y deja el suavizador listo para volver a confirmar
+        la MISMA clase: así, mantener la imaginación motora encadena acciones."""
+        self._hold_command = self._hold_class = None
+        self._hold_until = 0.0
+        self.smoother.reset()
+
+    def _send(self, command: str) -> bool:
+        """Envía un comando a la salida. ``False`` si falló (y ya se detuvo)."""
+        try:
+            self.sink.send(command)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._stop()            # antes de avisar: `warn` es modal (ver _on_classified)
+            self.controller.warn("Error de salida", str(exc))
+            return False
+
+    def _set_detail(self, msg: str) -> None:
+        extra = f"Comandos: {self._n_commands}"
+        if self._last_ms:
+            extra += f"  ·  {self._last_ms:.0f} ms/ventana"
+        if self._dropped:
+            extra += f"  ·  {self._dropped} ventanas saltadas"
+        self.detail_label.setText(f"{msg}\n{extra}")
 
     def shutdown(self) -> None:
         self._stop()

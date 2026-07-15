@@ -34,6 +34,7 @@ from ..config import (
     EPOC_CHANNELS,
     IMPORTED_DIR,
     MODELS_DIR,
+    PROCESSING_VERSION,
     PROJECT_EXT,
     PROJECT_MANIFEST,
     RECORDINGS_DIR,
@@ -441,7 +442,10 @@ class Project:
     # ------------------------------------------------------------------ #
     def _pipeline_signature(self) -> str:
         # La firma incluye los canales excluidos: cambiarlos invalida la caché.
-        raw = json.dumps([self.state["pipeline"], sorted(self.state.get("excluded_channels", []))],
+        # Y PROCESSING_VERSION: si se corrige un paso del pipeline, la configuración
+        # sigue igual pero la salida cambia, así que la caché vieja debe caducar.
+        raw = json.dumps([self.state["pipeline"], sorted(self.state.get("excluded_channels", [])),
+                          PROCESSING_VERSION],
                          sort_keys=True)
         return hashlib.md5(raw.encode("utf-8")).hexdigest()
 

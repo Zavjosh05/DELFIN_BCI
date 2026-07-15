@@ -40,6 +40,14 @@ PROJECT_EXT = ".eegproj"
 PROJECT_MANIFEST = "project.json"
 CHANGELOG_FILE = "changelog.json"
 CACHE_DIR = "cache"
+# Versión del CÓDIGO de preprocesamiento. Entra en la firma de la caché de señal
+# procesada, que si no solo depende de la configuración del pipeline: al corregir
+# un paso, un proyecto ya abierto seguiría sirviendo desde disco la señal vieja
+# (calculada con el fallo) porque su configuración no cambió. Súbela cuando un
+# arreglo altere la SALIDA de `preprocessing.apply_pipeline`.
+#   2 -> ICA: nº de componentes recortado al rango de los datos (el CAR los deja
+#        de rango n_canales-1 y la reconstrucción salía con 84-100% de error).
+PROCESSING_VERSION = 2
 DATASETS_DIR = "datasets"
 MODELS_DIR = "models"
 RECORDINGS_DIR = "recordings"  # CSV capturados en vivo (formato OpenViBE)
@@ -67,6 +75,11 @@ ONLINE_BUFFER_SAMPLES = 4096   # tamaño del buffer circular para inferencia
 ONLINE_WINDOW_SAMPLES = 256    # muestras por ventana a clasificar
 ONLINE_INTERVAL_MS = 250       # cada cuánto se clasifica (4 Hz)
 ONLINE_SMOOTH_K = 3            # predicciones iguales seguidas para confirmar una clase
+# Estabilidad del comando. Sin esto, el control confirma una clase cada ~750 ms
+# (K=3 a 4 Hz) y la siguiente puede llegar 250 ms después: el actuador cambia de
+# orden antes de terminar ningún movimiento útil.
+ONLINE_MIN_CONFIDENCE = 0.60   # confianza mínima para tener en cuenta una predicción (0 = sin filtro)
+ONLINE_HOLD_MS = 1500          # una vez confirmada, la acción se mantiene y repite este tiempo
 ONLINE_UDP_HOST = "127.0.0.1"
 ONLINE_UDP_PORT = 9001
 ONLINE_SERIAL_BAUD = 9600
