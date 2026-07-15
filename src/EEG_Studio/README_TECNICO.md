@@ -50,7 +50,8 @@ y disponen de **deshacer/rehacer** e historial.
   detalle — MLP, CNN 1D, LSTM y **EEGNet** sobre señal cruda, con activación por
   capa, nº de capas, dropout, kernel/bidireccional, optimizador y épocas.
   Se pueden entrenar **varios modelos por proyecto**, ver sus **métricas**
-  (exactitud, matriz de confusión, precisión/recall/F1 por clase), **activar** uno,
+  (exactitud, matriz de confusión, precisión/recall/F1 por clase y **pares de clases
+  más confundibles** — qué dos acciones no sabe separar), **activar** uno,
   **exportarlo/importarlo** (.joblib) y predecir la región seleccionada.
 - **Estrategia multiclase**: además de la nativa de cada clasificador, se puede
   **descomponer** un problema de N clases en clasificadores **binarios** —

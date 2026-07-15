@@ -14,6 +14,21 @@ cambios se agrupan por fecha de trabajo.
 
 ## [2026-07-15]
 
+### Añadido
+- **Pares de clases más confundibles** en la ventana de **Métricas…**: una tabla,
+  ordenada de peor a mejor, que dice **dónde** falla el modelo — qué dos acciones no
+  sabe separar (p. ej. «izquierda ↔ derecha: 55 %»), en vez de solo la exactitud
+  global. Para cada par mide: de los ensayos que **realmente** son una de las dos
+  clases y se predijeron como una de las dos, qué fracción se acertó; muestra además
+  las confusiones en cada sentido (`izquierda→derecha: 5`) y el nº de ensayos. El par
+  se colorea (rojo = se confunden, verde = bien separadas).
+  - Se calcula a partir de la **matriz de confusión de la validación cruzada**, así
+    que **no hay que reentrenar** ni el modelo tiene que ser OvO: sirve para
+    cualquier familia (clásicos, Riemann/CSP o redes). Con menos de 3 clases no
+    aparece (el único par sería la exactitud global).
+  - También sale en el informe de **texto** (`Ver texto…`, y el respaldo cuando no
+    hay matplotlib). Núcleo reutilizable: `classification.pairwise_confusion()`.
+
 ### Corregido / reforzado
 - **Riemann/CSP con «Uno contra Uno» (OvO) ya entrena**: elegir OvO en *CSP + LDA* o
   en *Riemann — MDM* reventaba con `Found array with dim 3, while dim <= 2 is

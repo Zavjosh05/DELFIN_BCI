@@ -27,6 +27,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..core import classification
+
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
@@ -274,6 +276,55 @@ def _heat(value: float) -> QColor:
     return QColor(*rgb)
 
 
+def build_pairs_table(metrics: dict) -> QTableWidget | None:
+    """Tabla de **pares de clases más confundibles** (peor primero).
+
+    Dice DÓNDE falla el sistema: qué dos acciones no sabe separar (p. ej.
+    «izquierda vs derecha»), que es más accionable que la exactitud global. Se
+    colorea el par: rojo = se confunden mucho, verde = bien separadas. Devuelve
+    ``None`` si no aplica (menos de 3 clases)."""
+    pairs = classification.pairwise_confusion(metrics)
+    if not pairs:
+        return None
+    cols = ["Par de clases", "Acierto del par", "Confusiones", "n"]
+    table = QTableWidget(len(pairs), len(cols))
+    table.setHorizontalHeaderLabels(cols)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.verticalHeader().setVisible(False)
+    for r, p in enumerate(pairs):
+        acc = p["accuracy"]
+        cells = [
+            f"{p['a']}  ↔  {p['b']}",
+            f"{acc * 100:.1f}%",
+            f"{p['a']}→{p['b']}: {p['a_as_b']}   ·   {p['b']}→{p['a']}: {p['b_as_a']}",
+            str(p["n"]),
+        ]
+        for c, txt in enumerate(cells):
+            item = QTableWidgetItem(txt)
+            if c == 1:                       # color según lo separable que es el par
+                item.setBackground(QBrush(_pair_color(acc)))
+                item.setForeground(QBrush(QColor("#10151a")))
+                item.setFont(QFont("", -1, QFont.Weight.Bold))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            else:
+                item.setForeground(QBrush(QColor(_TEXT)))
+            table.setItem(r, c, item)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+    table.setMinimumHeight(min(len(pairs) * 30 + 34, 260))
+    return table
+
+
+def _pair_color(acc: float) -> QColor:
+    """Rojo (par confundido) → ámbar → verde (par bien separado)."""
+    if acc >= 0.9:
+        return QColor("#57c98a")
+    if acc >= 0.75:
+        return QColor("#b5cf6b")
+    if acc >= 0.6:
+        return QColor("#e8c468")
+    return QColor("#e8756b")
+
+
 def build_scores_table(metrics: dict) -> QTableWidget:
     """Tabla de precisión/recall/F1/soporte por clase, con color por valor."""
     labels = [str(x) for x in metrics["labels"]]
@@ -485,6 +536,19 @@ def build_metrics_dialog(parent, title: str, header: str, metrics: dict,
 
     lay.addWidget(_section("Scores por clase:"))
     lay.addWidget(build_scores_table(metrics))
+
+    # Dónde falla: qué dos clases no sabe separar (solo aporta con 3+ clases).
+    pairs_table = build_pairs_table(metrics)
+    if pairs_table is not None:
+        lay.addWidget(_section("Pares de clases más confundibles (peor primero):"))
+        hint = QLabel("De los ensayos que son una de las dos clases y se predijeron "
+                      "como una de las dos, qué fracción se acertó. Un valor bajo = "
+                      "ese par es el que el modelo no distingue.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        lay.addWidget(hint)
+        lay.addWidget(pairs_table)
+
     lay.addWidget(_section("Métricas globales (todo el modelo):"))
     lay.addWidget(build_global_table(metrics))
 

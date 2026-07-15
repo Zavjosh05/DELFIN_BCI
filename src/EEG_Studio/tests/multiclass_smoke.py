@@ -174,8 +174,51 @@ def main() -> int:
     assert panel.multiclass_strategy() == "ovr", "apply_config_dict no la aplicó"
     print("    va y vuelve por current_config_dict/apply_config_dict ✓")
 
+    print("[8] Informe de pares confundibles: señala DÓNDE falla el sistema")
+    # Matriz construida a propósito: izquierda/derecha se confunden entre sí,
+    # arriba/abajo son perfectas. El par malo debe salir el primero.
+    m = {
+        "labels": ["abajo", "arriba", "derecha", "izquierda"],
+        "accuracy": 0.775,
+        "confusion": [[10, 0, 0, 0],
+                      [0, 10, 0, 0],
+                      [0, 0, 6, 4],      # derecha → izquierda: 4
+                      [0, 0, 5, 5]],     # izquierda → derecha: 5
+        "precision": [1, 1, .55, .55], "recall": [1, 1, .6, .5],
+        "f1": [1, 1, .57, .52], "support": [10, 10, 10, 10],
+    }
+    pairs = C.pairwise_confusion(m)
+    assert len(pairs) == 6, len(pairs)                 # 4 clases → 6 pares
+    worst = pairs[0]
+    assert {worst["a"], worst["b"]} == {"derecha", "izquierda"}, worst
+    assert abs(worst["accuracy"] - 11 / 20) < 1e-9, worst   # (6+5)/(6+5+4+5)
+    assert worst["a_as_b"] == 4 and worst["b_as_a"] == 5, worst
+    assert pairs[-1]["accuracy"] == 1.0, pairs[-1]     # el mejor par, al final
+    print(f"    peor par: {worst['a']} ↔ {worst['b']} = {worst['accuracy'] * 100:.0f}% ✓")
+
+    # No aplica con menos de 3 clases (el único par sería la exactitud global).
+    assert C.pairwise_confusion({"labels": ["a", "b"], "confusion": [[5, 1], [2, 4]]}) == []
+    assert C.pairwise_confusion(None) == []
+    # Y aparece en el informe de texto (respaldo sin matplotlib).
+    res = C.train(_DS(4), "lda", cv=2)
+    txt = C.metrics_report(res)
+    assert "confundibles" in txt, txt[-300:]
+    print("    <3 clases → vacío · sin métricas → vacío · sale en el informe ✓")
+
+    print("[9] La tabla de pares se construye en la ventana de métricas")
+    from eeg_studio.ui import metrics_view
+    if metrics_view.matplotlib_available():
+        table = metrics_view.build_pairs_table(m)
+        assert table is not None and table.rowCount() == 6, table
+        assert "derecha" in table.item(0, 0).text()    # el peor, arriba del todo
+        assert metrics_view.build_pairs_table(
+            {"labels": ["a", "b"], "confusion": [[5, 1], [2, 4]]}) is None
+        print(f"    tabla con {table.rowCount()} filas, peor par primero ✓")
+    else:
+        print("    matplotlib no disponible: se omite")
+
     win.acq_panel.shutdown()
-    print("\nESTRATEGIA MULTICLASE (OvO / OvR) OK ✓")
+    print("\nESTRATEGIA MULTICLASE (OvO / OvR) + PARES CONFUNDIBLES OK ✓")
     return 0
 
 

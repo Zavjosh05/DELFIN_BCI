@@ -606,6 +606,46 @@ def result_from_bytes(data: bytes) -> TrainingResult:
     return _blob_to_result(joblib.load(io.BytesIO(data)))
 
 
+def pairwise_confusion(metrics: dict | None, top: int = 0) -> list[dict]:
+    """Confusión entre CADA PAR de clases, a partir de la matriz de confusión.
+
+    Para el par (a, b) mide: de los ensayos que **realmente** son a o b y se
+    predijeron como a o b, qué fracción se acertó. Un valor bajo señala el par que
+    el sistema NO sabe separar (p. ej. «izquierda vs derecha»): dice **dónde** falla,
+    que es más accionable que la exactitud global.
+
+    Se calcula sobre la matriz de confusión (obtenida por validación cruzada), así
+    que **no hay que reentrenar** ni el modelo tiene que ser OvO: vale para
+    cualquier familia (clásicos, Riemann/CSP o redes). Con menos de 3 clases no
+    aporta nada (el único par sería la exactitud global) y devuelve lista vacía.
+
+    Devuelve dicts ``{a, b, accuracy, a_as_b, b_as_a, n}`` ordenados de **peor a
+    mejor**; ``top`` limita cuántos (0 = todos).
+    """
+    if not metrics:
+        return []
+    labels = [str(x) for x in metrics.get("labels", [])]
+    cm = np.asarray(metrics.get("confusion", []), dtype=float)
+    if cm.ndim != 2 or len(labels) < 3 or cm.shape[0] != len(labels):
+        return []
+    pairs: list[dict] = []
+    for i in range(len(labels)):
+        for j in range(i + 1, len(labels)):
+            hits = cm[i, i] + cm[j, j]           # acertados dentro del par
+            crossed = cm[i, j] + cm[j, i]        # confundidos entre ellos
+            n = hits + crossed
+            if n <= 0:                            # sin ensayos de ese par
+                continue
+            pairs.append({
+                "a": labels[i], "b": labels[j],
+                "accuracy": float(hits / n),
+                "a_as_b": int(cm[i, j]), "b_as_a": int(cm[j, i]),
+                "n": int(n),
+            })
+    pairs.sort(key=lambda p: (p["accuracy"], -p["n"]))
+    return pairs[:top] if top else pairs
+
+
 def metrics_report(result: TrainingResult) -> str:
     """Texto con la matriz de confusión y las métricas por clase."""
     m = result.metrics
@@ -622,4 +662,13 @@ def metrics_report(result: TrainingResult) -> str:
     for i, lab in enumerate(labels):
         row = " ".join(f"{v:>7}" for v in m["confusion"][i])
         lines.append(f"{lab[:9]:<9} {row}")
+
+    pairs = pairwise_confusion(m)
+    if pairs:
+        lines += ["", "Pares de clases más confundibles (peor primero):"]
+        for p in pairs:
+            lines.append(
+                f"  {p['a'][:10]:<10} ↔ {p['b'][:10]:<10} {p['accuracy'] * 100:5.1f}%"
+                f"   ({p['a']}→{p['b']}: {p['a_as_b']}, {p['b']}→{p['a']}: {p['b_as_a']},"
+                f" n={p['n']})")
     return "\n".join(lines)
