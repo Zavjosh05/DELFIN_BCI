@@ -452,6 +452,14 @@ class DatasetPanel(QWidget):
         save_btn.clicked.connect(self.controller.save_dataset)
         layout.addWidget(save_btn)
 
+        import_btn = QPushButton("Importar dataset (.npz)…")
+        import_btn.setToolTip(
+            "Carga un dataset ya construido en otra sesión (.npz) y lo deja listo "
+            "para entrenar, sin volver a extraer características ni necesitar los "
+            "CSV originales.")
+        import_btn.clicked.connect(self.controller.import_dataset)
+        layout.addWidget(import_btn)
+
         self.info_label = QLabel("Sin dataset.")
         self.info_label.setWordWrap(True)
         layout.addWidget(self.info_label)

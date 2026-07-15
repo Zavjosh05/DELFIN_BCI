@@ -477,6 +477,22 @@ class AcquisitionPanel(QWidget):
         self._update_states()
 
     # --- Bucle de adquisición (hilo principal vía QTimer) -----------------
+    def _display_channel_names(self) -> list[str]:
+        """Nombres de canal a mostrar en el visor en vivo, con los alias del proyecto.
+
+        Los CSV de OpenViBE nombran los canales «Channel 1».. y es el PROYECTO quien
+        guarda el alias clínico (AF3, F7…) — por eso «Análisis (CSV)» los muestra con
+        su nombre real y su color por región. Al reproducir una grabación como fuente
+        en vivo llegaban los nombres crudos, así que el visor perdía los nombres y el
+        código de colores (``channel_color`` los asigna POR NOMBRE). Traducirlos aquí
+        deja ambas pestañas coherentes; las fuentes que ya reportan nombres reales
+        (Emotiv, LSL) no cambian: el alias solo se aplica si existe.
+        """
+        names = list(self.source.channel_names) if self.source else []
+        proj = getattr(self.controller, "project", None)
+        aliases = (proj.state.get("channel_aliases") or {}) if proj is not None else {}
+        return [aliases.get(n, n) for n in names]
+
     def _tick(self) -> None:
         if self.source is None:
             return
@@ -496,7 +512,7 @@ class AcquisitionPanel(QWidget):
             return
         if not self._configured:
             self.controller.live_view.configure(
-                self.source.channel_names, self.source.sample_rate, LIVE_WINDOW_SECONDS
+                self._display_channel_names(), self.source.sample_rate, LIVE_WINDOW_SECONDS
             )
             self._roll = np.zeros((self.source.n_channels, ONLINE_BUFFER_SAMPLES))
             self._roll_filled = 0

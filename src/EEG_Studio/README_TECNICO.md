@@ -39,7 +39,9 @@ y disponen de **deshacer/rehacer** e historial.
   (delta, theta, alpha, beta, gamma) y características temporales (RMS, longitud
   de línea, parámetros de Hjorth…).
 - **Construcción de datasets**: aísla segmentos de varios CSV, etiquétalos y
-  genera una matriz de características (extracción **en multiproceso**).
+  genera una matriz de características (extracción **en multiproceso**). Se puede
+  **guardar** (`.npz`) e **importar** el de otra sesión para entrenar sin
+  reconstruirlo ni necesitar los CSV de origen.
 - **Clasificación**: **Random Forest** (nº de árboles, profundidad, mín. para
   dividir, **mín. por hoja**, máx. características, criterio y **peso de clases**),
   **SVM** (kernel seleccionable: lineal, RBF, polinomial o sigmoide, con
@@ -643,4 +645,6 @@ posiciones de electrodos, figura y botón/cableado en el panel),
 visor en vivo, con expandir/compactar),
 `multiclass_smoke` (estrategia multiclase OvO/OvR: nº de binarios, compatibilidad de
 «nativa», persistencia, CSP dentro de cada binario y selector en la interfaz),
-`sources_group_smoke` (panel de Fuentes: agrupado por sujeto plegable + buscador).
+`sources_group_smoke` (panel de Fuentes: agrupado por sujeto plegable + buscador),
+`live_names_import_smoke` (el visor en vivo usa los alias de canal del proyecto —
+mismos nombres y colores que «Análisis (CSV)»— e importar un dataset .npz).

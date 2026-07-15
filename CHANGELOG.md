@@ -15,6 +15,12 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-15]
 
 ### Añadido
+- **Importar dataset (.npz)** en la pestaña *Dataset*: carga un dataset ya construido
+  en **otra sesión** (o que te pasó otra persona) y lo deja **activo y listo para
+  entrenar**, sin volver a extraer características ni necesitar los CSV de origen.
+  Arranca en la carpeta `datasets/` del proyecto, muestra el resumen por clase y, si
+  el archivo no es un dataset válido, **avisa sin pisar** el que ya hubiera cargado.
+  Los segmentos del proyecto no se tocan (con «Construir dataset» se regenera).
 - **Pares de clases más confundibles** en la ventana de **Métricas…**: una tabla,
   ordenada de peor a mejor, que dice **dónde** falla el modelo — qué dos acciones no
   sabe separar (p. ej. «izquierda ↔ derecha: 55 %»), en vez de solo la exactitud
@@ -30,6 +36,15 @@ cambios se agrupan por fecha de trabajo.
     hay matplotlib). Núcleo reutilizable: `classification.pairwise_confusion()`.
 
 ### Corregido / reforzado
+- **El visor «Tiempo real» conserva los nombres y colores de los canales**: al
+  conectar una **grabación** (fuente «Reproducir grabación»), los canales aparecían
+  como `Channel 1`…`Channel 14` y con la paleta cíclica, perdiendo los nombres (AF3,
+  F7…) y el **código de colores por región** que sí muestra «Análisis (CSV)». Causa:
+  los CSV de OpenViBE nombran los canales `Channel N` y es el **proyecto** quien
+  guarda el alias clínico, pero el visor en vivo recibía los nombres crudos del
+  archivo (y `channel_color` asigna el color **por nombre**). Ahora el visor en vivo
+  traduce los nombres con los alias del proyecto, así que ambas pestañas coinciden.
+  Las fuentes que ya reportan nombres reales (Emotiv, LSL) no cambian.
 - **Riemann/CSP con «Uno contra Uno» (OvO) ya entrena**: elegir OvO en *CSP + LDA* o
   en *Riemann — MDM* reventaba con `Found array with dim 3, while dim <= 2 is
   required by OneVsOneClassifier`. Causa: esos modelos consumen **matrices de

@@ -2157,6 +2157,43 @@ class MainWindow(QMainWindow):
         path = dataset_mod.save_dataset(self.project, self.dataset, name.strip() or "dataset")
         QMessageBox.information(self, "Guardado", f"Dataset escrito en:\n{path}")
 
+    def import_dataset(self) -> None:
+        """Carga un dataset ``.npz`` de una sesión anterior y lo deja activo.
+
+        Evita reconstruirlo (y no necesita los CSV de origen): útil para retomar el
+        trabajo o para entrenar con un dataset que pasó otra persona. El dataset
+        importado sustituye al que hubiera en memoria; los segmentos del proyecto no
+        se tocan (al pulsar «Construir dataset» se regenera desde ellos)."""
+        start = ""
+        if self.project:
+            cand = os.path.join(self.project.path, DATASETS_DIR)
+            start = cand if os.path.isdir(cand) else self.project.path
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importar dataset", start, "Dataset EEG (*.npz);;Todos los archivos (*)")
+        if not path:
+            return
+        try:
+            ds = dataset_mod.load_dataset(path)
+        except Exception as exc:  # noqa: BLE001 - archivo corrupto o de otro tipo
+            self.warn("No se pudo importar el dataset",
+                      f"«{os.path.basename(path)}» no parece un dataset válido (.npz "
+                      f"con X/y/feature_names).\n\n{exc}")
+            return
+        if getattr(ds, "n_samples", 0) < 1:
+            self.warn("Dataset vacío", "El archivo no contiene muestras.")
+            return
+
+        self.dataset = ds
+        vals, cnts = np.unique(ds.y, return_counts=True)
+        por_clase = " · ".join(f"{v}: {c}" for v, c in zip(vals, cnts))
+        self.dataset_panel.set_info(
+            f"Dataset IMPORTADO de «{os.path.basename(path)}»: {ds.n_samples} muestras "
+            f"× {ds.n_features} características.\nPor clase ⟶ {por_clase}"
+        )
+        self.clf_panel.refresh()          # actualiza la capa de entrada/salida de las redes
+        self.statusBar().showMessage(
+            f"Dataset importado: {ds.n_samples} muestras × {ds.n_features} características.")
+
     # ------------------------------------------------------------------ #
     # Clasificación
     # ------------------------------------------------------------------ #
