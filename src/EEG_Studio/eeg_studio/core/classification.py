@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import joblib
 import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
@@ -95,6 +96,52 @@ def _wrap_multiclass(estimator, strategy: str, n_classes: int):
         return estimator
     wrapper = OneVsOneClassifier if strategy == "ovo" else OneVsRestClassifier
     return wrapper(estimator)
+
+
+class _FlattenCov(BaseEstimator, TransformerMixin):
+    """Aplana matrices de covarianza ``(n, c, c)`` → ``(n, c·c)``.
+
+    Los meta-clasificadores OvO/OvR de sklearn **validan X y exigen 2D**, pero los
+    modelos de Riemann/CSP consumen covarianzas **3D**. Se aplanan para atravesar el
+    meta-clasificador y se reconstruyen dentro de cada binario (:class:`_UnflattenCov`).
+    El reshape es exacto: cada binario acaba viendo las covarianzas originales.
+    """
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X)
+        return X.reshape(X.shape[0], -1) if X.ndim > 2 else X
+
+
+class _UnflattenCov(BaseEstimator, TransformerMixin):
+    """Deshace :class:`_FlattenCov`: ``(n, c·c)`` → ``(n, c, c)`` (matriz cuadrada)."""
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X)
+        if X.ndim != 2:
+            return X
+        c = int(round(float(np.sqrt(X.shape[1]))))
+        return X.reshape(X.shape[0], c, c)
+
+
+def _cov_clf_steps(steps: list, strategy: str, n_classes: int) -> list:
+    """Pasos que van DESPUÉS de ``cov`` para un clasificador que consume covarianzas.
+
+    Sin descomposición se devuelven tal cual (pipeline de siempre). Con OvO/OvR se
+    envuelven en el meta-clasificador, aplanando las covarianzas antes y
+    reconstruyéndolas dentro de cada binario — necesario porque OvO rechaza entradas
+    de más de 2 dimensiones.
+    """
+    if int(n_classes) <= 2 or strategy not in ("ovo", "ovr"):
+        return steps
+    inner = Pipeline([("unflat", _UnflattenCov())] + steps)
+    return [("flat", _FlattenCov()),
+            ("clf", _wrap_multiclass(inner, strategy, n_classes))]
 
 
 def _split_multiclass(clf_params: dict | None) -> tuple[dict, str]:
@@ -425,17 +472,18 @@ def build_riemann_pipeline(name: str, clf_params: dict | None = None,
         raise RuntimeError("pyriemann no está instalado (pip install pyriemann).")
     _params, strategy = _split_multiclass(clf_params)
     cov = Covariances(estimator="oas")
-    if name == "riemann_mdm":
-        clf = _wrap_multiclass(MDM(), strategy, n_classes)
-        return Pipeline([("cov", cov), ("clf", clf)])
+    if name == "riemann_mdm":                     # MDM consume covarianzas (3D)
+        return Pipeline([("cov", cov)]
+                        + _cov_clf_steps([("mdm", MDM())], strategy, n_classes))
     if name == "riemann_ts":
+        # TangentSpace ya entrega 2D, así que el meta-clasificador puede envolver
+        # la regresión logística tal cual (sin aplanar/reconstruir).
         clf = _wrap_multiclass(LogisticRegression(max_iter=500), strategy, n_classes)
         return Pipeline([("cov", cov), ("ts", TangentSpace()), ("clf", clf)])
-    if name == "csp_lda":
-        csp_lda = Pipeline([("csp", CSP(nfilter=6, log=True)),
-                            ("lda", LinearDiscriminantAnalysis())])
-        clf = _wrap_multiclass(csp_lda, strategy, n_classes)
-        return Pipeline([("cov", cov), ("clf", clf)])
+    if name == "csp_lda":                         # CSP consume covarianzas (3D)
+        steps = [("csp", CSP(nfilter=6, log=True)),
+                 ("lda", LinearDiscriminantAnalysis())]
+        return Pipeline([("cov", cov)] + _cov_clf_steps(steps, strategy, n_classes))
     raise ValueError(f"Modelo de Riemann desconocido: {name}")
 
 

@@ -12,6 +12,25 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-15]
+
+### Corregido / reforzado
+- **Riemann/CSP con «Uno contra Uno» (OvO) ya entrena**: elegir OvO en *CSP + LDA* o
+  en *Riemann — MDM* reventaba con `Found array with dim 3, while dim <= 2 is
+  required by OneVsOneClassifier`. Causa: esos modelos consumen **matrices de
+  covarianza (3D)**, pero el meta-clasificador OvO de scikit-learn valida la entrada
+  y exige 2D (OvR no la valida, por eso sí funcionaba). Ahora las covarianzas se
+  **aplanan** para atravesar el meta-clasificador y se **reconstruyen dentro de cada
+  binario** (el reshape es exacto), así que cada problema binario sigue viendo las
+  covarianzas reales y aprendiendo **sus propios filtros CSP**. La estrategia
+  «nativa» vuelve al pipeline de siempre (`cov → csp → lda`), sin envolver.
+- **La prueba de multiclase ahora ENTRENA de verdad**: `multiclass_smoke` solo
+  comprobaba la *estructura* del pipeline de Riemann/CSP y por eso no detectó el
+  fallo anterior (solo aparece al hacer `fit()`). Ahora entrena y predice las **9
+  combinaciones** (CSP+LDA / MDM / Tangent Space × nativa / OvO / OvR).
+
+---
+
 ## [2026-07-14]
 
 ### Añadido

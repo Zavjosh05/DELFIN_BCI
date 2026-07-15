@@ -45,6 +45,20 @@ class _DS:
         self.feature_names = [f"f{i}" for i in range(n_feat)]
 
 
+class _RawDS:
+    """Dataset de señal cruda ``(n, canales, T)`` (lo que espera ``train_riemann``)."""
+
+    def __init__(self, n_classes: int, n=40, n_ch=6, T=128, seed=0):
+        rng = np.random.default_rng(seed)
+        self.X = rng.normal(0, 1, (n, n_ch, T))
+        self.y = np.array([f"c{i % n_classes}" for i in range(n)])
+        # Cada clase amplifica un canal distinto: da covarianzas separables.
+        for i, lab in enumerate(sorted(set(self.y))):
+            self.X[self.y == lab, i % n_ch, :] *= (2 + i)
+        self.segment_ids: list = []
+        self.skipped = 0
+
+
 def main() -> int:
     print("[1] «nativa» no envuelve (compatibilidad: clf sigue siendo el estimador)")
     pipe = C.build_pipeline("random_forest", {"n_estimators": 10}, n_classes=6)
@@ -89,16 +103,33 @@ def main() -> int:
     assert len(back.model.named_steps["clf"].estimators_) == 6
     print("    round-trip conserva la estrategia y los 6 binarios ✓")
 
-    print("[5] Riemann/CSP: el CSP va DENTRO de cada binario")
+    print("[5] Riemann/CSP: TODAS las combinaciones ENTRENAN y predicen")
+    # Ojo: no basta con mirar la estructura del pipeline. Los meta-clasificadores de
+    # sklearn validan X y OvO exige 2D, mientras que Riemann/CSP consumen matrices
+    # de covarianza 3D: solo se ve al hacer fit(). Por eso aquí se entrena de verdad.
     if C.riemann_available():
-        p = C.build_riemann_pipeline("csp_lda", {"multiclass": "ovr"}, n_classes=6)
+        for name in ("csp_lda", "riemann_mdm", "riemann_ts"):
+            for strat, expected in (("nativa", None), ("ovo", 6), ("ovr", 4)):
+                res = C.train_riemann(_RawDS(4), name, cv=2, raw_window=128,
+                                      clf_params={"multiclass": strat})
+                pred = C.predict(res, _RawDS(4).X[:4])
+                assert pred.shape == (4,) and set(pred) <= set(res.classes)
+                clf = res.model.named_steps.get("clf")
+                if expected is None:              # nativa: sin envolver
+                    assert not hasattr(clf, "estimators_") or clf is None
+                else:                             # 4 clases → OvO 6 pares, OvR 4
+                    assert len(clf.estimators_) == expected, (name, strat)
+            print(f"    {name}: nativa/ovo/ovr entrenan y predicen ✓")
+
+        # El CSP se reaprende DENTRO de cada binario (no unos filtros comunes).
+        p = C.build_riemann_pipeline("csp_lda", {"multiclass": "ovo"}, n_classes=4)
         inner = p.named_steps["clf"].estimator      # lo que se replica por binario
         assert "csp" in inner.named_steps and "lda" in inner.named_steps, \
             "CSP debe reaprenderse por cada problema binario"
-        # Nativa: sin envolver (el CSP multiclase de pyriemann, como antes).
-        p0 = C.build_riemann_pipeline("csp_lda", None, n_classes=6)
-        assert not hasattr(p0.named_steps["clf"], "estimator")
-        print("    csp+lda envueltos juntos en OvR; nativa sin envolver ✓")
+        # Nativa: el pipeline de siempre (cov → csp → lda), sin envolver.
+        p0 = C.build_riemann_pipeline("csp_lda", None, n_classes=4)
+        assert list(p0.named_steps) == ["cov", "csp", "lda"], list(p0.named_steps)
+        print("    csp+lda dentro de cada binario; nativa = pipeline de siempre ✓")
     else:
         print("    pyriemann no disponible: se omite (esperado en ese caso)")
 
