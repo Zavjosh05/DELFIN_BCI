@@ -45,6 +45,12 @@ cambios se agrupan por fecha de trabajo.
   archivo (y `channel_color` asigna el color **por nombre**). Ahora el visor en vivo
   traduce los nombres con los alias del proyecto, así que ambas pestañas coinciden.
   Las fuentes que ya reportan nombres reales (Emotiv, LSL) no cambian.
+- **El visor «Tiempo real» respeta los canales excluidos del proyecto**: si excluyes
+  canales (p. ej. los EOG), el visor en vivo mostraba igualmente **todos**, mientras
+  que «Análisis (CSV)» solo muestra los activos. Ahora ambos enseñan los mismos. La
+  **grabación no se toca**: el CSV se sigue escribiendo íntegro desde el hilo
+  productor — excluir es cosa del análisis, no de la captura. Si se excluyeran todos,
+  no se filtra nada (no se deja el visor vacío).
 - **Riemann/CSP con «Uno contra Uno» (OvO) ya entrena**: elegir OvO en *CSP + LDA* o
   en *Riemann — MDM* reventaba con `Found array with dim 3, while dim <= 2 is
   required by OneVsOneClassifier`. Causa: esos modelos consumen **matrices de

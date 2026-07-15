@@ -91,6 +91,7 @@ class AcquisitionPanel(QWidget):
         self.source = None
         self.recorder: CSVRecorder | None = None
         self._configured = False
+        self._keep_idx: list[int] | None = None
         self._n_samples = 0
         self._t_start = 0.0
         # Segmentos marcados durante la grabación (start, stop, etiqueta).
@@ -451,6 +452,7 @@ class AcquisitionPanel(QWidget):
             self.source = None
             return
         self._configured = False
+        self._keep_idx: list[int] | None = None
         self._n_samples = 0
         self._t_start = time.perf_counter()
         self._last_chunk_t = self._t_start           # reinicia la detección de lag
@@ -472,12 +474,36 @@ class AcquisitionPanel(QWidget):
         self._roll = None
         self._roll_filled = 0
         self._configured = False
+        self._keep_idx: list[int] | None = None
         self.quality_label.setText("")
         self.status.setText("Desconectado.")
         self._update_states()
 
     # --- Bucle de adquisición (hilo principal vía QTimer) -----------------
-    def _display_channel_names(self) -> list[str]:
+    def _kept_indices(self) -> list[int] | None:
+        """Índices de los canales ACTIVOS de la fuente (los NO excluidos del proyecto).
+
+        «Análisis (CSV)» solo muestra y procesa los canales activos (p. ej. sin los
+        EOG), así que el visor en vivo y la inferencia deben ver LOS MISMOS: si no, un
+        modelo entrenado con N canales recibiría otro número y fallaría. La exclusión
+        se guarda con el nombre **original** del canal (igual que ``project.kept_indices``).
+
+        Devuelve ``None`` si no hay nada que filtrar (caso normal) o si no quedaría
+        ningún canal. **No afecta a la grabación**: el CSV se escribe en el hilo
+        productor (``_record_tap``) con la señal íntegra — excluir es cosa del
+        análisis, no de la captura.
+        """
+        proj = getattr(self.controller, "project", None)
+        if proj is None or self.source is None:
+            return None
+        excluded = set(proj.excluded_channels())
+        if not excluded:
+            return None
+        names = list(self.source.channel_names)
+        keep = [i for i, n in enumerate(names) if n not in excluded]
+        return keep if 0 < len(keep) < len(names) else None
+
+    def _display_channel_names(self, keep: list[int] | None = None) -> list[str]:
         """Nombres de canal a mostrar en el visor en vivo, con los alias del proyecto.
 
         Los CSV de OpenViBE nombran los canales «Channel 1».. y es el PROYECTO quien
@@ -487,8 +513,12 @@ class AcquisitionPanel(QWidget):
         código de colores (``channel_color`` los asigna POR NOMBRE). Traducirlos aquí
         deja ambas pestañas coherentes; las fuentes que ya reportan nombres reales
         (Emotiv, LSL) no cambian: el alias solo se aplica si existe.
+
+        ``keep`` (de :meth:`_kept_indices`) deja fuera los canales excluidos.
         """
         names = list(self.source.channel_names) if self.source else []
+        if keep is not None:
+            names = [names[i] for i in keep]
         proj = getattr(self.controller, "project", None)
         aliases = (proj.state.get("channel_aliases") or {}) if proj is not None else {}
         return [aliases.get(n, n) for n in names]
@@ -511,14 +541,21 @@ class AcquisitionPanel(QWidget):
             self._check_lag(now, False)          # ¿lleva mucho sin muestras nuevas?
             return
         if not self._configured:
+            # Los canales activos se fijan al conectar y no cambian mientras dure la
+            # conexión.
+            self._keep_idx = self._kept_indices()
+            names = self._display_channel_names(self._keep_idx)
             self.controller.live_view.configure(
-                self._display_channel_names(), self.source.sample_rate, LIVE_WINDOW_SECONDS
+                names, self.source.sample_rate, LIVE_WINDOW_SECONDS
             )
             self._roll = np.zeros((self.source.n_channels, ONLINE_BUFFER_SAMPLES))
             self._roll_filled = 0
             self._configured = True
         self._last_chunk_t = now
-        self.controller.live_view.append(chunk)
+        # El visor muestra solo los canales activos (como «Análisis (CSV)»); la
+        # grabación NO se filtra: va por el tap del hilo productor con todo.
+        view_chunk = chunk if self._keep_idx is None else chunk[self._keep_idx, :]
+        self.controller.live_view.append(view_chunk)
         self._push_buffer(chunk)
         # La grabación ya se escribe en el HILO PRODUCTOR (tap), NO aquí: así no se
         # pierde nada aunque este temporizador se estrangule en segundo plano (dos

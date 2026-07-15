@@ -34,7 +34,9 @@ y disponen de **deshacer/rehacer** e historial.
   típico en análisis tipo ERP). Cada filtro y cada parámetro muestran en la interfaz
   **qué hacen y qué efecto tiene modificarlos**.
 - **Selección de canales**: activa/desactiva canales (p. ej. excluir los EOG de
-  un dataset ajeno); afecta a CAR, características y modelos.
+  un dataset ajeno); afecta a CAR, características y modelos, y también al **visor
+  en vivo y a la inferencia** (que ven los mismos canales activos). La **grabación**
+  siempre guarda la señal íntegra.
 - **Procesamiento / extracción de características**: potencias por banda
   (delta, theta, alpha, beta, gamma) y características temporales (RMS, longitud
   de línea, parámetros de Hjorth…).
@@ -646,5 +648,6 @@ visor en vivo, con expandir/compactar),
 `multiclass_smoke` (estrategia multiclase OvO/OvR: nº de binarios, compatibilidad de
 «nativa», persistencia, CSP dentro de cada binario y selector en la interfaz),
 `sources_group_smoke` (panel de Fuentes: agrupado por sujeto plegable + buscador),
-`live_names_import_smoke` (el visor en vivo usa los alias de canal del proyecto —
-mismos nombres y colores que «Análisis (CSV)»— e importar un dataset .npz).
+`live_names_import_smoke` (el visor en vivo usa los alias de canal del proyecto y
+respeta los canales excluidos —mismos nombres, colores y canales que «Análisis
+(CSV)»— sin recortar la grabación; e importar un dataset .npz).

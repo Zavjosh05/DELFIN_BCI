@@ -37,6 +37,22 @@ from eeg_studio.ui.signal_view import channel_color
 RAW_NAMES = [f"Channel {i + 1}" for i in range(14)]      # como los CSV de OpenViBE
 
 
+def _drive_until_configured(win, csv: str, timeout: float = 10.0) -> None:
+    """Conecta una reproducción y hace ticks hasta que el visor queda configurado.
+
+    Comprueba el visor DE VERDAD (no solo la lista de nombres): es en ``_tick``
+    donde se decide con cuántos canales se configura."""
+    win.acq_panel._configured = False
+    win.acq_panel.source = FilePlaybackSource(csv, speed=80.0)
+    win.acq_panel.source.start()
+    t0 = time.time()
+    while not win.acq_panel._configured and time.time() - t0 < timeout:
+        win.acq_panel._tick()
+        time.sleep(0.02)
+    win.acq_panel.source.stop()
+    assert win.acq_panel._configured, "el visor no llegó a configurarse"
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     win = MainWindow()
@@ -79,6 +95,39 @@ def main() -> int:
     win.acq_panel.source = SimulatedSource()
     assert win.acq_panel._display_channel_names()[:3] == ["AF3", "F7", "F3"]
     print("    el alias solo se aplica si existe ✓")
+
+    print("[4b] El VISOR en vivo respeta los canales EXCLUIDOS del proyecto")
+    win.acq_panel.source = FilePlaybackSource(csv, speed=50.0)
+    win.acq_panel.source._load()                     # metadatos reales del archivo
+    assert win.acq_panel._kept_indices() is None, "sin exclusiones no debe filtrar"
+    # Excluir dos canales (se guardan con el nombre ORIGINAL, como en Análisis).
+    win.project.edit("excluded_channels", ["Channel 13", "Channel 14"], "excluir EOG")
+    keep = win.acq_panel._kept_indices()
+    assert keep == list(range(12)), keep
+    vivo12 = win.acq_panel._display_channel_names(keep)
+    activos = win.project.kept_display_names(rec)     # los que muestra «Análisis (CSV)»
+    assert vivo12 == activos, (vivo12[-2:], activos[-2:])
+    assert len(vivo12) == 12 and "F8" not in vivo12 and "AF4" not in vivo12, vivo12
+    # Y el visor de verdad acaba con 12 canales (no solo la lista de nombres).
+    _drive_until_configured(win, csv)
+    en_visor = list(win.live_view._channels)
+    assert en_visor == activos, (len(en_visor), len(activos))
+    print(f"    14 → {len(en_visor)} canales en el visor, iguales a Análisis ✓")
+
+    print("[4c] Excluir NO recorta la grabación (el CSV se escribe íntegro)")
+    # La grabación va por el tap del hilo productor, no por _tick: filtrar la vista
+    # no debe perder canales en el archivo.
+    import inspect
+    tick_src = inspect.getsource(win.acq_panel._tick)
+    assert "_record_tap" not in tick_src, "la grabación no debe pasar por _tick"
+    assert win.acq_panel.source.n_channels == 14, "la fuente sigue emitiendo los 14"
+    print("    la fuente emite 14 y el tap graba 14; solo se filtra la vista ✓")
+
+    # Si se excluye todo, no se filtra (no dejar el visor vacío).
+    win.project.edit("excluded_channels", RAW_NAMES, "excluir todo")
+    assert win.acq_panel._kept_indices() is None, "no debe dejar el visor sin canales"
+    win.project.edit("excluded_channels", [], "restaurar")
+    print("    excluirlos todos no deja el visor vacío ✓")
 
     print("[5] Importar un dataset .npz de otra sesión lo deja activo")
     rng = np.random.default_rng(1)
