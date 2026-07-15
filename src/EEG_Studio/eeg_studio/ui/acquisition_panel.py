@@ -542,20 +542,22 @@ class AcquisitionPanel(QWidget):
             return
         if not self._configured:
             # Los canales activos se fijan al conectar y no cambian mientras dure la
-            # conexión.
+            # conexión (el buffer de inferencia se dimensiona con ellos).
             self._keep_idx = self._kept_indices()
             names = self._display_channel_names(self._keep_idx)
             self.controller.live_view.configure(
                 names, self.source.sample_rate, LIVE_WINDOW_SECONDS
             )
-            self._roll = np.zeros((self.source.n_channels, ONLINE_BUFFER_SAMPLES))
+            self._roll = np.zeros((len(names), ONLINE_BUFFER_SAMPLES))
             self._roll_filled = 0
             self._configured = True
         self._last_chunk_t = now
-        # El visor muestra solo los canales activos (como «Análisis (CSV)»); la
-        # grabación NO se filtra: va por el tap del hilo productor con todo.
-        view_chunk = chunk if self._keep_idx is None else chunk[self._keep_idx, :]
-        self.controller.live_view.append(view_chunk)
+        # Visor E INFERENCIA ven solo los canales activos, como «Análisis (CSV)»: un
+        # modelo entrenado con los activos debe recibir esos mismos. La grabación NO
+        # se filtra: va por el tap del hilo productor con la señal íntegra.
+        if self._keep_idx is not None:
+            chunk = chunk[self._keep_idx, :]
+        self.controller.live_view.append(chunk)
         self._push_buffer(chunk)
         # La grabación ya se escribe en el HILO PRODUCTOR (tap), NO aquí: así no se
         # pierde nada aunque este temporizador se estrangule en segundo plano (dos

@@ -51,6 +51,12 @@ cambios se agrupan por fecha de trabajo.
   **grabación no se toca**: el CSV se sigue escribiendo íntegro desde el hilo
   productor — excluir es cosa del análisis, no de la captura. Si se excluyeran todos,
   no se filtra nada (no se deja el visor vacío).
+- **El modo «Control» en vivo también usa solo los canales activos**: si excluías
+  canales y entrenabas un modelo con los activos (p. ej. 12), la clasificación en
+  vivo le pasaba **todos** los de la fuente (14) y fallaba por forma incompatible —
+  el entrenamiento sí aplica la exclusión (`get_processed`) pero la inferencia no.
+  Ahora el buffer que alimenta al clasificador lleva los mismos canales activos, así
+  que entrenamiento e inferencia coinciden.
 - **Riemann/CSP con «Uno contra Uno» (OvO) ya entrena**: elegir OvO en *CSP + LDA* o
   en *Riemann — MDM* reventaba con `Found array with dim 3, while dim <= 2 is
   required by OneVsOneClassifier`. Causa: esos modelos consumen **matrices de

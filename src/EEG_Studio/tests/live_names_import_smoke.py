@@ -114,6 +114,16 @@ def main() -> int:
     assert en_visor == activos, (len(en_visor), len(activos))
     print(f"    14 → {len(en_visor)} canales en el visor, iguales a Análisis ✓")
 
+    print("[4bis] La INFERENCIA también recibe solo los canales activos")
+    # Antes el modo Control clasificaba con TODOS los canales de la fuente (14),
+    # aunque el modelo se hubiera entrenado con los activos (12) -> forma incompatible.
+    assert win.acq_panel._roll.shape[0] == 12, win.acq_panel._roll.shape
+    ventana = win.acq_panel.latest_window(64)
+    assert ventana is not None and ventana.shape == (12, 64), \
+        (None if ventana is None else ventana.shape)
+    print(f"    buffer {win.acq_panel._roll.shape[0]} canales · "
+          f"ventana al Control {ventana.shape} ✓")
+
     print("[4c] Excluir NO recorta la grabación (el CSV se escribe íntegro)")
     # La grabación va por el tap del hilo productor, no por _tick: filtrar la vista
     # no debe perder canales en el archivo.
