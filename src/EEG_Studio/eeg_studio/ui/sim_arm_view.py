@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
@@ -185,6 +186,12 @@ class _ArmFullscreen(QWidget):
         self._on_change = on_change        # sincroniza el panel principal al mover el brazo
         self.setWindowTitle("Brazo simulado")
         self.setStyleSheet(f"background: {SURFACE};")
+        # Para poder recibir el teclado aunque el foco no esté en ningún hijo.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Esc como atajo de VENTANA: funciona tenga el foco quien lo tenga (el 3D, un
+        # botón, un slider…). Con solo keyPressEvent dependía de a quién llegara la tecla.
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self,
+                  context=Qt.ShortcutContext.WindowShortcut, activated=self.close)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -343,6 +350,12 @@ class SimArmView(QWidget):
         self._fs.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._fs.destroyed.connect(self._on_fs_closed)
         self._fs.showFullScreen()
+        # Sin activar la ventana, el teclado sigue yendo a la ventana principal: se
+        # veía la pantalla completa pero Esc no hacía nada (el ratón sí funcionaba,
+        # porque no necesita el foco).
+        self._fs.raise_()
+        self._fs.activateWindow()
+        self._fs.setFocus(Qt.FocusReason.OtherFocusReason)
         self._fs.refresh()
 
     def _on_fs_closed(self, *_args) -> None:

@@ -73,6 +73,13 @@ cambios se agrupan por fecha de trabajo.
     cuántas se saltaron. Cubierto por `control_online_smoke`.
 
 ### Corregido / reforzado
+- **Esc cierra la pantalla completa del brazo simulado**: solo funcionaba el botón
+  **✕** (el ratón no necesita foco); la tecla no hacía nada. Eran dos cosas: la
+  ventana se abría **sin activarse**, así que el teclado seguía yendo a la ventana
+  principal; y, aunque llegara, dependía del `keyPressEvent` de la ventana, que no se
+  dispara si el foco está en un hijo (la vista 3D, un botón, un slider). Ahora la
+  ventana se **activa** al abrirse y Esc es un **atajo de ventana**: cierra tenga el
+  foco quien lo tenga.
 - **La ICA ya no destruye la señal cuando el pipeline lleva un CAR** (afecta al
   entrenamiento *y* al control en vivo). El **CAR** (referencia promedio común) resta la
   media entre canales, así que los deja linealmente dependientes: el **rango** baja a

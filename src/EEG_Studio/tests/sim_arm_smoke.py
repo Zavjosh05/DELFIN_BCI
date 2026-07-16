@@ -161,6 +161,31 @@ def main() -> int:
     app.processEvents()
     assert sv._fs is None
 
+    print("[9d] Esc cierra la pantalla completa tenga el foco QUIEN lo tenga")
+    # Antes solo había keyPressEvent en la ventana: si el foco estaba en un hijo (el
+    # 3D, un botón, un slider) la tecla no llegaba. Ahora es un atajo de VENTANA.
+    from PyQt6.QtCore import Qt as _Qt
+    from PyQt6.QtTest import QTest
+
+    def _esc_cierra(pick, desc):
+        sv._open_fullscreen()
+        app.processEvents()
+        f = sv._fs
+        target = pick(f)
+        target.setFocus()
+        QTest.keyClick(target, _Qt.Key.Key_Escape)
+        app.processEvents(); app.processEvents()
+        cerrado = sv._fs is None          # _on_fs_closed lo pone a None al destruirse
+        if not cerrado:
+            sv._fs.close(); app.processEvents()
+        assert cerrado, f"Esc no cerró con el foco en {desc}"
+
+    _esc_cierra(lambda f: f, "la ventana")
+    _esc_cierra(lambda f: f.action_pad.buttons["arriba"], "el D-pad")
+    _esc_cierra(lambda f: f.controls._sliders[0], "un slider")
+    _esc_cierra(lambda f: f.view, "la vista del brazo")
+    print("    Esc cierra desde la ventana, el D-pad, un slider y la vista ✓")
+
     print("[10] Constructor: aplicar una spec nueva reconstruye el brazo")
     sp = make_default_arm_spec()
     sp.joints[1].link_offset = (0.30, 0.0, 0.0)   # hombro más largo
