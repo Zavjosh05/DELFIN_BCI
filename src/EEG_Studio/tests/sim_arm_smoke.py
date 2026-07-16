@@ -303,6 +303,16 @@ def main() -> int:
     assert cp._sim_arm.planar is False
     print("    el interruptor del panel activa/desactiva el modo planar ✓")
 
+    # El plano ortogonal (vertical) se ve en 3D SOLO en modo planar (si hay OpenGL).
+    v3d = cp.sim_view.view3d
+    if v3d is not None and hasattr(v3d, "plane_grid"):
+        cp.planar_check.setChecked(False)
+        assert not v3d.plane_grid.visible(), "el plano no debe verse fuera del modo planar"
+        cp.planar_check.setChecked(True)     # el toggle refresca la vista al momento
+        assert v3d.plane_grid.visible(), "el plano ortogonal debe verse en modo planar"
+        cp.planar_check.setChecked(False)
+        print("    plano ortogonal visible en 3D solo en modo planar ✓")
+
     print("[12] Contraste de la escena: fondo, rejilla y brazo se distinguen")
     from eeg_studio.ui import sim_arm_view as _SV
     from eeg_studio.ui.theme import SURFACE as _SURF

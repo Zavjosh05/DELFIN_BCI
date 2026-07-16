@@ -30,7 +30,9 @@ def main() -> int:
     assert rf.n_samples == 24 and rf.eval_method == "cross_val" and rf.cv_folds >= 2, (
         rf.n_samples, rf.eval_method, rf.cv_folds)
     assert "Validación cruzada" in rf.split_report(), rf.split_report()
-    print(f"    {rf.split_report()}")
+    # El porcentaje que ve el usuario es la EXACTITUD (accuracy); la etiqueta lo dice.
+    assert rf.score_label == "Exactitud (validación cruzada)", rf.score_label
+    print(f"    {rf.split_report()}  ·  métrica: {rf.score_label}")
 
     print("[2] Red (MLP): holdout 75/25")
     if neuralnet.torch_available():
@@ -41,6 +43,7 @@ def main() -> int:
         assert nn.n_train + nn.n_eval == 24 and nn.n_eval == 6 and nn.n_train == 18, (
             nn.n_train, nn.n_eval)
         assert "holdout" in nn.split_report()
+        assert nn.score_label == "Exactitud (holdout)", nn.score_label
         print(f"    {nn.split_report()}")
 
         print("[3] Los campos se conservan al serializar (bundle/joblib)")

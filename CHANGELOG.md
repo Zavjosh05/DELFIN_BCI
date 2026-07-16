@@ -21,8 +21,15 @@ cambios se agrupan por fecha de trabajo.
   etiquetas 2D como las de `señales_finales` (arriba/abajo/izquierda/derecha), donde girar
   la base en 3D no casa con un movimiento bidimensional. Sin marcar (3D), el
   comportamiento es el de antes (izquierda/derecha giran la base). Usa la IK planar ya
-  existente (base fija). La casilla está en el panel y en la pantalla completa, delegando
-  en un único estado. Cubierto por `sim_arm_smoke` [11].
+  existente (base fija). En modo planar, la vista 3D **dibuja ese plano ortogonal** (una
+  rejilla vertical naranja alineada con el brazo, sobre la zona de trabajo), para ver a
+  dónde puede moverse el efector. La casilla está en el panel y en la pantalla completa,
+  delegando en un único estado. Cubierto por `sim_arm_smoke` [11].
+- **La interfaz indica que el porcentaje de un clasificador es la exactitud (accuracy)**:
+  nota bajo la lista de «Modelos entrenados» y etiqueta explícita en el detalle
+  («Exactitud (validación cruzada)» en clásicos/Riemann, «Exactitud (holdout)» en redes).
+  Es la fracción de segmentos bien clasificados (media de la validación cruzada, o del
+  holdout en redes). Cubierto por `split_report_smoke`.
 - **Batería de pruebas en paralelo (`tests/run_all.py`)**: lanza las ~86 pruebas de humo,
   cada una en su proceso aislado, repartidas entre los núcleos. En un portátil hace la
   batería completa en **~2-3 min** (en serie eran ~10, porque cada proceso paga varios

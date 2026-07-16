@@ -333,7 +333,10 @@ class TrainingResult:
 
     @property
     def score_label(self) -> str:
-        return "Exactitud (holdout)" if self.is_nn else "Validación cruzada"
+        # El porcentaje es la EXACTITUD (accuracy): fracción de segmentos bien
+        # clasificados. En clásicos/Riemann es la media de la validación cruzada; en
+        # redes, sobre el conjunto de validación (holdout).
+        return "Exactitud (holdout)" if self.is_nn else "Exactitud (validación cruzada)"
 
 
 def build_pipeline(classifier_name: str, clf_params: dict | None = None,

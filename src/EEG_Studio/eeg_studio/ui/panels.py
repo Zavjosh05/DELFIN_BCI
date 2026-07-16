@@ -793,6 +793,10 @@ class ClassificationPanel(QWidget):
         # Modelos entrenados del proyecto (se pueden tener varios).
         models_box = QGroupBox("Modelos entrenados")
         mlay = QVBoxLayout(models_box)
+        acc_note = QLabel("El porcentaje junto a cada modelo es su exactitud (accuracy).")
+        acc_note.setStyleSheet("color: #8a929b; font-size: 11px;")
+        acc_note.setWordWrap(True)
+        mlay.addWidget(acc_note)
         self.models_list = QListWidget()
         self.models_list.itemDoubleClicked.connect(lambda *_: self._activate_selected())
         self.models_list.currentRowChanged.connect(self._show_selected_metrics)

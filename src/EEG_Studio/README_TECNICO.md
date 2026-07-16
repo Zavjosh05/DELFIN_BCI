@@ -564,7 +564,9 @@ Formas de controlarlo:
   para etiquetas 2D como las de `señales_finales`, donde girar la base en 3D no casa
   con un movimiento bidimensional. Sin marcar (**3D**), arriba/abajo = hombro e
   izquierda/derecha = giro de base. Agarre/soltar = pinza en ambos modos. La casilla
-  está en el panel y en la pantalla completa (delegan en la misma, un solo estado).
+  está en el panel y en la pantalla completa (delegan en la misma, un solo estado). En
+  modo planar, la **vista 3D dibuja el plano ortogonal** (rejilla vertical naranja
+  alineada con el brazo) para ver a dónde puede desplazarse el efector.
 - **Sliders por articulación** (uno por joint, dentro de sus límites).
 - **Clic en las proyecciones 2D** (como en `Proyecto_RNN`): la **vista superior**
   gira la base para apuntar al punto; la **vista lateral** acerca el efector a esa

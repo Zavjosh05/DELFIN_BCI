@@ -40,7 +40,8 @@ except Exception:                       # noqa: BLE001
 # resalten con claridad.
 _SCENE_BG = "#0c1015"      # fondo de la escena (más oscuro que los paneles)
 _GRID_2D = "#5b6c80"       # rejilla / arco de alcance / piso en las vistas 2D
-_GRID_3D = (125, 155, 195, 170)   # rejilla del plano de soporte en 3D (opaca y clara)
+_GRID_3D = (125, 155, 195, 170)   # rejilla del plano de soporte (horizontal) en 3D
+_PLANE_3D = (240, 150, 70, 150)   # plano ORTOGONAL (vertical) del modo planar, naranja
 _ARM_COL = "#5eead4"       # eslabones (turquesa)
 _JOINT_COL = "#e6ecf2"     # articulaciones (casi blanco, para separarse del brazo)
 _OPEN_COL = "#4aa3ea"      # pinza abierta (azul claro)
@@ -143,6 +144,13 @@ if _GL_OK:
             self.grid = gl.GLGridItem()
             self.grid.setColor(_GRID_3D)               # plano de soporte, claro y opaco
             self.addItem(self.grid)
+            # Plano ORTOGONAL (vertical) del modo planar: se muestra solo cuando el
+            # brazo está en modo planar, para ver el plano por el que se mueve el efector
+            # (el «plano ortogonal» al de soporte). Se orienta con la dirección del brazo.
+            self.plane_grid = gl.GLGridItem()
+            self.plane_grid.setColor(_PLANE_3D)
+            self.plane_grid.setVisible(False)
+            self.addItem(self.plane_grid)
             self.arm_line = gl.GLLinePlotItem(
                 pos=np.zeros((2, 3)), width=6.0, antialias=True,
                 color=(0.37, 0.92, 0.83, 1.0), mode="line_strip")
@@ -160,12 +168,26 @@ if _GL_OK:
             s = max(0.4, self.arm.reach * 1.6)
             self.grid.setSize(x=s, y=s)
             self.grid.setSpacing(x=0.1, y=0.1)
+            sp = max(0.4, self.arm.reach * 1.4)
+            self.plane_grid.setSize(x=sp, y=sp)
+            self.plane_grid.setSpacing(x=0.1, y=0.1)
             self.setCameraPosition(distance=max(0.6, self.arm.reach * 2.6),
                                    elevation=22, azimuth=-55)
 
         def rebuild(self) -> None:
             self._fit()
             self.refresh()
+
+        def _place_plane(self, ee: np.ndarray) -> None:
+            """Coloca el plano ortogonal (vertical) sobre la zona alcanzable, alineado
+            con la dirección hacia la que apunta el brazo (azimut del efector)."""
+            r = max(0.4, self.arm.reach * 1.4)
+            az = (float(np.arctan2(ee[1], ee[0]))
+                  if abs(ee[0]) + abs(ee[1]) > 1e-6 else 0.0)
+            self.plane_grid.resetTransform()
+            self.plane_grid.rotate(90, 1, 0, 0)              # de horizontal a VERTICAL (X-Z)
+            self.plane_grid.translate(r * 0.30, 0, r * 0.50)  # subir a la zona de trabajo
+            self.plane_grid.rotate(np.degrees(az), 0, 0, 1)   # alinear con el brazo (mundo)
 
         def refresh(self) -> None:
             pts = np.asarray(self.arm.fk(), dtype=float)
@@ -174,6 +196,11 @@ if _GL_OK:
             col = ((1.0, 0.42, 0.42, 1.0) if self.arm.gripper_closed
                    else (0.24, 0.53, 0.80, 1.0))
             self.ee.setData(pos=pts[-1].reshape(1, 3), color=col)
+            # El plano ortogonal solo se ve en modo planar.
+            planar = bool(getattr(self.arm, "planar", False))
+            self.plane_grid.setVisible(planar)
+            if planar:
+                self._place_plane(pts[-1])
 
 
 def _make_3d(arm: SimulatedArm):

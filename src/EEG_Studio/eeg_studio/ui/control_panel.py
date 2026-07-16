@@ -489,6 +489,7 @@ class ControlPanel(QWidget):
     def _on_planar_toggled(self, on: bool) -> None:
         """Activa el modo planar (2D) en el brazo simulado."""
         self._sim_arm.set_planar(on)
+        self._sim_refresh()          # para que el plano ortogonal aparezca/desaparezca al momento
         self.arm_status.setText(
             "Modo planar (2D): el efector se mueve en un plano vertical (base fija)."
             if on else "Modo 3D: izquierda/derecha giran la base.")
