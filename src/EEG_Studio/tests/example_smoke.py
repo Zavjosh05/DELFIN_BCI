@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -11,14 +12,19 @@ except Exception:  # noqa: BLE001
 
 from examples.create_example_project import main as generate
 from eeg_studio.core.project import Project
+from tests import sample_csv
 
 
 def main() -> int:
-    print("[1] Generando el proyecto de ejemplo")
-    assert generate() == 0, "el generador falló"
+    print("[1] Generando el proyecto de ejemplo (CSV sintéticos, en un temporal)")
+    # Se genera con datos sintéticos en un temporal para no depender de los CSV de
+    # ejemplo (fuera de git) ni escribir dentro del repositorio. Dos fuentes con
+    # ≥6 épocas cada una para reproducir los 12 segmentos del ejemplo real.
+    tmp = tempfile.mkdtemp()
+    csvs = [sample_csv(os.path.join(tmp, f"ejemplo{i}.csv"), seed=i) for i in range(2)]
+    assert generate(csvs=csvs, out_dir=tmp) == 0, "el generador falló"
 
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(here, "examples", "Ejemplo.eegproj")
+    path = os.path.join(tmp, "Ejemplo.eegproj")
     assert os.path.isdir(path), "no se creó la carpeta del proyecto"
 
     print("[2] Abriendo el proyecto")

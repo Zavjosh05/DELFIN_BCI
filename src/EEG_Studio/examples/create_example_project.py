@@ -51,18 +51,28 @@ EXAMPLE_CSVS = ["Prueba_001.csv", "Prueba_002.csv"]
 PROJECT_NAME = "Ejemplo"
 
 
-def main() -> int:
-    csvs = [os.path.join(EEG_DIR, n) for n in EXAMPLE_CSVS]
+def main(csvs: list[str] | None = None, out_dir: str | None = None) -> int:
+    """Genera el proyecto de ejemplo.
+
+    ``csvs``: rutas de los CSV fuente. Por defecto, los CSV de ejemplo del equipo
+    (``data/raw/EEG/``). ``out_dir``: carpeta donde crear el ``.eegproj`` (por
+    defecto, junto a este script). Ambos parámetros permiten a las pruebas generar
+    el ejemplo con datos sintéticos en un temporal, sin depender de archivos fuera
+    de git ni escribir en el repositorio.
+    """
+    if csvs is None:
+        csvs = [os.path.join(EEG_DIR, n) for n in EXAMPLE_CSVS]
     csvs = [c for c in csvs if os.path.isfile(c)]
     if not csvs:
         print(f"No se encontraron CSV de ejemplo en {EEG_DIR}")
         return 1
 
-    out = os.path.join(_HERE, PROJECT_NAME + ".eegproj")
+    out_dir = out_dir or _HERE
+    out = os.path.join(out_dir, PROJECT_NAME + ".eegproj")
     if os.path.isdir(out):
         shutil.rmtree(out)
     print(f"[1] Creando proyecto en {out}")
-    proj = Project.create(_HERE, PROJECT_NAME)
+    proj = Project.create(out_dir, PROJECT_NAME)
 
     print("[2] Añadiendo fuentes (CSV)")
     sources = [proj.add_source(c) for c in csvs]

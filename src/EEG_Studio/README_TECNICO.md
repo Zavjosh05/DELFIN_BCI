@@ -630,7 +630,19 @@ eeg_studio/
 ## Pruebas
 
 Pruebas de humo que cubren núcleo, interfaz (modo *offscreen*), adquisición,
-redes, Riemann/CSP, ICA y concurrencia. Para ejecutar una:
+redes, Riemann/CSP, ICA y concurrencia. **No dependen de ningún archivo**: cada
+prueba sintetiza sus datos con `tests.sample_csv` (un CSV OpenViBE pequeño y
+válido), así que corren en cualquier máquina con un clon limpio — los CSV reales
+de `data/raw/EEG/` están en `.gitignore` y pueden faltar.
+
+Batería completa **en paralelo** (recomendado; ~2-3 min frente a ~10 en serie):
+
+```powershell
+.\.venv\Scripts\python.exe -m tests.run_all          # todas, en paralelo
+.\.venv\Scripts\python.exe -m tests.run_all -k ica   # solo las que casen
+```
+
+Una sola prueba (con su salida):
 
 ```powershell
 $env:QT_QPA_PLATFORM = "offscreen"   # para las pruebas de interfaz

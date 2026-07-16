@@ -23,8 +23,7 @@ from eeg_studio.core import classification, dataset as dataset_mod
 from eeg_studio.core.project import Project
 from eeg_studio.ui.main_window import MainWindow
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv_path
 
 
 def _pump(app, seconds):
@@ -83,5 +82,5 @@ def main(csv_path) -> int:
 
 
 if __name__ == "__main__":
-    arg = sys.argv[1] if len(sys.argv) > 1 else os.path.join(EEG_DIR, "Prueba_001.csv")
+    arg = sys.argv[1] if len(sys.argv) > 1 else sample_csv_path()
     raise SystemExit(main(arg))

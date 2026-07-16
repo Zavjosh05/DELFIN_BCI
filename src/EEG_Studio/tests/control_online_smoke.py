@@ -246,6 +246,48 @@ def main() -> int:
     else:
         print("    ✓ uno solo, y el control quedó detenido")
 
+    print("[7] Cambiar de modelo con el control en marcha lo aplica en vivo")
+    # El selector de modelo no se bloquea durante el control (se quiere poder cambiarlo
+    # en una demo). El bucle debe pasar a clasificar con el nuevo modelo sin detenerse.
+    from eeg_studio.core import classification as _C, dataset as _D
+    _rng = np.random.default_rng(1)
+    _X = _rng.normal(0, 1, (24, 6))
+    _y = np.array(["arriba", "abajo"] * 12)
+    _X[_y == "abajo"] += 1.5
+    _ds = _D.Dataset(X=_X, y=_y, feature_names=[f"f{i}" for i in range(6)],
+                     segment_ids=[f"s{i}" for i in range(24)])
+    for _k in ("lda", "random_forest"):
+        win._register_model(_C.train(_ds, _k, cv=2))
+    panel.refresh()
+    assert panel.model_combo.count() >= 2, panel.model_combo.count()
+    panel.sink = _Sink()
+    _arm(panel, win, preds=[("arriba", 0.9)] * 80)
+    panel.min_conf.setValue(0)
+    panel.smooth_k.setValue(1)
+    panel.hold_ms.setValue(0)
+    panel.interval.setValue(50)
+    panel.smoother = CP.PredictionSmoother(1)
+    panel.model_combo.setCurrentIndex(0)
+    panel._run_model = panel._selected_model()
+    panel._run_id += 1
+    panel._inflight = False
+    panel._timer.setInterval(50)
+    panel._timer.start()
+    _pump(app, 0.12)
+    m0 = panel._run_model
+    panel.model_combo.setCurrentIndex(1)      # cambio de modelo EN MARCHA
+    m1 = panel._run_model                      # el handler es síncrono
+    still = panel._timer.isActive()
+    panel._timer.stop()
+    panel._stop()
+    print(f"    _run_model cambió al vuelo: {m0 is not m1}  ·  el control sigue en marcha: {still}")
+    if m0 is m1:
+        print("    ✗ el cambio no llegó al bucle en vivo"); ok = False
+    elif not still:
+        print("    ✗ cambiar de modelo detuvo el control"); ok = False
+    else:
+        print("    ✓ nuevo modelo aplicado sin detener el control")
+
     win.acq_panel.shutdown()
     print("\n" + ("CONTROL EN TIEMPO REAL OK ✓" if ok else "CONTROL EN TIEMPO REAL: FALLOS ✗"))
     return 0 if ok else 1

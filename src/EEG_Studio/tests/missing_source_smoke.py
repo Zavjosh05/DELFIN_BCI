@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 import tempfile
 
@@ -18,15 +17,13 @@ from PyQt6.QtWidgets import QApplication
 from eeg_studio.core.project import Project
 from eeg_studio.ui.main_window import MainWindow
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     tmp = tempfile.mkdtemp()
-    csv = os.path.join(tmp, "fuente.csv")
-    shutil.copy(os.path.join(EEG_DIR, "Prueba_001.csv"), csv)
+    csv = sample_csv(os.path.join(tmp, "fuente.csv"))
 
     win = MainWindow()
     win.project = Project.create(tmp, "miss")

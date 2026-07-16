@@ -19,12 +19,12 @@ import numpy as np
 from eeg_studio.core import preprocessing
 from eeg_studio.core.project import Project
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv
 
 
 def main() -> int:
-    csvs = [os.path.join(EEG_DIR, "Prueba_001.csv"), os.path.join(EEG_DIR, "Prueba_002.csv")]
+    tmp = tempfile.mkdtemp()
+    csvs = [sample_csv(os.path.join(tmp, f"fuente{i}.csv"), seed=i) for i in range(2)]
     proj = Project.create(tempfile.mkdtemp(), "conc")
     ids = [proj.add_source(c)["id"] for c in csvs if os.path.isfile(c)]
     assert ids, "no se encontraron CSV de ejemplo"

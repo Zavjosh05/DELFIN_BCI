@@ -608,6 +608,20 @@ class ControlPanel(QWidget):
         self.start_btn.setEnabled(True)
         if hasattr(self, "file_btn"):
             self.file_btn.setEnabled(True)
+        # Cambio de modelo con el control EN MARCHA (p. ej. desde el selector de la
+        # pantalla completa): se aplica en vivo en lugar de quedar el modelo fijado al
+        # arranque. `_run_model` solo se lee al inicio de cada tick, en el hilo de la
+        # GUI, así que reasignarlo aquí es seguro. Se reinicia el suavizador y se corta
+        # la retención porque las predicciones del modelo anterior no son comparables.
+        # Solo si el modelo REALMENTE cambió: `_on_model_changed` también se dispara en
+        # cada `refresh()` (cambios de proyecto, pestañas), y ahí no hay que reiniciar nada.
+        if self._timer.isActive() and model is not self._run_model:
+            self._run_model = model
+            self.smoother.reset()
+            self._end_hold()
+            self.pred_label.setText("—")
+            self.detail_label.setText(
+                f"Modelo cambiado en marcha a «{self.model_combo.currentData()}».")
 
     def _build_class_rows(self, classes: list[str]) -> None:
         while self.map_form.rowCount():

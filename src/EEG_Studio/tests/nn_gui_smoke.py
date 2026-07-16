@@ -93,7 +93,6 @@ def main(csv_path: str) -> int:
 
 
 if __name__ == "__main__":
-    from tests import data_dir
-    arg = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
-        data_dir(), "Prueba_001.csv")
+    from tests import sample_csv_path
+    arg = sys.argv[1] if len(sys.argv) > 1 else sample_csv_path()
     raise SystemExit(main(arg))

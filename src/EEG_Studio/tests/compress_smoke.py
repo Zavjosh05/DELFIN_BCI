@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 import tempfile
 
@@ -16,14 +15,12 @@ import numpy as np
 from eeg_studio.core.csv_loader import compress_csv, load_recording
 from eeg_studio.core.project import Project
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv
 
 
 def main() -> int:
     tmp = tempfile.mkdtemp()
-    src = os.path.join(tmp, "fuente.csv")
-    shutil.copy(os.path.join(EEG_DIR, "Prueba_001.csv"), src)
+    src = sample_csv(os.path.join(tmp, "fuente.csv"))
 
     proj = Project.create(tmp, "cmp")
     sid = proj.add_source(src)["id"]

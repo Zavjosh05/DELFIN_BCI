@@ -19,8 +19,7 @@ from eeg_studio.core.project import Project
 from eeg_studio.ui.main_window import MainWindow
 from eeg_studio.ui.signal_view import segment_color
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv_path
 
 
 def _texts(view):
@@ -34,7 +33,7 @@ def _bands(view):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    csv = os.path.join(EEG_DIR, "Prueba_001.csv")
+    csv = sample_csv_path()
     assert os.path.isfile(csv), "falta el CSV de ejemplo"
 
     win = MainWindow()

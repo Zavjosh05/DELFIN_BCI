@@ -20,8 +20,7 @@ import numpy as np
 from eeg_studio.core import preprocessing
 from eeg_studio.core.project import Project
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv_path
 
 
 def _cache_files(proj):
@@ -29,7 +28,7 @@ def _cache_files(proj):
 
 
 def main() -> int:
-    csv = os.path.join(EEG_DIR, "Prueba_001.csv")
+    csv = sample_csv_path()
     assert os.path.isfile(csv), "falta el CSV de ejemplo"
     proj = Project.create(tempfile.mkdtemp(), "dc")
     sid = proj.add_source(csv)["id"]

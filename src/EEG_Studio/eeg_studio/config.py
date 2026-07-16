@@ -5,6 +5,8 @@ y para los CSV exportados por OpenViBE Designer.
 """
 from __future__ import annotations
 
+import os
+
 APP_NAME = "DELFIN EEG Studio"
 APP_VERSION = "0.1.0"
 ORG_NAME = "DELFIN_BCI"
@@ -86,8 +88,10 @@ ONLINE_SERIAL_BAUD = 9600
 
 # --- Rendimiento -----------------------------------------------------------
 # Nº de procesos para la extracción de características en lote.
-# 0 => usar os.cpu_count().
-N_WORKERS = 0
+# 0 => usar os.cpu_count(). Se puede fijar por entorno (EEG_N_WORKERS): útil para
+# la batería de pruebas en paralelo, donde cada proceso hijo debe usar UN worker
+# para no sobresuscribir la CPU (varias pruebas corriendo × un pool cada una).
+N_WORKERS = int(os.environ.get("EEG_N_WORKERS", "0") or 0)
 
 # Cachear en disco (carpeta cache/) la señal procesada por el pipeline, para que
 # reabrir un proyecto no tenga que recalcular filtros costosos (p. ej. ICA).

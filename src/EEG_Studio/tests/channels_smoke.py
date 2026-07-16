@@ -13,12 +13,11 @@ except Exception:  # noqa: BLE001
 
 from eeg_studio.core.project import Project
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv_path
 
 
 def main() -> int:
-    csv = os.path.join(EEG_DIR, "Prueba_001.csv")
+    csv = sample_csv_path()
     proj = Project.create(tempfile.mkdtemp(), "ch")
     sid = proj.add_source(csv)["id"]
     rec = proj.get_recording(sid)

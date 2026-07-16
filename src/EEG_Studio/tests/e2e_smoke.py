@@ -25,8 +25,7 @@ from eeg_studio.core.dataset import fit_window
 from eeg_studio.core.processing import extract_feature_vector
 from eeg_studio.core.project import Project
 
-from tests import data_dir
-EEG_DIR = data_dir()
+from tests import sample_csv_path
 
 
 def _md5(path):
@@ -38,7 +37,7 @@ def _md5(path):
 
 
 def main() -> int:
-    csv = os.path.join(EEG_DIR, "Prueba_001.csv")
+    csv = sample_csv_path()
     digest = _md5(csv)
 
     print("[1] Proyecto + fuente + pipeline (incluye ICA)")

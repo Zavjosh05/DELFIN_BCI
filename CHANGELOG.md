@@ -12,6 +12,34 @@ cambios se agrupan por fecha de trabajo.
 
 ---
 
+## [2026-07-16]
+
+### Añadido
+- **Batería de pruebas en paralelo (`tests/run_all.py`)**: lanza las ~86 pruebas de humo,
+  cada una en su proceso aislado, repartidas entre los núcleos. En un portátil hace la
+  batería completa en **~2-3 min** (en serie eran ~10, porque cada proceso paga varios
+  segundos FIJOS de arranque —PyQt6, numpy, sklearn, pyqtgraph— y en serie eso se paga
+  86 veces). Imprime PASS/FAIL con tiempos (las más lentas arriba) y termina en != 0 si
+  alguna falla. Filtro por nombre con `-k`. Fuerza a los procesos hijos a un solo worker
+  y un solo hilo de cálculo (`EEG_N_WORKERS`, `OMP_NUM_THREADS`…) para que N pruebas × M
+  hilos internos no sobresuscriban la CPU.
+- **Generador de grabaciones sintéticas para las pruebas (`tests.sample_csv`)**: escribe
+  un CSV OpenViBE pequeño pero válido (14 canales, épocas, señal reproducible). Ahora
+  **ninguna prueba depende de archivos concretos**: antes 13 cargaban `Prueba_001.csv` /
+  `Prueba_002.csv` de `data/raw/EEG/` —que está en `.gitignore`—, así que **fallaban en
+  un clon limpio** (otra máquina, un compañero). Además son más rápidas al parsear datos
+  pequeños en vez de CSV de varios MB. El generador del proyecto de ejemplo acepta ahora
+  CSV y carpeta de salida, para generarse en un temporal con datos sintéticos.
+
+### Cambiado
+- **El modelo se puede cambiar con el control en tiempo real EN MARCHA**: elegir otro
+  modelo (en el panel o en el selector de la pantalla completa del brazo) ahora se aplica
+  al bucle en vivo —reinicia el suavizador y corta la retención— en lugar de quedar el
+  modelo fijado al arranque mientras la interfaz mostraba otro. `EEG_N_WORKERS` permite
+  fijar por entorno el nº de procesos de extracción de características.
+
+---
+
 ## [2026-07-15]
 
 ### Añadido

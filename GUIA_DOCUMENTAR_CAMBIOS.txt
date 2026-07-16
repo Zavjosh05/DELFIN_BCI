@@ -122,20 +122,27 @@ Convención de cada prueba (tests/<nombre>_smoke.py):
     QMessageBox…) o se extrae la decisión a un método testeable.
   - No toca datos de origen; usa carpetas temporales (tempfile) y, si toca QSettings,
     respalda y restaura los valores reales del usuario.
+  - NO depende de archivos concretos del disco (los CSV de `data/raw/EEG/` están en
+    `.gitignore` y pueden no existir). Si necesitas una grabación, sintetízala con
+    `from tests import sample_csv` (o `sample_csv_path` para «un CSV cualquiera»):
+    escribe un CSV OpenViBE pequeño y válido (14 canales, épocas, señal reproducible).
+    Datos pequeños = pruebas rápidas.
 
 Cómo correr UNA prueba (desde src/EEG_Studio):
     QT_QPA_PLATFORM=offscreen ./.venv/Scripts/python.exe -m tests.<nombre>_smoke
 
-Cómo correr la BATERÍA COMPLETA (todas las *_smoke) — debe quedar 100% verde:
+Cómo correr la BATERÍA COMPLETA (todas las pruebas) — debe quedar 100% verde:
     cd src/EEG_Studio
-    export QT_QPA_PLATFORM=offscreen
-    PY=./.venv/Scripts/python.exe
-    for f in tests/*_smoke.py; do
-      mod="tests.$(basename "$f" .py)"
-      timeout 200 $PY -m "$mod" >/dev/null 2>>/tmp/battery.log \
-        && echo "PASS $mod" || echo "FAIL $mod"
-    done
-  (La batería tarda varios minutos; conviene lanzarla en segundo plano.)
+    ./.venv/Scripts/python.exe -m tests.run_all          # en paralelo (recomendado)
+    ./.venv/Scripts/python.exe -m tests.run_all -k ica   # solo las que casen (iterar rápido)
+  `tests/run_all.py` lanza todas las pruebas en paralelo (una por proceso, aislado),
+  imprime PASS/FAIL con tiempos y termina en != 0 si alguna falla. En un portátil hace
+  las ~86 pruebas en ~2-3 min (en serie serían ~10). No necesita NINGÚN archivo: las
+  pruebas sintetizan sus datos con `tests.sample_csv` (los CSV reales de `data/raw/EEG/`
+  están en `.gitignore` y pueden faltar en un clon limpio; NO dependas de ellos).
+
+  Para correr UNA sola prueba directamente (con su salida):
+      QT_QPA_PLATFORM=offscreen ./.venv/Scripts/python.exe -m tests.<nombre>_smoke
 
 Notas prácticas:
   - Si quedan procesos python colgados entre corridas, mátalos antes:
