@@ -11,6 +11,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
@@ -23,7 +24,7 @@ from PyQt6.QtWidgets import (
 
 from ..inference.sim_arm import SimulatedArm
 from .sim_arm_controls import SimArmActionPad, SimArmControls
-from .theme import BORDER, MUTED, SURFACE, TEXT
+from .theme import MUTED, SURFACE, TEXT
 
 try:                                    # 3D es opcional (PyOpenGL)
     import pyqtgraph.opengl as gl
@@ -32,9 +33,17 @@ except Exception:                       # noqa: BLE001
     gl = None
     _GL_OK = False
 
+# Escena del brazo con colores propios y ALTO CONTRASTE (el fondo de los paneles
+# —SURFACE— y la rejilla —BORDER— eran casi el mismo tono, así que el brazo, el
+# fondo y el plano de soporte se confundían). El fondo de la escena es más oscuro
+# que los paneles para que el brazo (turquesa) y la rejilla (gris azulado claro)
+# resalten con claridad.
+_SCENE_BG = "#0c1015"      # fondo de la escena (más oscuro que los paneles)
+_GRID_2D = "#5b6c80"       # rejilla / arco de alcance / piso en las vistas 2D
+_GRID_3D = (125, 155, 195, 170)   # rejilla del plano de soporte en 3D (opaca y clara)
 _ARM_COL = "#5eead4"       # eslabones (turquesa)
-_JOINT_COL = "#c8d0d8"     # articulaciones
-_OPEN_COL = "#3d86cc"      # pinza abierta (azul)
+_JOINT_COL = "#e6ecf2"     # articulaciones (casi blanco, para separarse del brazo)
+_OPEN_COL = "#4aa3ea"      # pinza abierta (azul claro)
 _CLOSED_COL = "#ff6b6b"    # pinza cerrada / agarrando (rojo)
 
 
@@ -51,11 +60,11 @@ class _ArmProjection(pg.PlotWidget):
         self.setMouseEnabled(False, False)
         self.hideButtons()
         self.setAspectLocked(True)
-        self.showGrid(x=True, y=True, alpha=0.2)
-        self.setTitle(title, color=MUTED, size="9pt")
-        self.getPlotItem().getViewBox().setBackgroundColor(SURFACE)
+        self.showGrid(x=True, y=True, alpha=0.45)
+        self.setTitle(title, color=TEXT, size="9pt")
+        self.getPlotItem().getViewBox().setBackgroundColor(_SCENE_BG)
         self._rebuild_static()
-        self.arm_curve = self.plot([], [], pen=pg.mkPen(_ARM_COL, width=4))
+        self.arm_curve = self.plot([], [], pen=pg.mkPen(_ARM_COL, width=5))
         self.joints_scat = pg.ScatterPlotItem(size=9, brush=pg.mkBrush(_JOINT_COL),
                                                pen=pg.mkPen("#000", width=1))
         self.addItem(self.joints_scat)
@@ -93,7 +102,7 @@ class _ArmProjection(pg.PlotWidget):
 
     def _rebuild_static(self) -> None:
         r = self.arm.reach * 1.15
-        pen = pg.mkPen(BORDER, width=1, style=Qt.PenStyle.DashLine)
+        pen = pg.mkPen(_GRID_2D, width=1, style=Qt.PenStyle.DashLine)
         if self.plane == "side":
             self.setRange(xRange=(-0.02, r), yRange=(-r * 0.15, r))
             self.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pen))     # piso z=0
@@ -130,17 +139,17 @@ if _GL_OK:
         def __init__(self, arm: SimulatedArm, parent=None) -> None:
             super().__init__(parent)
             self.arm = arm
-            self.setBackgroundColor(pg.mkColor(SURFACE))
+            self.setBackgroundColor(pg.mkColor(_SCENE_BG))
             self.grid = gl.GLGridItem()
-            self.grid.setColor((90, 110, 140, 70))
+            self.grid.setColor(_GRID_3D)               # plano de soporte, claro y opaco
             self.addItem(self.grid)
             self.arm_line = gl.GLLinePlotItem(
-                pos=np.zeros((2, 3)), width=4.0, antialias=True,
+                pos=np.zeros((2, 3)), width=6.0, antialias=True,
                 color=(0.37, 0.92, 0.83, 1.0), mode="line_strip")
             self.addItem(self.arm_line)
             self.joints = gl.GLScatterPlotItem(
-                pos=np.zeros((1, 3)), color=(0.82, 0.86, 0.92, 1.0),
-                size=8.0, pxMode=True)
+                pos=np.zeros((1, 3)), color=(0.90, 0.93, 0.97, 1.0),
+                size=9.0, pxMode=True)
             self.addItem(self.joints)
             self.ee = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), size=13.0, pxMode=True)
             self.addItem(self.ee)
@@ -235,6 +244,18 @@ class _ArmFullscreen(QWidget):
         al = QVBoxLayout(act_box); al.setContentsMargins(6, 6, 6, 6)
         self.action_pad = SimArmActionPad(self._do_command)
         al.addWidget(self.action_pad)
+        # Modo planar (2D): el efector se mueve en un plano vertical (base fija). Se
+        # delega en el checkbox del panel de Control (fuente de verdad única), como el
+        # selector de modelo; sin panel al que delegar, no se ofrece aquí.
+        if control is not None:
+            self.planar_check = QCheckBox("Modo planar (2D)")
+            self.planar_check.setToolTip(
+                "El efector se mueve en un plano vertical (arriba/abajo = altura, "
+                "izquierda/derecha = alcance), con la base fija. Para etiquetas 2D.")
+            self.planar_check.setChecked(bool(getattr(control, "planar_check", None)
+                                              and control.planar_check.isChecked()))
+            self.planar_check.toggled.connect(self._on_planar_toggled)
+            al.addWidget(self.planar_check)
         pl.addWidget(act_box)
         joint_box = QGroupBox("Control por articulación")
         jl = QVBoxLayout(joint_box); jl.setContentsMargins(6, 6, 6, 6)
@@ -336,6 +357,15 @@ class _ArmFullscreen(QWidget):
         self.start_btn.setEnabled(c.start_btn.isEnabled())
         self.pred_label.setText(c.pred_label.text())
         self.detail_label.setText(c.detail_label.text())
+
+    def _on_planar_toggled(self, on: bool) -> None:
+        """Delega el modo planar en el panel de Control (fuente de verdad única), que
+        lo aplica al brazo. Así el checkbox del panel y el de aquí no se desincronizan."""
+        c = self._control
+        if c is not None and getattr(c, "planar_check", None) is not None:
+            c.planar_check.setChecked(on)
+        else:
+            self.arm.set_planar(on)
 
     def _do_command(self, command: str) -> None:
         """Ejecuta una acción del D-pad sobre el brazo y refresca todo."""

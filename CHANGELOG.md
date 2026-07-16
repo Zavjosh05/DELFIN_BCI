@@ -15,6 +15,14 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-16]
 
 ### Añadido
+- **Modo planar (2D) del brazo simulado**: casilla que hace que el efector se mueva sobre
+  un **plano vertical** (ortogonal al plano de soporte de la base), con la **base fija**:
+  arriba/abajo = altura, izquierda/derecha = alcance (acercar/alejar). Pensado para
+  etiquetas 2D como las de `señales_finales` (arriba/abajo/izquierda/derecha), donde girar
+  la base en 3D no casa con un movimiento bidimensional. Sin marcar (3D), el
+  comportamiento es el de antes (izquierda/derecha giran la base). Usa la IK planar ya
+  existente (base fija). La casilla está en el panel y en la pantalla completa, delegando
+  en un único estado. Cubierto por `sim_arm_smoke` [11].
 - **Batería de pruebas en paralelo (`tests/run_all.py`)**: lanza las ~86 pruebas de humo,
   cada una en su proceso aislado, repartidas entre los núcleos. En un portátil hace la
   batería completa en **~2-3 min** (en serie eran ~10, porque cada proceso paga varios
@@ -48,6 +56,16 @@ cambios se agrupan por fecha de trabajo.
   brazo se mueve por `SimArmView.refresh() → _fs.refresh()`, y ese `refresh()` solo
   redibujaba la vista 3D, así que los sliders por articulación de al lado se quedaban en la
   pose anterior. Ahora también se sincronizan. Ambos cubiertos por `sim_arm_smoke` [9f].
+- **Más contraste en la escena del brazo simulado**: el fondo de los paneles (`SURFACE`) y
+  la rejilla (`BORDER`) eran casi el mismo tono, y la rejilla 3D era muy transparente, así
+  que el fondo, el plano de soporte y el brazo se confundían. Ahora la escena (2D y 3D)
+  usa un fondo propio más oscuro, la rejilla del plano de soporte es clara y opaca, y los
+  eslabones van más gruesos. Guarda de regresión en `sim_arm_smoke` [12].
+- **El runner de la batería es robusto ante la carga**: reintenta en serie las pruebas que
+  fallen en la corrida paralela (una prueba sensible al tiempo puede quedarse sin CPU con
+  8 procesos y fallar sin ser un fallo real); si pasan al reintentar, se marcan «flaky», no
+  como fallo. Además reconfigura su propio stdout a UTF-8 (imprimía la salida de las
+  pruebas —con «→», «✓»— y reventaba en la consola cp1252 de Windows).
 
 ---
 

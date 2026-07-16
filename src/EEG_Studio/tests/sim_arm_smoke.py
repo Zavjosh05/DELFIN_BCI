@@ -271,6 +271,46 @@ def main() -> int:
     assert cp._sim_arm.reach > reach0
     assert cp.sim_view.arm is cp._sim_arm
 
+    print("[11] Modo planar (2D): efector en un plano vertical, base FIJA")
+    from eeg_studio.inference.sim_arm import SimulatedArm as _Arm
+    arm = _Arm()
+    # En 3D, derecha gira la base (movimiento tridimensional).
+    arm.reset()
+    arm.execute("derecha"); arm.execute("derecha")
+    assert abs(arm.q[0]) > 1e-6, "en 3D, derecha debe girar la base"
+    # En planar: base fija, el efector se queda en el plano vertical (y constante),
+    # arriba/abajo cambian la altura e izquierda/derecha el alcance.
+    arm.reset(); arm.set_planar(True)
+    y0, h0 = arm.ee()[1], arm.ee()[2]
+    arm.execute("arriba"); arm.execute("arriba")
+    assert arm.ee()[2] > h0, "arriba debe subir el efector"
+    assert abs(arm.q[0]) < 1e-9, "en planar la base NO debe girar"
+    assert abs(arm.ee()[1] - y0) < 1e-6, "el efector debe quedarse en el plano vertical"
+    r0 = math.hypot(arm.ee()[0], arm.ee()[1])
+    arm.execute("derecha"); arm.execute("derecha")
+    assert math.hypot(arm.ee()[0], arm.ee()[1]) > r0, "derecha debe alejar el efector"
+    assert abs(arm.q[0]) < 1e-9 and abs(arm.ee()[1] - y0) < 1e-6, "sigue en el plano, base fija"
+    h_now = arm.ee()[2]
+    arm.execute("abajo")
+    assert arm.ee()[2] < h_now, "abajo debe bajar el efector"
+    arm.execute("agarre"); assert arm.gripper_closed, "la pinza debe seguir funcionando en planar"
+    print("    base fija · efector en plano vertical · arriba/abajo=altura, der/izq=alcance ✓")
+
+    # El interruptor del panel activa/desactiva el modo en el brazo.
+    cp.planar_check.setChecked(True)
+    assert cp._sim_arm.planar is True
+    cp.planar_check.setChecked(False)
+    assert cp._sim_arm.planar is False
+    print("    el interruptor del panel activa/desactiva el modo planar ✓")
+
+    print("[12] Contraste de la escena: fondo, rejilla y brazo se distinguen")
+    from eeg_studio.ui import sim_arm_view as _SV
+    from eeg_studio.ui.theme import SURFACE as _SURF
+    assert _SV._SCENE_BG != _SURF, "el fondo de la escena debe diferir del de los paneles"
+    assert _SV._GRID_3D[3] > 120, "la rejilla 3D debe ser bien visible (alfa alto)"
+    assert _SV._ARM_COL != _SV._SCENE_BG and _SV._GRID_2D != _SV._SCENE_BG
+    print("    fondo distinto de los paneles · rejilla opaca · brazo contrastado ✓")
+
     win.acq_panel.shutdown()
     print("\nBRAZO SIMULADO + PERFILES OK ✓")
     return 0

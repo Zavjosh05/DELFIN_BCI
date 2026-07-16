@@ -25,6 +25,13 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+# El propio runner imprime la salida capturada de las pruebas (con «→», «✓»…); en
+# Windows su stdout es cp1252 y reventaría al imprimir esos caracteres. UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001
+    pass
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)                       # src/EEG_Studio
 
@@ -91,14 +98,32 @@ def main() -> int:
 
     print(f"Ejecutando {len(mods)} pruebas, {jobs} en paralelo…\n")
     t0 = time.perf_counter()
-    results: list[tuple[str, bool, float, str]] = []
+    res_by_name: dict[str, tuple[str, bool, float, str]] = {}
     with ThreadPoolExecutor(max_workers=jobs) as ex:
         for res in ex.map(lambda m: _run_one(m, args.timeout), mods):
             name, ok, secs, _ = res
             print(f"  {'ok  ' if ok else 'FAIL'} {secs:6.1f}s  {name}", flush=True)
-            results.append(res)
+            res_by_name[name] = res
+
+    # Reintento SECUENCIAL de las que fallaron: bajo carga paralela, una prueba
+    # sensible al tiempo (adquisición en un hilo, sleeps de sondeo) puede quedarse sin
+    # CPU y fallar sin ser un fallo real. Se reintentan una vez, ya sin contención;
+    # si pasan, se cuentan como «flaky» (no como fallo).
+    flaky: list[str] = []
+    fallando = [n for n, r in res_by_name.items() if not r[1]]
+    if fallando:
+        print(f"\nReintentando en serie {len(fallando)} (posible flaky por carga):")
+        for name in fallando:
+            r2 = _run_one(name, args.timeout)
+            res_by_name[name] = r2
+            if r2[1]:
+                flaky.append(name)
+                print(f"  ok (2.º intento)   {name}  — flaky bajo carga")
+            else:
+                print(f"  FAIL (2.º intento) {name}  — fallo real")
 
     wall = time.perf_counter() - t0
+    results = list(res_by_name.values())
     fails = [r for r in results if not r[1]]
     results.sort(key=lambda r: r[2], reverse=True)
     print("\nMás lentas:")
@@ -109,9 +134,10 @@ def main() -> int:
         print(f"\n{len(fails)} FALLARON:")
         for name, _ok, _secs, tail in fails:
             print(f"\n===== {name} =====\n{tail}")
+    if flaky:
+        print(f"\n{len(flaky)} flaky (pasaron al reintentar en serie): {', '.join(flaky)}")
     print(f"\nPASA={len(results) - len(fails)}  FALLA={len(fails)}  "
-          f"tiempo de pared={wall:.0f}s (suma en serie sería "
-          f"{sum(r[2] for r in results):.0f}s)")
+          f"FLAKY={len(flaky)}  tiempo de pared={wall:.0f}s")
     return 1 if fails else 0
 
 

@@ -61,6 +61,21 @@ SIM_ARM_COMMANDS: dict[str, tuple] = {
 }
 SIM_ARM_COMMAND_NAMES = list(SIM_ARM_COMMANDS)
 
+# Modo PLANAR (2D): el efector se mueve sobre un plano VERTICAL (ortogonal al plano
+# de soporte, donde está la base), con la base fija. Pensado para etiquetas 2D como
+# las de «señales_finales» (arriba/abajo/izquierda/derecha), donde girar la base en
+# 3D no casa con un movimiento bidimensional. En este plano:
+#   - arriba/abajo   -> altura del efector (eje vertical del plano),
+#   - derecha/izq.   -> alcance del efector (acercar/alejar dentro del plano),
+# que en la vista lateral se ven como un D-pad 2D coherente (arriba/abajo/izq/der).
+# (d_alcance, d_altura) en pasos lineales; la base (yaw) no se toca.
+SIM_ARM_PLANAR_DELTAS: dict[str, tuple[float, float]] = {
+    "arriba":    (0.0, +1.0),
+    "abajo":     (0.0, -1.0),
+    "derecha":   (+1.0, 0.0),   # el efector se aleja (a la derecha en la vista lateral)
+    "izquierda": (-1.0, 0.0),   # el efector se acerca (a la izquierda en la vista lateral)
+}
+
 DEFAULT_STEP = 0.16          # rad por comando (~9°)
 
 
@@ -135,6 +150,7 @@ class SimulatedArm:
         self.step = float(step)
         self.gripper_closed = False
         self._floor_margin = 1e-3
+        self.planar = False            # modo planar (2D) desactivado por defecto
         self.apply_spec(spec or make_default_arm_spec())
 
     def apply_spec(self, spec: ArmSpec) -> None:
@@ -210,6 +226,10 @@ class SimulatedArm:
         if kind == "gripper":
             self.gripper_closed = bool(spec[1])
             return True
+        # En modo planar, las direcciones mueven el efector en el plano vertical
+        # (base fija) en vez de girar la base / jog directo del hombro.
+        if self.planar and command in SIM_ARM_PLANAR_DELTAS:
+            return self._planar_jog(command)
         if kind == "joint":
             idx, sign = spec[1], spec[2]
             delta = sign * (self.step if step is None else float(step))
@@ -220,6 +240,26 @@ class SimulatedArm:
                 self.q = q_try
             return True
         return False
+
+    def set_planar(self, enabled: bool) -> None:
+        """Activa/desactiva el modo planar (2D). El efector pasa a moverse en un
+        plano VERTICAL (ortogonal al plano de soporte de la base): arriba/abajo =
+        altura, izquierda/derecha = alcance, con la base fija. Ver
+        ``SIM_ARM_PLANAR_DELTAS``."""
+        self.planar = bool(enabled)
+
+    def _planar_jog(self, command: str) -> bool:
+        """Un empujón del efector dentro del plano vertical: lee su posición actual
+        (alcance, altura), la desplaza un paso lineal en la dirección del comando y
+        usa la IK planar (base fija) para llegar. Sin objetivo acumulado, así no se
+        aleja de lo alcanzable: si un lado está al límite, deja de avanzar solo."""
+        d_reach, d_height = SIM_ARM_PLANAR_DELTAS[command]
+        lin = max(1e-3, self.reach * 0.12)             # paso lineal (~12% del alcance)
+        ee = self.ee()
+        r = float(np.clip(math.hypot(ee[0], ee[1]) + d_reach * lin, 0.02, self.reach))
+        h = float(np.clip(ee[2] + d_height * lin, self.FLOOR, self.reach))
+        self.aim_planar(r, h)
+        return True
 
     def reset(self) -> None:
         """Vuelve a la pose inicial (HOME) y abre la pinza."""

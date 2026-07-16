@@ -454,6 +454,20 @@ class ControlPanel(QWidget):
                                    control=self)
         lay.addWidget(self.sim_view)
 
+        # Modo planar (2D): para etiquetas bidimensionales (arriba/abajo/izquierda/
+        # derecha) el efector se mueve en un plano vertical con la base fija, en vez de
+        # girar la base (que es un movimiento 3D y no casa con esas clases).
+        self.planar_check = QCheckBox(
+            "Modo planar (2D): efector en un plano vertical (base fija)")
+        self.planar_check.setToolTip(
+            "Para etiquetas 2D como las de «señales_finales»: el efector se mueve sobre "
+            "un plano vertical, ortogonal al plano de soporte de la base. Arriba/abajo = "
+            "altura, izquierda/derecha = acercar/alejar. Sin marcar (3D), izquierda/"
+            "derecha giran la base.")
+        self.planar_check.setChecked(self._sim_arm.planar)
+        self.planar_check.toggled.connect(self._on_planar_toggled)
+        lay.addWidget(self.planar_check)
+
         self.sim_controls = SimArmControls(self._sim_arm, on_change=self._sim_refresh)
         sc_box = QGroupBox("Control por articulación")
         scl = QVBoxLayout(sc_box); scl.setContentsMargins(6, 6, 6, 6)
@@ -466,10 +480,18 @@ class ControlPanel(QWidget):
         lay.addWidget(build_btn)
 
         hint = QLabel("Muévelo con el D-pad de abajo o con los sliders; se ve arriba en 3D y 2D. "
-                      "Arriba/abajo = hombro, izquierda/derecha = base, agarre/soltar = pinza.")
+                      "3D: arriba/abajo = hombro, izquierda/derecha = base. Planar (2D): "
+                      "arriba/abajo = altura, izquierda/derecha = alcance. Agarre/soltar = pinza.")
         hint.setWordWrap(True); hint.setStyleSheet("color: #8a929b; font-size: 11px;")
         lay.addWidget(hint)
         return w
+
+    def _on_planar_toggled(self, on: bool) -> None:
+        """Activa el modo planar (2D) en el brazo simulado."""
+        self._sim_arm.set_planar(on)
+        self.arm_status.setText(
+            "Modo planar (2D): el efector se mueve en un plano vertical (base fija)."
+            if on else "Modo 3D: izquierda/derecha giran la base.")
 
     def _open_builder(self) -> None:
         dlg = QDialog(self)

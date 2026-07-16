@@ -551,12 +551,20 @@ Además del control en vivo, puedes generar un movimiento a partir de una
 El actuador que controlan el D-pad y el clasificador es un **perfil**: **«Brazo
 MaxArm (real, HTTP)»** o **«Brazo simulado»** (4DOF SCARA, sin hardware, adaptado de
 `Proyecto_RNN`). El brazo simulado se mueve directamente (no usa salida externa) y se
-ve en **3D** (si hay PyOpenGL) más dos **proyecciones 2D** (lateral y superior).
+ve en **3D** (si hay PyOpenGL) más dos **proyecciones 2D** (lateral y superior), con
+una escena de **alto contraste** (fondo oscuro, rejilla del plano de soporte clara y
+brazo turquesa) para distinguir bien fondo, plano y brazo.
 
 Formas de controlarlo:
 
-- **D-pad** de 6 comandos (arriba/abajo = hombro, izquierda/derecha = base,
-  agarre/soltar = pinza) + **HOME**.
+- **D-pad** de 6 comandos + **HOME**.
+- **Modo planar (2D)**: casilla que hace que el efector se mueva sobre un **plano
+  vertical** (ortogonal al plano de soporte de la base), con la **base fija**:
+  arriba/abajo = **altura**, izquierda/derecha = **alcance** (acercar/alejar). Pensado
+  para etiquetas 2D como las de `señales_finales`, donde girar la base en 3D no casa
+  con un movimiento bidimensional. Sin marcar (**3D**), arriba/abajo = hombro e
+  izquierda/derecha = giro de base. Agarre/soltar = pinza en ambos modos. La casilla
+  está en el panel y en la pantalla completa (delegan en la misma, un solo estado).
 - **Sliders por articulación** (uno por joint, dentro de sus límites).
 - **Clic en las proyecciones 2D** (como en `Proyecto_RNN`): la **vista superior**
   gira la base para apuntar al punto; la **vista lateral** acerca el efector a esa
@@ -676,7 +684,9 @@ entrenamiento),
 `arm_control_smoke` (control del brazo MaxArm por HTTP, sin hardware),
 `source_panel_smoke` (ordenar la lista de fuentes e indicadores de contenido),
 `signal_length_smoke` (fijar la longitud en tiempo de la selección del visor),
-`sim_arm_smoke` (brazo simulado 4DOF + perfiles del panel de Control),
+`sim_arm_smoke` (brazo simulado 4DOF + perfiles del panel de Control; pantalla completa
+con sliders y diálogos al frente; **modo planar 2D** —efector en un plano vertical con
+la base fija— y contraste de la escena),
 `recording_robust_smoke` (grabación en el hilo productor + fsync + batería),
 `stim_smoke` (estimulación sincronizada: núcleo, config, línea de tiempo, grabación,
 e importación con aviso de repetidos → sobrescribir/ignorar),
