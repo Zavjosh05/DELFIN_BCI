@@ -499,6 +499,12 @@ class AcquisitionPanel(QWidget):
         excluded = set(proj.excluded_channels())
         if not excluded:
             return None
+        # La exclusión se guarda con el nombre ORIGINAL del CSV («Channel 13»), pero
+        # una fuente EN VIVO (Emotiv/LSL/Simulado) reporta el nombre clínico («F8»).
+        # Sin comparar contra las dos formas, en vivo no coincidía ninguna y no se
+        # excluía nada: el modelo entrenado con los canales activos recibía todos.
+        aliases = proj.state.get("channel_aliases") or {}
+        excluded |= {aliases.get(n, n) for n in excluded}
         names = list(self.source.channel_names)
         keep = [i for i, n in enumerate(names) if n not in excluded]
         return keep if 0 < len(keep) < len(names) else None

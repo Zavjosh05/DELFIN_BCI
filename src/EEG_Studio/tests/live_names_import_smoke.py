@@ -114,6 +114,38 @@ def main() -> int:
     assert en_visor == activos, (len(en_visor), len(activos))
     print(f"    14 → {len(en_visor)} canales en el visor, iguales a Análisis ✓")
 
+    print("[4ter] La exclusión vale para fuentes EN VIVO (nombres clínicos)")
+    # Los excluidos se guardan con el nombre ORIGINAL del CSV («Channel 13»), pero
+    # Emotiv/LSL/Simulado reportan el clínico («F8»): sin comparar contra las dos
+    # formas, en vivo no se excluía NADA y el modelo recibía todos los canales.
+    from eeg_studio.acquisition.simulated import SimulatedSource
+    viva = SimulatedSource()
+    assert viva.channel_names[:2] == ["AF3", "F7"], viva.channel_names[:2]
+    win.acq_panel.source = viva
+    keep_vivo = win.acq_panel._kept_indices()
+    assert keep_vivo is not None, "la fuente en vivo NO está excluyendo (bug)"
+    assert len(keep_vivo) == 12, len(keep_vivo)
+    nombres_vivo = win.acq_panel._display_channel_names(keep_vivo)
+    assert "F8" not in nombres_vivo and "AF4" not in nombres_vivo, nombres_vivo
+    # Conectada de verdad: el buffer de inferencia se dimensiona con los activos.
+    win.acq_panel._configured = False
+    viva.start()
+    t0 = time.time()
+    while not win.acq_panel._configured and time.time() - t0 < 10:
+        win.acq_panel._tick()
+        time.sleep(0.02)
+    viva.stop()
+    assert win.acq_panel._configured, "el visor no se configuró con la fuente en vivo"
+    assert win.acq_panel._roll.shape[0] == 12, win.acq_panel._roll.shape
+    print(f"    en vivo: 14 → {len(keep_vivo)} canales · buffer "
+          f"{win.acq_panel._roll.shape[0]} ✓")
+
+    # Se restaura la reproducción para los pasos siguientes.
+    win.acq_panel._configured = False
+    win.acq_panel.source = FilePlaybackSource(csv, speed=50.0)
+    win.acq_panel.source._load()
+    _drive_until_configured(win, csv)
+
     print("[4bis] La INFERENCIA también recibe solo los canales activos")
     # Antes el modo Control clasificaba con TODOS los canales de la fuente (14),
     # aunque el modelo se hubiera entrenado con los activos (12) -> forma incompatible.

@@ -47,6 +47,15 @@ cambios se agrupan por fecha de trabajo.
   fijar por entorno el nº de procesos de extracción de características.
 
 ### Corregido / reforzado
+- **La exclusión de canales también vale para fuentes EN VIVO**: los canales excluidos
+  se guardan con el nombre ORIGINAL del CSV (`Channel 13`), pero una fuente en vivo
+  (Emotiv/LSL/Simulado) reporta el nombre clínico (`F8`). Al comparar solo contra el
+  nombre crudo, en vivo no coincidía ninguno y **no se excluía nada**: el visor y, sobre
+  todo, el clasificador recibían todos los canales, de modo que un modelo entrenado con
+  los activos (p. ej. 12) fallaba con la señal en vivo (14). Ahora la exclusión compara
+  contra ambas formas del nombre (cruda y alias), así que visor e inferencia ven los
+  mismos canales activos que «Análisis (CSV)». La grabación sigue guardando la señal
+  íntegra. Cubierto por `live_names_import_smoke` [4ter].
 - **Los diálogos modales ya no quedan detrás de la pantalla completa del brazo**: `warn`
   y `info` se parentaban siempre a la ventana principal. Con la pantalla completa delante,
   un aviso (p. ej. iniciar el control sin fuente en vivo, o un error de clasificación)
