@@ -13,11 +13,13 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -276,8 +278,8 @@ class _ArmFullscreen(QWidget):
         if control is not None:
             self.planar_check = QCheckBox("Modo planar (2D)")
             self.planar_check.setToolTip(
-                "El efector se mueve en un plano vertical (arriba/abajo = altura, "
-                "izquierda/derecha = alcance), con la base fija. Para etiquetas 2D.")
+                "El efector se mueve en un plano frontal (arriba/abajo = altura, "
+                "izquierda/derecha = lateral), enfrente del brazo. Para etiquetas 2D.")
             self.planar_check.setChecked(bool(getattr(control, "planar_check", None)
                                               and control.planar_check.isChecked()))
             self.planar_check.toggled.connect(self._on_planar_toggled)
@@ -325,6 +327,31 @@ class _ArmFullscreen(QWidget):
         row.addWidget(self.model_combo, 1)
         lay.addLayout(row)
 
+        # Ventana y duración de la acción, para configurarlas sin volver al panel. Son
+        # los MISMOS ajustes del panel de Control (fuente de verdad única): cambiarlos
+        # aquí los cambia allí. `window` queda deshabilitado mientras el control corre
+        # (igual que en el panel); la duración de la acción se puede tocar en marcha.
+        cfg = QFormLayout()
+        self.window_spin = QSpinBox()
+        self.window_spin.setRange(16, 8192)
+        self.window_spin.setSingleStep(32)
+        self.window_spin.setToolTip("Muestras por ventana a clasificar (mismo ajuste que el panel).")
+        self.hold_spin = QSpinBox()
+        self.hold_spin.setRange(0, 10000)
+        self.hold_spin.setSingleStep(250)
+        self.hold_spin.setSuffix(" ms")
+        self.hold_spin.setToolTip("Cuánto se mantiene y repite la acción confirmada en cada "
+                                  "ventana (0 = reaccionar a cada confirmación). Mismo ajuste "
+                                  "que el panel.")
+        if self._control is not None:                # valores iniciales antes de conectar
+            self.window_spin.setValue(self._control.window.value())
+            self.hold_spin.setValue(self._control.hold_ms.value())
+        self.window_spin.valueChanged.connect(self._on_window_changed)
+        self.hold_spin.valueChanged.connect(self._on_hold_changed)
+        cfg.addRow("Ventana (muestras):", self.window_spin)
+        cfg.addRow("Duración de la acción:", self.hold_spin)
+        lay.addLayout(cfg)
+
         self.start_btn = QPushButton("Iniciar control")
         self.start_btn.setMinimumHeight(34)
         self.start_btn.setToolTip("Arranca o detiene la clasificación en vivo "
@@ -354,6 +381,16 @@ class _ArmFullscreen(QWidget):
         if i >= 0 and i != self._control.model_combo.currentIndex():
             self._control.model_combo.setCurrentIndex(i)
 
+    def _on_window_changed(self, v: int) -> None:
+        """La ventana se cambia aquí -> se cambia en el panel (fuente de verdad única)."""
+        if self._control is not None and self._control.window.value() != v:
+            self._control.window.setValue(v)
+
+    def _on_hold_changed(self, v: int) -> None:
+        """La duración de la acción se cambia aquí -> se cambia en el panel."""
+        if self._control is not None and self._control.hold_ms.value() != v:
+            self._control.hold_ms.setValue(v)
+
     def _toggle_control(self) -> None:
         if self._control is not None:
             self._control.toggle()      # arranca/detiene el bucle del panel
@@ -379,6 +416,14 @@ class _ArmFullscreen(QWidget):
                 self.model_combo.blockSignals(True)
                 self.model_combo.setCurrentIndex(i)
                 self.model_combo.blockSignals(False)
+        # Ventana y duración de la acción: reflejan el panel (valor y si está habilitado;
+        # el panel deshabilita la ventana mientras el control corre).
+        for src, dst in ((c.window, self.window_spin), (c.hold_ms, self.hold_spin)):
+            if dst.value() != src.value():
+                dst.blockSignals(True)
+                dst.setValue(src.value())
+                dst.blockSignals(False)
+            dst.setEnabled(src.isEnabled())
         self.start_btn.setText(c.start_btn.text())
         self.start_btn.setEnabled(c.start_btn.isEnabled())
         self.pred_label.setText(c.pred_label.text())
