@@ -168,9 +168,6 @@ if _GL_OK:
             s = max(0.4, self.arm.reach * 1.6)
             self.grid.setSize(x=s, y=s)
             self.grid.setSpacing(x=0.1, y=0.1)
-            sp = max(0.4, self.arm.reach * 1.4)
-            self.plane_grid.setSize(x=sp, y=sp)
-            self.plane_grid.setSpacing(x=0.1, y=0.1)
             self.setCameraPosition(distance=max(0.6, self.arm.reach * 2.6),
                                    elevation=22, azimuth=-55)
 
@@ -178,16 +175,18 @@ if _GL_OK:
             self._fit()
             self.refresh()
 
-        def _place_plane(self, ee: np.ndarray) -> None:
-            """Coloca el plano ortogonal (vertical) sobre la zona alcanzable, alineado
-            con la dirección hacia la que apunta el brazo (azimut del efector)."""
-            r = max(0.4, self.arm.reach * 1.4)
-            az = (float(np.arctan2(ee[1], ee[0]))
-                  if abs(ee[0]) + abs(ee[1]) > 1e-6 else 0.0)
+        def _place_plane(self) -> None:
+            """Coloca el plano FRONTAL (vertical, perpendicular a +x) a la distancia
+            configurada, cubriendo la zona alcanzable del brazo a esa distancia. El plano
+            queda ENFRENTE del brazo (no lo atraviesa)."""
+            d = float(getattr(self.arm, "plane_distance", self.arm.reach * 0.5))
+            rr = float(np.sqrt(max(0.04, self.arm.reach ** 2 - d ** 2)))   # radio alcanzable
+            zc = max(rr, self.arm.reach * 0.35)              # centro en altura, sobre el piso
+            self.plane_grid.setSize(x=2 * rr, y=2 * rr)      # extensión en Z y en Y
+            self.plane_grid.setSpacing(x=max(0.03, rr / 4), y=max(0.03, rr / 4))
             self.plane_grid.resetTransform()
-            self.plane_grid.rotate(90, 1, 0, 0)              # de horizontal a VERTICAL (X-Z)
-            self.plane_grid.translate(r * 0.30, 0, r * 0.50)  # subir a la zona de trabajo
-            self.plane_grid.rotate(np.degrees(az), 0, 0, 1)   # alinear con el brazo (mundo)
+            self.plane_grid.rotate(90, 0, 1, 0)              # de horizontal a VERTICAL frontal (Y-Z)
+            self.plane_grid.translate(d, 0, zc)              # enfrente (x=d), a la altura de trabajo
 
         def refresh(self) -> None:
             pts = np.asarray(self.arm.fk(), dtype=float)
@@ -196,11 +195,11 @@ if _GL_OK:
             col = ((1.0, 0.42, 0.42, 1.0) if self.arm.gripper_closed
                    else (0.24, 0.53, 0.80, 1.0))
             self.ee.setData(pos=pts[-1].reshape(1, 3), color=col)
-            # El plano ortogonal solo se ve en modo planar.
+            # El plano frontal solo se ve en modo planar.
             planar = bool(getattr(self.arm, "planar", False))
             self.plane_grid.setVisible(planar)
             if planar:
-                self._place_plane(pts[-1])
+                self._place_plane()
 
 
 def _make_3d(arm: SimulatedArm):

@@ -559,14 +559,17 @@ Formas de controlarlo:
 
 - **D-pad** de 6 comandos + **HOME**.
 - **Modo planar (2D)**: casilla que hace que el efector se mueva sobre un **plano
-  vertical** (ortogonal al plano de soporte de la base), con la **base fija**:
-  arriba/abajo = **altura**, izquierda/derecha = **alcance** (acercar/alejar). Pensado
-  para etiquetas 2D como las de `señales_finales`, donde girar la base en 3D no casa
-  con un movimiento bidimensional. Sin marcar (**3D**), arriba/abajo = hombro e
-  izquierda/derecha = giro de base. Agarre/soltar = pinza en ambos modos. La casilla
-  está en el panel y en la pantalla completa (delegan en la misma, un solo estado). En
-  modo planar, la **vista 3D dibuja el plano ortogonal** (rejilla vertical naranja
-  alineada con el brazo) para ver a dónde puede desplazarse el efector.
+  vertical colocado enfrente del brazo** (perpendicular a la dirección hacia adelante),
+  como una «pantalla» 2D: arriba/abajo = **altura**, izquierda/derecha = **lateral**. El
+  plano **no atraviesa el brazo** (queda enfrente; el brazo lo alcanza por detrás), y para
+  el movimiento lateral la base gira lo necesario para mantener el efector sobre el plano.
+  Su **distancia es configurable** con un slider («Distancia del plano»), acotada al
+  **alcance del brazo**. Pensado para etiquetas 2D como las de `señales_finales`, donde
+  girar la base en 3D no casa con un movimiento bidimensional. Sin marcar (**3D**),
+  arriba/abajo = hombro e izquierda/derecha = giro de base. Agarre/soltar = pinza en ambos
+  modos. Casilla y slider en el panel y en la pantalla completa (delegan en la misma, un
+  solo estado). En modo planar, la **vista 3D dibuja el plano frontal** (rejilla vertical
+  naranja sobre la zona alcanzable).
 - **Sliders por articulación** (uno por joint, dentro de sus límites).
 - **Clic en las proyecciones 2D** (como en `Proyecto_RNN`): la **vista superior**
   gira la base para apuntar al punto; la **vista lateral** acerca el efector a esa

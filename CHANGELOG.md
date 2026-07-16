@@ -16,14 +16,16 @@ cambios se agrupan por fecha de trabajo.
 
 ### Añadido
 - **Modo planar (2D) del brazo simulado**: casilla que hace que el efector se mueva sobre
-  un **plano vertical** (ortogonal al plano de soporte de la base), con la **base fija**:
-  arriba/abajo = altura, izquierda/derecha = alcance (acercar/alejar). Pensado para
-  etiquetas 2D como las de `señales_finales` (arriba/abajo/izquierda/derecha), donde girar
-  la base en 3D no casa con un movimiento bidimensional. Sin marcar (3D), el
-  comportamiento es el de antes (izquierda/derecha giran la base). Usa la IK planar ya
-  existente (base fija). En modo planar, la vista 3D **dibuja ese plano ortogonal** (una
-  rejilla vertical naranja alineada con el brazo, sobre la zona de trabajo), para ver a
-  dónde puede moverse el efector. La casilla está en el panel y en la pantalla completa,
+  un **plano vertical colocado ENFRENTE del brazo** (perpendicular a la dirección hacia
+  adelante), como una «pantalla» 2D: **arriba/abajo = altura**, **izquierda/derecha =
+  lateral**. El plano **no atraviesa el brazo** (queda enfrente y el brazo lo alcanza por
+  detrás); para el movimiento lateral la base gira lo necesario para mantener el efector
+  sobre el plano, a distancia fija. Pensado para etiquetas 2D como las de `señales_finales`,
+  donde girar la base en 3D no casa con un movimiento bidimensional. Sin marcar (3D), el
+  comportamiento es el de antes (izquierda/derecha giran la base). La **distancia del plano
+  es configurable** con un slider (dónde ponerlo, por delante de la base), acotada al
+  **alcance del brazo**. La vista 3D **dibuja ese plano frontal** (rejilla vertical naranja
+  sobre la zona alcanzable). Casilla y slider en el panel y en la pantalla completa,
   delegando en un único estado. Cubierto por `sim_arm_smoke` [11].
 - **La interfaz indica que el porcentaje de un clasificador es la exactitud (accuracy)**:
   nota bajo la lista de «Modelos entrenados» y etiqueta explícita en el detalle

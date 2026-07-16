@@ -61,19 +61,23 @@ SIM_ARM_COMMANDS: dict[str, tuple] = {
 }
 SIM_ARM_COMMAND_NAMES = list(SIM_ARM_COMMANDS)
 
-# Modo PLANAR (2D): el efector se mueve sobre un plano VERTICAL (ortogonal al plano
-# de soporte, donde está la base), con la base fija. Pensado para etiquetas 2D como
-# las de «señales_finales» (arriba/abajo/izquierda/derecha), donde girar la base en
-# 3D no casa con un movimiento bidimensional. En este plano:
-#   - arriba/abajo   -> altura del efector (eje vertical del plano),
-#   - derecha/izq.   -> alcance del efector (acercar/alejar dentro del plano),
-# que en la vista lateral se ven como un D-pad 2D coherente (arriba/abajo/izq/der).
-# (d_alcance, d_altura) en pasos lineales; la base (yaw) no se toca.
+# Modo PLANAR (2D): el efector se mueve sobre un plano VERTICAL colocado ENFRENTE del
+# brazo (a una distancia configurable de la base, perpendicular a la dirección hacia
+# adelante), como una «pantalla» donde el efector se desplaza en 2D. Pensado para
+# etiquetas 2D como las de «señales_finales» (arriba/abajo/izquierda/derecha):
+#   - arriba/abajo    -> altura del efector en el plano (eje Z),
+#   - izquierda/der.  -> posición lateral en el plano (eje Y),
+# El plano NO atraviesa el brazo: queda enfrente y el brazo lo alcanza por detrás. Para
+# el movimiento lateral la base gira lo necesario para mantener al efector sobre el plano
+# (a distancia fija). (d_lateral, d_altura) en pasos lineales.
+#
+# Convención de lados: de pie en la base y mirando a lo largo del brazo (hacia +x), la
+# IZQUIERDA es +y y la DERECHA es -y (ver SIM_ARM_COMMANDS).
 SIM_ARM_PLANAR_DELTAS: dict[str, tuple[float, float]] = {
     "arriba":    (0.0, +1.0),
     "abajo":     (0.0, -1.0),
-    "derecha":   (+1.0, 0.0),   # el efector se aleja (a la derecha en la vista lateral)
-    "izquierda": (-1.0, 0.0),   # el efector se acerca (a la izquierda en la vista lateral)
+    "izquierda": (+1.0, 0.0),   # +y
+    "derecha":   (-1.0, 0.0),   # -y
 }
 
 DEFAULT_STEP = 0.16          # rad por comando (~9°)
@@ -151,6 +155,7 @@ class SimulatedArm:
         self.gripper_closed = False
         self._floor_margin = 1e-3
         self.planar = False            # modo planar (2D) desactivado por defecto
+        self.plane_distance = 0.0      # distancia del plano frontal (se fija en apply_spec)
         self.apply_spec(spec or make_default_arm_spec())
 
     def apply_spec(self, spec: ArmSpec) -> None:
@@ -169,6 +174,15 @@ class SimulatedArm:
             self.q_home = np.zeros(spec.n_joints)
         self.q = self.q_home.copy()
         self.FLOOR = spec.floor_z
+        # Distancia del plano frontal por defecto: la mitad del alcance, para dejar buen
+        # margen lateral/vertical sobre el plano (acotada a los límites del brazo).
+        lo, hi = self.plane_distance_bounds()
+        self.plane_distance = float(np.clip(self.reach * 0.5, lo, hi))
+
+    def plane_distance_bounds(self) -> tuple[float, float]:
+        """Rango válido de la distancia del plano frontal: ni pegado a la base ni tan
+        lejos que no quede margen lateral/vertical (limitado por el alcance del brazo)."""
+        return (self.reach * 0.30, self.reach * 0.85)
 
     @property
     def joint_names(self) -> list[str]:
@@ -242,23 +256,49 @@ class SimulatedArm:
         return False
 
     def set_planar(self, enabled: bool) -> None:
-        """Activa/desactiva el modo planar (2D). El efector pasa a moverse en un
-        plano VERTICAL (ortogonal al plano de soporte de la base): arriba/abajo =
-        altura, izquierda/derecha = alcance, con la base fija. Ver
+        """Activa/desactiva el modo planar (2D). Al activarlo, lleva el efector al plano
+        frontal (a ``plane_distance`` por delante), conservando su lateral/altura. Ver
         ``SIM_ARM_PLANAR_DELTAS``."""
         self.planar = bool(enabled)
+        if self.planar:
+            ee = self.ee()
+            self._aim_frontal(ee[1], ee[2])            # proyectar el efector al plano
+
+    def set_plane_distance(self, distance: float) -> None:
+        """Fija a qué distancia (por delante de la base) está el plano frontal, acotada
+        a los límites del brazo. Si el modo planar está activo, reubica el efector."""
+        lo, hi = self.plane_distance_bounds()
+        self.plane_distance = float(np.clip(distance, lo, hi))
+        if self.planar:
+            ee = self.ee()
+            self._aim_frontal(ee[1], ee[2])
+
+    def _plane_half_extent(self) -> float:
+        """Semi-extensión alcanzable del plano (radio del disco que el efector puede
+        cubrir a esa distancia): ``sqrt(alcance² − distancia²)``."""
+        d = self.plane_distance
+        return float(math.sqrt(max(0.0, self.reach ** 2 - d ** 2)))
+
+    def _aim_frontal(self, y: float, z: float) -> None:
+        """Lleva el efector al punto ``(plane_distance, y, z)`` del plano frontal: gira la
+        base para apuntar a ``(distancia, y)`` y usa la IK planar para la altura/alcance.
+        Así el efector queda SOBRE el plano (a distancia fija) sin que el brazo lo cruce."""
+        d = self.plane_distance
+        rr = self._plane_half_extent()
+        y = float(np.clip(y, -rr * 0.98, rr * 0.98))
+        z = float(np.clip(z, self.FLOOR, self.reach * 0.98))
+        self.aim_base_to(d, y)                         # base apunta a la columna (d, y)
+        self.aim_planar(math.hypot(d, y), z)           # alcance/altura sobre el plano
 
     def _planar_jog(self, command: str) -> bool:
-        """Un empujón del efector dentro del plano vertical: lee su posición actual
-        (alcance, altura), la desplaza un paso lineal en la dirección del comando y
-        usa la IK planar (base fija) para llegar. Sin objetivo acumulado, así no se
-        aleja de lo alcanzable: si un lado está al límite, deja de avanzar solo."""
-        d_reach, d_height = SIM_ARM_PLANAR_DELTAS[command]
+        """Un empujón del efector DENTRO del plano frontal: lee su lateral/altura
+        actuales, los desplaza un paso lineal y reubica el efector sobre el plano. Sin
+        objetivo acumulado, así no se sale de lo alcanzable (si un lado está al límite,
+        deja de avanzar solo)."""
+        d_lat, d_height = SIM_ARM_PLANAR_DELTAS[command]
         lin = max(1e-3, self.reach * 0.12)             # paso lineal (~12% del alcance)
         ee = self.ee()
-        r = float(np.clip(math.hypot(ee[0], ee[1]) + d_reach * lin, 0.02, self.reach))
-        h = float(np.clip(ee[2] + d_height * lin, self.FLOOR, self.reach))
-        self.aim_planar(r, h)
+        self._aim_frontal(ee[1] + d_lat * lin, ee[2] + d_height * lin)
         return True
 
     def reset(self) -> None:

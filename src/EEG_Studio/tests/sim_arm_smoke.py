@@ -271,47 +271,65 @@ def main() -> int:
     assert cp._sim_arm.reach > reach0
     assert cp.sim_view.arm is cp._sim_arm
 
-    print("[11] Modo planar (2D): efector en un plano vertical, base FIJA")
+    print("[11] Modo planar (2D): efector en un plano FRONTAL (enfrente, no lo atraviesa)")
     from eeg_studio.inference.sim_arm import SimulatedArm as _Arm
     arm = _Arm()
     # En 3D, derecha gira la base (movimiento tridimensional).
     arm.reset()
     arm.execute("derecha"); arm.execute("derecha")
     assert abs(arm.q[0]) > 1e-6, "en 3D, derecha debe girar la base"
-    # En planar: base fija, el efector se queda en el plano vertical (y constante),
-    # arriba/abajo cambian la altura e izquierda/derecha el alcance.
+    # En planar frontal: el efector se mantiene SOBRE el plano (x ~= distancia); arriba/
+    # abajo cambian la altura (z) e izquierda/derecha el lateral (y). La base gira para
+    # mantenerlo en el plano.
     arm.reset(); arm.set_planar(True)
-    y0, h0 = arm.ee()[1], arm.ee()[2]
+    d = arm.plane_distance
+    assert d > 0, "debe haber una distancia de plano por defecto"
+    assert abs(arm.ee()[0] - d) < 0.02, "al activar planar, el efector cae sobre el plano frontal"
+    y0, z0 = arm.ee()[1], arm.ee()[2]
+    arm.execute("izquierda"); arm.execute("izquierda")
+    assert arm.ee()[1] > y0 + 1e-3, "izquierda debe mover el efector a +y (lateral)"
+    assert abs(arm.ee()[0] - d) < 0.03, "el efector debe seguir sobre el plano (x ~= distancia)"
+    z1 = arm.ee()[2]
     arm.execute("arriba"); arm.execute("arriba")
-    assert arm.ee()[2] > h0, "arriba debe subir el efector"
-    assert abs(arm.q[0]) < 1e-9, "en planar la base NO debe girar"
-    assert abs(arm.ee()[1] - y0) < 1e-6, "el efector debe quedarse en el plano vertical"
-    r0 = math.hypot(arm.ee()[0], arm.ee()[1])
-    arm.execute("derecha"); arm.execute("derecha")
-    assert math.hypot(arm.ee()[0], arm.ee()[1]) > r0, "derecha debe alejar el efector"
-    assert abs(arm.q[0]) < 1e-9 and abs(arm.ee()[1] - y0) < 1e-6, "sigue en el plano, base fija"
-    h_now = arm.ee()[2]
+    assert arm.ee()[2] > z1 + 1e-3, "arriba debe subir el efector (altura)"
+    assert abs(arm.ee()[0] - d) < 0.03, "sigue sobre el plano tras subir"
+    y1 = arm.ee()[1]
+    arm.execute("derecha"); arm.execute("derecha"); arm.execute("derecha")
+    assert arm.ee()[1] < y1 - 1e-3, "derecha debe mover el efector a -y"
     arm.execute("abajo")
-    assert arm.ee()[2] < h_now, "abajo debe bajar el efector"
     arm.execute("agarre"); assert arm.gripper_closed, "la pinza debe seguir funcionando en planar"
-    print("    base fija · efector en plano vertical · arriba/abajo=altura, der/izq=alcance ✓")
+    print(f"    efector sobre el plano frontal (x≈{d:.2f}) · arriba/abajo=altura, izq/der=lateral ✓")
 
-    # El interruptor del panel activa/desactiva el modo en el brazo.
+    # La distancia del plano es configurable y se acota a los límites del brazo.
+    lo, hi = arm.plane_distance_bounds()
+    arm.set_plane_distance(hi + 1.0)                  # más allá del límite
+    assert abs(arm.plane_distance - hi) < 1e-9, "la distancia debe acotarse al máximo"
+    arm.set_plane_distance(0.0)                       # por debajo del límite
+    assert abs(arm.plane_distance - lo) < 1e-9, "la distancia debe acotarse al mínimo"
+    mid = (lo + hi) / 2
+    arm.set_plane_distance(mid)
+    assert abs(arm.ee()[0] - mid) < 0.03, "cambiar la distancia reubica el efector sobre el nuevo plano"
+    print(f"    distancia del plano configurable y acotada a [{lo:.2f}, {hi:.2f}] m ✓")
+
+    # El interruptor y el slider del panel operan sobre el brazo.
     cp.planar_check.setChecked(True)
-    assert cp._sim_arm.planar is True
+    assert cp._sim_arm.planar is True and cp.plane_dist.isEnabled()
+    cp.plane_dist.setValue(20)
+    lo2, hi2 = cp._sim_arm.plane_distance_bounds()
+    assert abs(cp._sim_arm.plane_distance - (lo2 + (hi2 - lo2) * 0.20)) < 1e-6, "el slider fija la distancia"
     cp.planar_check.setChecked(False)
-    assert cp._sim_arm.planar is False
-    print("    el interruptor del panel activa/desactiva el modo planar ✓")
+    assert cp._sim_arm.planar is False and not cp.plane_dist.isEnabled()
+    print("    interruptor + slider de distancia del panel ✓")
 
-    # El plano ortogonal (vertical) se ve en 3D SOLO en modo planar (si hay OpenGL).
+    # El plano frontal se ve en 3D SOLO en modo planar (si hay OpenGL).
     v3d = cp.sim_view.view3d
     if v3d is not None and hasattr(v3d, "plane_grid"):
         cp.planar_check.setChecked(False)
         assert not v3d.plane_grid.visible(), "el plano no debe verse fuera del modo planar"
         cp.planar_check.setChecked(True)     # el toggle refresca la vista al momento
-        assert v3d.plane_grid.visible(), "el plano ortogonal debe verse en modo planar"
+        assert v3d.plane_grid.visible(), "el plano frontal debe verse en modo planar"
         cp.planar_check.setChecked(False)
-        print("    plano ortogonal visible en 3D solo en modo planar ✓")
+        print("    plano frontal visible en 3D solo en modo planar ✓")
 
     print("[12] Contraste de la escena: fondo, rejilla y brazo se distinguen")
     from eeg_studio.ui import sim_arm_view as _SV

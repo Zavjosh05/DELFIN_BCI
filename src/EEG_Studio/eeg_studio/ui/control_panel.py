@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -458,15 +459,34 @@ class ControlPanel(QWidget):
         # derecha) el efector se mueve en un plano vertical con la base fija, en vez de
         # girar la base (que es un movimiento 3D y no casa con esas clases).
         self.planar_check = QCheckBox(
-            "Modo planar (2D): efector en un plano vertical (base fija)")
+            "Modo planar (2D): efector en un plano frontal")
         self.planar_check.setToolTip(
             "Para etiquetas 2D como las de «señales_finales»: el efector se mueve sobre "
-            "un plano vertical, ortogonal al plano de soporte de la base. Arriba/abajo = "
-            "altura, izquierda/derecha = acercar/alejar. Sin marcar (3D), izquierda/"
-            "derecha giran la base.")
+            "un plano vertical colocado ENFRENTE del brazo (no lo atraviesa). Arriba/abajo "
+            "= altura, izquierda/derecha = lateral. La base gira lo necesario para mantener "
+            "el efector sobre el plano. Sin marcar (3D), izquierda/derecha giran la base.")
         self.planar_check.setChecked(self._sim_arm.planar)
         self.planar_check.toggled.connect(self._on_planar_toggled)
         lay.addWidget(self.planar_check)
+
+        # Distancia del plano frontal (dónde ponerlo, por delante de la base). El rango
+        # se acota al alcance del brazo; el slider guarda la FRACCIÓN dentro de ese rango,
+        # así sigue siendo válido si el brazo (y su alcance) cambian.
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("Distancia del plano:"))
+        self.plane_dist = QSlider(Qt.Orientation.Horizontal)
+        self.plane_dist.setRange(0, 100)
+        self.plane_dist.setToolTip(
+            "A qué distancia, por delante de la base, se coloca el plano frontal donde "
+            "se mueve el efector. Acotada al alcance del brazo.")
+        self.plane_dist.valueChanged.connect(self._on_plane_distance)
+        self.plane_dist_lbl = QLabel()
+        self.plane_dist_lbl.setStyleSheet("color: #8a929b; font-size: 11px;")
+        prow.addWidget(self.plane_dist, 1)
+        prow.addWidget(self.plane_dist_lbl)
+        lay.addLayout(prow)
+        self._sync_plane_slider()
+        self.plane_dist.setEnabled(self._sim_arm.planar)
 
         self.sim_controls = SimArmControls(self._sim_arm, on_change=self._sim_refresh)
         sc_box = QGroupBox("Control por articulación")
@@ -480,8 +500,9 @@ class ControlPanel(QWidget):
         lay.addWidget(build_btn)
 
         hint = QLabel("Muévelo con el D-pad de abajo o con los sliders; se ve arriba en 3D y 2D. "
-                      "3D: arriba/abajo = hombro, izquierda/derecha = base. Planar (2D): "
-                      "arriba/abajo = altura, izquierda/derecha = alcance. Agarre/soltar = pinza.")
+                      "3D: arriba/abajo = hombro, izquierda/derecha = base. Planar (2D): el "
+                      "efector se mueve en un plano frontal — arriba/abajo = altura, izquierda/"
+                      "derecha = lateral. Agarre/soltar = pinza.")
         hint.setWordWrap(True); hint.setStyleSheet("color: #8a929b; font-size: 11px;")
         lay.addWidget(hint)
         return w
@@ -489,10 +510,28 @@ class ControlPanel(QWidget):
     def _on_planar_toggled(self, on: bool) -> None:
         """Activa el modo planar (2D) en el brazo simulado."""
         self._sim_arm.set_planar(on)
-        self._sim_refresh()          # para que el plano ortogonal aparezca/desaparezca al momento
+        self.plane_dist.setEnabled(on)
+        self._sync_plane_slider()
+        self._sim_refresh()          # para que el plano frontal aparezca/desaparezca al momento
         self.arm_status.setText(
-            "Modo planar (2D): el efector se mueve en un plano vertical (base fija)."
+            "Modo planar (2D): el efector se mueve en un plano frontal (izq/der = lateral)."
             if on else "Modo 3D: izquierda/derecha giran la base.")
+
+    def _sync_plane_slider(self) -> None:
+        """Refleja la distancia del plano del brazo en el slider (fracción del rango)."""
+        lo, hi = self._sim_arm.plane_distance_bounds()
+        frac = (self._sim_arm.plane_distance - lo) / (hi - lo) if hi > lo else 0.5
+        self.plane_dist.blockSignals(True)
+        self.plane_dist.setValue(int(round(max(0.0, min(1.0, frac)) * 100)))
+        self.plane_dist.blockSignals(False)
+        self.plane_dist_lbl.setText(f"{self._sim_arm.plane_distance * 100:.0f} cm")
+
+    def _on_plane_distance(self, v: int) -> None:
+        """El usuario mueve el slider: recoloca el plano frontal dentro de los límites."""
+        lo, hi = self._sim_arm.plane_distance_bounds()
+        self._sim_arm.set_plane_distance(lo + (hi - lo) * (v / 100.0))
+        self.plane_dist_lbl.setText(f"{self._sim_arm.plane_distance * 100:.0f} cm")
+        self._sim_refresh()
 
     def _open_builder(self) -> None:
         dlg = QDialog(self)
