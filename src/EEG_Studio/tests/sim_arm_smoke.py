@@ -223,6 +223,46 @@ def main() -> int:
     fs.close()
     app.processEvents()
 
+    print("[9f] Pantalla completa: sliders siguen al control en vivo + diálogo al frente")
+    # (a) El control en vivo mueve el brazo por `panel._sim_refresh -> sim_view.refresh()
+    #     -> fs.refresh()`, NO por el D-pad. Antes `fs.refresh()` solo redibujaba la vista
+    #     3D y dejaba los sliders viejos. Se abre la FS con el brazo en home (los sliders
+    #     se sincronizan al construirse), se mueve el brazo por la vía del control en vivo
+    #     y se comprueba que el slider del hombro sigue la nueva pose.
+    sv.arm.reset()
+    sv._open_fullscreen()
+    app.processEvents()
+    fs = sv._fs
+    pos_home = fs.controls._sliders[1].value()
+    sv.arm.execute("arriba")            # mueve el hombro (q1); NO toca los sliders
+    pos_nueva = fs.controls._pos_from_q(1, fs.arm.q[1])
+    assert pos_nueva != pos_home, "el movimiento no cambia la posición del slider (prueba inútil)"
+    sv.refresh()                        # la vía del control en vivo
+    assert fs.controls._sliders[1].value() == pos_nueva, \
+        (fs.controls._sliders[1].value(), pos_nueva)
+    print("    sliders de la pantalla completa sincronizados tras mover el brazo en vivo ✓")
+
+    # (b) Un diálogo modal se parenta a la ventana ACTIVA (la pantalla completa), no a la
+    #     principal detrás: si no, quedaba oculto tras la FS y bloqueaba la app (parecía
+    #     colgada). Se captura el `parent` con el que se crea el QMessageBox.
+    from PyQt6.QtWidgets import QMessageBox as _QMB
+    captura = {}
+    orig_info = _QMB.information
+    orig_active = QApplication.activeWindow
+    _QMB.information = staticmethod(
+        lambda parent=None, *a, **k: captura.setdefault("parent", parent)
+        or _QMB.StandardButton.Ok)
+    QApplication.activeWindow = staticmethod(lambda: fs)
+    try:
+        win.info("Sin señal en vivo", "Conecta una fuente…")
+    finally:
+        _QMB.information = orig_info
+        QApplication.activeWindow = orig_active
+    assert captura.get("parent") is fs, "el diálogo no se parentó a la ventana activa (FS)"
+    print("    diálogo parentado a la ventana activa (no detrás de la pantalla completa) ✓")
+    fs.close()
+    app.processEvents()
+
     print("[10] Constructor: aplicar una spec nueva reconstruye el brazo")
     sp = make_default_arm_spec()
     sp.joints[1].link_offset = (0.30, 0.0, 0.0)   # hombro más largo

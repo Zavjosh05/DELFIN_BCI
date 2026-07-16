@@ -38,6 +38,17 @@ cambios se agrupan por fecha de trabajo.
   modelo fijado al arranque mientras la interfaz mostraba otro. `EEG_N_WORKERS` permite
   fijar por entorno el nº de procesos de extracción de características.
 
+### Corregido / reforzado
+- **Los diálogos modales ya no quedan detrás de la pantalla completa del brazo**: `warn`
+  y `info` se parentaban siempre a la ventana principal. Con la pantalla completa delante,
+  un aviso (p. ej. iniciar el control sin fuente en vivo, o un error de clasificación)
+  quedaba oculto tras ella y —siendo modal— bloqueaba la app sin que se viera: parecía un
+  cuelgue. Ahora se parentan a la ventana **activa** (la pantalla completa si está abierta).
+- **Los sliders de la pantalla completa siguen al control en vivo**: durante el control, el
+  brazo se mueve por `SimArmView.refresh() → _fs.refresh()`, y ese `refresh()` solo
+  redibujaba la vista 3D, así que los sliders por articulación de al lado se quedaban en la
+  pose anterior. Ahora también se sincronizan. Ambos cubiertos por `sim_arm_smoke` [9f].
+
 ---
 
 ## [2026-07-15]

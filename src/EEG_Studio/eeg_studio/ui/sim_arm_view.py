@@ -358,6 +358,10 @@ class _ArmFullscreen(QWidget):
             self.view.refresh()
         except Exception:  # noqa: BLE001
             pass
+        # Sincroniza también los sliders: durante el control en vivo el brazo se mueve
+        # vía `SimArmView.refresh() -> self._fs.refresh()`, no por el D-pad, así que sin
+        # esto la vista 3D avanzaba pero los sliders de al lado se quedaban viejos.
+        self.controls.sync()
 
     def keyPressEvent(self, event):  # noqa: N802
         if event.key() == Qt.Key.Key_Escape:

@@ -3166,11 +3166,19 @@ class MainWindow(QMainWindow):
         return True
 
     # --- Apoyo para el panel de adquisición -------------------------------
+    def _dialog_parent(self):
+        """Ventana sobre la que mostrar un diálogo modal: la ACTIVA (p. ej. la
+        pantalla completa del brazo, si está abierta) o, si no hay, la principal.
+        Sin esto, un diálogo lanzado con la pantalla completa delante quedaba
+        parentado a la ventana principal y podía dibujarse DETRÁS de ella: siendo
+        modal, bloqueaba la app sin que se viera el aviso — parecía un cuelgue."""
+        return QApplication.activeWindow() or self
+
     def warn(self, title: str, msg: str) -> None:
-        QMessageBox.warning(self, title, msg)
+        QMessageBox.warning(self._dialog_parent(), title, msg)
 
     def info(self, title: str, msg: str) -> None:
-        QMessageBox.information(self, title, msg)
+        QMessageBox.information(self._dialog_parent(), title, msg)
 
     def show_live_view(self) -> None:
         # La adquisición en vivo puede usarse sin proyecto: salir de la bienvenida
