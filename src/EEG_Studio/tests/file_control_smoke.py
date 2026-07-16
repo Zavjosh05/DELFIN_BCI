@@ -133,6 +133,34 @@ def main() -> int:
     txt = cp.file_result.text()
     print(f"    resultado: {txt.splitlines()[0]}")
     assert "abajo" in txt and "✓" in txt, txt
+
+    print("[5] Con canales excluidos, la ventana se adapta (no falla por desajuste)")
+    # El proyecto excluye 2 de los 14 canales; el modelo se entrena con los 12 activos.
+    # _classify_file debe dejar fuera esos 2 al clasificar el archivo (que trae los 14),
+    # como hace el path en vivo; si no, el modelo recibiría 14 y fallaría.
+    proj.state["excluded_channels"] = ["Channel 13", "Channel 14"]
+    Xk, yk = [], []
+    for i in range(40):
+        kind = "abajo" if i % 2 == 0 else "arriba"
+        vec, _ = extract_feature_vector(_signal(kind, ch=12, seed=i), 128.0, True, True)
+        Xk.append(vec); yk.append(kind)
+    model12 = classification.train(
+        Dataset(np.vstack(Xk), np.array(yk, dtype=object),
+                feature_names=[f"f{i}" for i in range(len(Xk[0]))],
+                segment_ids=[str(i) for i in range(40)]),
+        "random_forest")
+    win.models.clear()
+    win.models["rf12"] = model12
+    win.active_model_name = "rf12"
+    cp.refresh()
+    cp._sim_arm.reset()
+    cp._file_path = rec_path            # grabación de 14 canales («abajo»)
+    cp.file_edit.setText(rec_path)
+    cp._classify_file()                 # _spawn ya es síncrono (monkeypatch de [4])
+    txt5 = cp.file_result.text()
+    assert "No se pudo" not in txt5, f"falló con canales excluidos: {txt5}"
+    assert "abajo" in txt5, txt5
+    print(f"    12/14 canales · {txt5.splitlines()[0]} ✓")
     win.acq_panel.shutdown()
 
     print("\nCONTROL DESDE ARCHIVO GRABADO OK ✓")

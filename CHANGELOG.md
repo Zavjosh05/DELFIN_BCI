@@ -14,6 +14,19 @@ cambios se agrupan por fecha de trabajo.
 
 ## [2026-07-16]
 
+### Corregido / reforzado
+- **Controlar desde archivo grabado con canales excluidos ya no falla**: al clasificar una
+  grabación (modo «un archivo → un movimiento»), se pasaba la señal con TODOS los canales al
+  modelo, pero un modelo entrenado con los canales activos (p. ej. sin los EOG) espera solo
+  esos: el nº de características no cuadraba y saltaba un `ValueError`. Ahora se dejan fuera
+  los canales excluidos del proyecto, igual que ya hacía el control en vivo. Cubierto por
+  `file_control_smoke` [5]. (El control en vivo y «Reproducir grabación» ya lo hacían: el
+  panel de adquisición filtra los canales activos antes del buffer de inferencia.)
+- **En la pantalla completa, el modelo no se cambia mientras el control corre**: con el
+  control en marcha (clasificando la diadema), el selector de modelo de la pantalla completa
+  se **deshabilita** (queda fijo el modelo con el que se arrancó, para no alterar la demo);
+  se vuelve a habilitar al detener. Cubierto por `sim_arm_smoke` [9e].
+
 ### Cambiado
 - **La ventana del control en tiempo real se configura en SEGUNDOS** (antes en muestras), con
   un texto al lado que muestra a **cuántas muestras equivale** (según la frecuencia de la

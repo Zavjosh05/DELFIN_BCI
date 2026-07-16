@@ -241,7 +241,15 @@ def main() -> int:
     assert fs.conf_spin.isEnabled() and fs.hold_spin.isEnabled(), \
         "confianza y duración se ajustan en marcha"
     cp._set_inputs_enabled(True)
-    print(f"    modelos={len(en_fs)} · confianza/ventana(s)/duración configurables · sin bucle duplicado ✓")
+    # Con el control EN MARCHA, el modelo NO se puede cambiar desde la pantalla completa.
+    cp._timer.start()
+    fs._sync_control()
+    assert not fs.model_combo.isEnabled(), "el modelo debe bloquearse con el control en marcha"
+    cp._timer.stop()
+    fs._sync_control()
+    assert fs.model_combo.isEnabled(), "el modelo vuelve a habilitarse al detener"
+    print(f"    modelos={len(en_fs)} · confianza/ventana(s)/duración configurables · "
+          f"modelo bloqueado en marcha · sin bucle duplicado ✓")
     fs.close()
     app.processEvents()
 

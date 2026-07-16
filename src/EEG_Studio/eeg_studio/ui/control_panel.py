@@ -346,10 +346,14 @@ class ControlPanel(QWidget):
         def job():
             rec = load_recording(path)
             win = max(1, int(round(win_sec * rec.sample_rate)))   # segundos -> muestras del archivo
+            # Excluir los canales NO usados por el proyecto (p. ej. EOG), igual que el
+            # path en vivo: si no, un modelo entrenado con los canales activos recibiría
+            # todos y fallaría por desajuste del nº de características.
+            data = rec.data[project.kept_indices(rec)] if project is not None else rec.data
             gt = None
             if expected is not None:                 # verdad-terreno constante = clase del nombre
                 gt = np.full(rec.n_samples, expected, dtype=object)
-            summary = classify_recording(model, project, rec.data, rec.sample_rate,
+            summary = classify_recording(model, project, data, rec.sample_rate,
                                          window=win, ground_truth=gt)
             return {"summary": summary, "channels": rec.n_channels,
                     "expected": expected, "path": path}

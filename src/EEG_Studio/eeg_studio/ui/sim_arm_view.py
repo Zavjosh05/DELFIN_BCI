@@ -442,6 +442,15 @@ class _ArmFullscreen(QWidget):
                 self.model_combo.blockSignals(True)
                 self.model_combo.setCurrentIndex(i)
                 self.model_combo.blockSignals(False)
+        # Con el control EN MARCHA (clasificando la diadema) el modelo NO se puede cambiar
+        # desde la pantalla completa: fijado el que arranca, para no alterar la demo.
+        running = bool(getattr(c, "_timer", None) and c._timer.isActive())
+        self.model_combo.setEnabled(not running)
+        self.model_combo.setToolTip(
+            "El modelo no se cambia mientras el control está en marcha; detén primero."
+            if running else
+            "Modelo con el que se clasifica la señal en vivo. Es el mismo selector que el "
+            "del panel de Control.")
         # Confianza, ventana y duración: reflejan el panel (valor y si está habilitado;
         # el panel deshabilita la ventana mientras el control corre).
         for src, dst in ((c.min_conf, self.conf_spin), (c.window_sec, self.window_sec),
