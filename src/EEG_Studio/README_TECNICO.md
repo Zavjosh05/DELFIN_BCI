@@ -563,8 +563,10 @@ Formas de controlarlo:
   altura/distancia (IK aproximada por descenso de coordenadas, respetando límites y
   piso).
 - **Pantalla completa** (⛶): el brazo grande con **los mismos controles** al lado
-  (D-pad + sliders). Se cierra con **✕ Cerrar** o con **Esc** (funcione donde funcione
-  el foco).
+  (D-pad + sliders), además del **control en tiempo real** (selector de modelo,
+  Iniciar/Detener y el **comando predicho en grande**) para hacer demos sin volver al
+  panel — delega en la pestaña *Control*, así que no hay un segundo clasificador. Se
+  cierra con **✕ Cerrar** o con **Esc**.
 
 Todos los movimientos respetan los **límites articulares** y el **piso** (z ≥ 0), y
 cualquier cambio se refleja en todas las vistas y sliders a la vez.

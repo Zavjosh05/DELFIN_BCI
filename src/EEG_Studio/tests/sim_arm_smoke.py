@@ -186,6 +186,43 @@ def main() -> int:
     _esc_cierra(lambda f: f.view, "la vista del brazo")
     print("    Esc cierra desde la ventana, el D-pad, un slider y la vista ✓")
 
+    print("[9e] Pantalla completa: control en vivo (modelo + iniciar/detener + predicción)")
+    # Con modelos de verdad, para que el espejo del selector se ejercite.
+    from eeg_studio.core import classification as _C, dataset as _D
+    _rng = np.random.default_rng(0)
+    _X = _rng.normal(0, 1, (30, 6))
+    _y = np.array(["arriba", "abajo", "agarre"] * 10)
+    _X[_y == "abajo"] += 2.0
+    _ds = _D.Dataset(X=_X, y=_y, feature_names=[f"f{i}" for i in range(6)],
+                     segment_ids=[f"s{i}" for i in range(30)])
+    for _key in ("lda", "random_forest"):
+        win._register_model(_C.train(_ds, _key, cv=2))
+    cp.refresh()
+
+    sv._open_fullscreen()
+    app.processEvents()
+    fs = sv._fs
+    assert hasattr(fs, "model_combo") and hasattr(fs, "start_btn"), "falta el control"
+    assert hasattr(fs, "pred_label"), "falta la predicción en pantalla"
+    # El bucle de inferencia NO se duplica: es el del panel de Control.
+    assert not hasattr(fs, "_run_model"), "la pantalla completa no debe clasificar aparte"
+    # El selector refleja los modelos del panel y elegir aquí cambia el del panel.
+    en_fs = [fs.model_combo.itemData(i) for i in range(fs.model_combo.count())]
+    en_panel = [cp.model_combo.itemData(i) for i in range(cp.model_combo.count())]
+    assert en_fs == en_panel, (en_fs, en_panel)
+    if fs.model_combo.count() > 1:
+        fs.model_combo.setCurrentIndex(1)
+        app.processEvents()
+        assert cp.model_combo.currentData() == fs.model_combo.currentData()
+    # Botón y predicción son espejo del panel (una sola fuente de verdad).
+    cp.pred_label.setText("arriba  (87%)")
+    fs._sync_control()
+    assert fs.pred_label.text() == "arriba  (87%)", fs.pred_label.text()
+    assert fs.start_btn.text() == cp.start_btn.text()
+    print(f"    modelos={len(en_fs)} · predicción reflejada · sin bucle duplicado ✓")
+    fs.close()
+    app.processEvents()
+
     print("[10] Constructor: aplicar una spec nueva reconstruye el brazo")
     sp = make_default_arm_spec()
     sp.joints[1].link_offset = (0.30, 0.0, 0.0)   # hombro más largo

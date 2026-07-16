@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -180,10 +181,11 @@ class _ArmFullscreen(QWidget):
     a la izquierda y, a la derecha, el D-pad de acciones + los sliders por
     articulación (igual que en el panel). Incluye un botón visible para volver."""
 
-    def __init__(self, arm: SimulatedArm, on_change=None) -> None:
+    def __init__(self, arm: SimulatedArm, on_change=None, control=None) -> None:
         super().__init__()                 # top-level (sin padre) para pantalla completa
         self.arm = arm
         self._on_change = on_change        # sincroniza el panel principal al mover el brazo
+        self._control = control            # panel de Control (se delega, no se duplica)
         self.setWindowTitle("Brazo simulado")
         self.setStyleSheet(f"background: {SURFACE};")
         # Para poder recibir el teclado aunque el foco no esté en ningún hijo.
@@ -225,6 +227,10 @@ class _ArmFullscreen(QWidget):
         pl = QVBoxLayout(panel)
         pl.setContentsMargins(0, 0, 0, 0)
         pl.setSpacing(8)
+        # Control en tiempo real (solo si hay panel de Control al que delegar).
+        if control is not None:
+            pl.addWidget(self._control_box())
+
         act_box = QGroupBox("Acciones")
         al = QVBoxLayout(act_box); al.setContentsMargins(6, 6, 6, 6)
         self.action_pad = SimArmActionPad(self._do_command)
@@ -245,6 +251,91 @@ class _ArmFullscreen(QWidget):
         scroll.setMaximumWidth(420)
         body.addWidget(scroll, 0)
         outer.addLayout(body, 1)
+
+        # Espejo del estado del panel de Control. El bucle de inferencia (con su
+        # estado asíncrono y la retención de comando) es SUYO: aquí solo se muestra
+        # y se delega, para no tener dos clasificadores compitiendo.
+        self._mirror = QTimer(self)
+        self._mirror.setInterval(150)
+        self._mirror.timeout.connect(self._sync_control)
+        if control is not None:
+            self._sync_control()
+            self._mirror.start()
+
+    # --- Control en tiempo real (delegado en el panel de Control) ----------
+    def _control_box(self) -> QGroupBox:
+        """Selector de modelo + iniciar/detener + comando predicho, en grande."""
+        box = QGroupBox("Control en tiempo real")
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(6, 6, 6, 6)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Modelo:"))
+        self.model_combo = QComboBox()
+        self.model_combo.setToolTip("Modelo con el que se clasifica la señal en vivo. "
+                                    "Es el mismo selector que el del panel de Control.")
+        self.model_combo.currentIndexChanged.connect(self._on_model_changed)
+        row.addWidget(self.model_combo, 1)
+        lay.addLayout(row)
+
+        self.start_btn = QPushButton("Iniciar control")
+        self.start_btn.setMinimumHeight(34)
+        self.start_btn.setToolTip("Arranca o detiene la clasificación en vivo "
+                                  "(necesita una fuente conectada en «Tiempo real»).")
+        self.start_btn.clicked.connect(self._toggle_control)
+        lay.addWidget(self.start_btn)
+
+        self.pred_label = QLabel("—")
+        self.pred_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pred_label.setStyleSheet(
+            "font-size: 26px; font-weight: bold; color: #9be7c4;")
+        self.pred_label.setToolTip("Comando predicho por el modelo (y su confianza).")
+        lay.addWidget(self.pred_label)
+
+        self.detail_label = QLabel("")
+        self.detail_label.setWordWrap(True)
+        self.detail_label.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        lay.addWidget(self.detail_label)
+        return box
+
+    def _on_model_changed(self) -> None:
+        """Cambiar el modelo aquí lo cambia en el panel (una sola fuente de verdad)."""
+        if self._control is None:
+            return
+        name = self.model_combo.currentData()
+        i = self._control.model_combo.findData(name)
+        if i >= 0 and i != self._control.model_combo.currentIndex():
+            self._control.model_combo.setCurrentIndex(i)
+
+    def _toggle_control(self) -> None:
+        if self._control is not None:
+            self._control.toggle()      # arranca/detiene el bucle del panel
+            self._sync_control()
+
+    def _sync_control(self) -> None:
+        """Refleja el estado del panel de Control (modelos, botón, predicción)."""
+        c = self._control
+        if c is None:
+            return
+        names = [c.model_combo.itemData(i) for i in range(c.model_combo.count())]
+        mine = [self.model_combo.itemData(i) for i in range(self.model_combo.count())]
+        if names != mine:                       # la lista puede cambiar en caliente
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            for n in names:
+                self.model_combo.addItem(str(n), n)
+            self.model_combo.blockSignals(False)
+        current = c.model_combo.currentData()
+        if current != self.model_combo.currentData():
+            i = self.model_combo.findData(current)
+            if i >= 0:
+                self.model_combo.blockSignals(True)
+                self.model_combo.setCurrentIndex(i)
+                self.model_combo.blockSignals(False)
+        self.start_btn.setText(c.start_btn.text())
+        self.start_btn.setEnabled(c.start_btn.isEnabled())
+        self.pred_label.setText(c.pred_label.text())
+        self.detail_label.setText(c.detail_label.text())
 
     def _do_command(self, command: str) -> None:
         """Ejecuta una acción del D-pad sobre el brazo y refresca todo."""
@@ -279,10 +370,11 @@ class SimArmView(QWidget):
     """Vista del brazo simulado: 3D (si hay OpenGL) + proyecciones 2D + estado."""
 
     def __init__(self, arm: SimulatedArm | None = None, on_change=None,
-                 parent=None) -> None:
+                 parent=None, control=None) -> None:
         super().__init__(parent)
         self.arm = arm or SimulatedArm()
         self._on_change = on_change            # avisa al panel al mover el brazo por clic
+        self._control = control                # panel de Control (para la pantalla completa)
         self._fs: _ArmFullscreen | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -346,7 +438,8 @@ class SimArmView(QWidget):
     def _open_fullscreen(self) -> None:
         if self._fs is not None:
             self._fs.close()
-        self._fs = _ArmFullscreen(self.arm, on_change=self._on_change)
+        self._fs = _ArmFullscreen(self.arm, on_change=self._on_change,
+                                  control=self._control)
         self._fs.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._fs.destroyed.connect(self._on_fs_closed)
         self._fs.showFullScreen()

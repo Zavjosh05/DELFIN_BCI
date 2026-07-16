@@ -15,6 +15,12 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-15]
 
 ### Añadido
+- **Control en tiempo real desde la pantalla completa del brazo simulado**: la
+  ventana a pantalla completa incluye ahora **selector de modelo**, botón
+  **Iniciar/Detener control** y el **comando predicho en grande** (con su confianza),
+  para poder hacer una demo sin volver al panel. **Delega** en el panel de *Control*
+  (mismo modelo, mismo botón, mismo bucle): no hay un segundo clasificador, y elegir
+  el modelo en cualquiera de los dos sitios lo cambia en el otro.
 - **Aumento de datos (*data augmentation*)**: nueva sección **«Aumento de datos (solo al
   entrenar)»** en el panel de *Clasificación*. Genera **copias perturbadas** de los
   ensayos para que el modelo aprenda el patrón y no el ensayo concreto — útil con pocos
