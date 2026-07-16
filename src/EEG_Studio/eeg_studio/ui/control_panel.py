@@ -127,7 +127,11 @@ class ControlPanel(QWidget):
         self.window.setRange(16, 8192)
         self.window.setSingleStep(32)
         self.window.setValue(ONLINE_WINDOW_SAMPLES)
-        self.window.setToolTip("Muestras por ventana a clasificar.")
+        self.window.setToolTip(
+            "Nº de muestras (no milisegundos) del último tramo de señal que se clasifica "
+            "cada vez. Su duración = muestras ÷ frecuencia de muestreo: p. ej. 256 muestras "
+            "a 128 Hz (Emotiv EPOC+) = 2 s. Ventanas más largas = más contexto pero más "
+            "lento en reaccionar.")
         self.interval = QSpinBox()
         self.interval.setRange(20, 5000)
         self.interval.setValue(ONLINE_INTERVAL_MS)
@@ -151,8 +155,10 @@ class ControlPanel(QWidget):
         self.min_conf.setSuffix(" %")
         self.min_conf.setValue(int(round(ONLINE_MIN_CONFIDENCE * 100)))
         self.min_conf.setToolTip(
-            "Las predicciones por debajo de esta confianza se ignoran (no cuentan "
-            "para la confirmación). 0 = aceptar todas.\n"
+            "Confianza = probabilidad que el modelo asigna a la clase que predice (el "
+            "máximo de sus probabilidades por clase). P. ej. si dice 72% «arriba», la "
+            "confianza es 72%. Las predicciones por debajo de este umbral se ignoran (no "
+            "cuentan para la confirmación) y cortan la racha. 0 = aceptar todas.\n"
             "Si el modelo no da probabilidades, este filtro no se aplica.")
         self.hold_ms = QSpinBox()
         self.hold_ms.setRange(0, 10000)

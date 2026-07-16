@@ -15,13 +15,16 @@ cambios se agrupan por fecha de trabajo.
 ## [2026-07-16]
 
 ### Añadido
-- **La pantalla completa del brazo permite configurar la ventana y la duración de la
-  acción**: además del selector de modelo y el botón de iniciar/detener, el control en vivo
-  de la pantalla completa incluye ahora **«Ventana (muestras)»** y **«Duración de la
-  acción»**, para ajustarlos sin volver al panel de *Control*. Son los MISMOS ajustes
-  (fuente de verdad única): cambiarlos en un sitio los cambia en el otro. Como en el panel,
-  la ventana se deshabilita mientras el control corre (queda fija al arrancar) y la duración
-  de la acción se puede tocar en marcha. Cubierto por `sim_arm_smoke` [9e].
+- **La pantalla completa del brazo permite configurar la confianza mínima, la ventana y la
+  duración de la acción**: además del selector de modelo y el botón de iniciar/detener, el
+  control en vivo de la pantalla completa incluye ahora **«Confianza mínima»**, **«Ventana
+  (muestras)»** y **«Duración de la acción»**, para ajustarlos sin volver al panel de
+  *Control*. Son los MISMOS ajustes (fuente de verdad única): cambiarlos en un sitio los
+  cambia en el otro. Como en el panel, la ventana se deshabilita mientras el control corre
+  (queda fija al arrancar) y la confianza/duración se pueden tocar en marcha. Tooltips
+  aclarados: la **confianza** es la probabilidad que el modelo da a la clase predicha, y la
+  **ventana** se mide en muestras (duración = muestras ÷ frecuencia de muestreo). Cubierto
+  por `sim_arm_smoke` [9e].
 - **Modo planar (2D) del brazo simulado**: casilla que hace que el efector se mueva sobre
   un **plano vertical colocado ENFRENTE del brazo** (perpendicular a la dirección hacia
   adelante), como una «pantalla» 2D: **arriba/abajo = altura**, **izquierda/derecha =

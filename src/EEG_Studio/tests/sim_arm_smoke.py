@@ -219,22 +219,27 @@ def main() -> int:
     fs._sync_control()
     assert fs.pred_label.text() == "arriba  (87%)", fs.pred_label.text()
     assert fs.start_btn.text() == cp.start_btn.text()
-    # Ventana y duración de la acción son configurables desde la pantalla completa y
-    # delegan en el panel (fuente de verdad única), en ambos sentidos.
+    # Confianza mínima, ventana y duración de la acción son configurables desde la pantalla
+    # completa y delegan en el panel (fuente de verdad única), en ambos sentidos.
     assert fs.window_spin.value() == cp.window.value(), "la ventana inicial debe reflejar el panel"
+    assert fs.conf_spin.value() == cp.min_conf.value(), "la confianza inicial debe reflejar el panel"
+    fs.conf_spin.setValue(75)
     fs.window_spin.setValue(384)
     fs.hold_spin.setValue(2000)
+    assert cp.min_conf.value() == 75, "la FS debe cambiar la confianza del panel"
     assert cp.window.value() == 384 and cp.hold_ms.value() == 2000, "la FS debe cambiar el panel"
     cp.window.setValue(512)
+    cp.min_conf.setValue(40)
     fs._sync_control()
-    assert fs.window_spin.value() == 512, "el panel debe reflejarse en la FS"
-    # Durante el control, la ventana se deshabilita (como en el panel); la duración no.
+    assert fs.window_spin.value() == 512 and fs.conf_spin.value() == 40, "el panel debe reflejarse en la FS"
+    # Durante el control, la ventana se deshabilita (como en el panel); confianza y duración no.
     cp._set_inputs_enabled(False)
     fs._sync_control()
-    assert not fs.window_spin.isEnabled() and fs.hold_spin.isEnabled(), \
-        "en marcha: ventana fija, duración ajustable"
+    assert not fs.window_spin.isEnabled(), "en marcha la ventana queda fija"
+    assert fs.conf_spin.isEnabled() and fs.hold_spin.isEnabled(), \
+        "confianza y duración se ajustan en marcha"
     cp._set_inputs_enabled(True)
-    print(f"    modelos={len(en_fs)} · ventana/duración configurables · sin bucle duplicado ✓")
+    print(f"    modelos={len(en_fs)} · confianza/ventana/duración configurables · sin bucle duplicado ✓")
     fs.close()
     app.processEvents()
 

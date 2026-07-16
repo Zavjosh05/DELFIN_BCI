@@ -327,15 +327,22 @@ class _ArmFullscreen(QWidget):
         row.addWidget(self.model_combo, 1)
         lay.addLayout(row)
 
-        # Ventana y duración de la acción, para configurarlas sin volver al panel. Son
-        # los MISMOS ajustes del panel de Control (fuente de verdad única): cambiarlos
-        # aquí los cambia allí. `window` queda deshabilitado mientras el control corre
-        # (igual que en el panel); la duración de la acción se puede tocar en marcha.
+        # Confianza mínima, ventana y duración de la acción, para configurarlas sin volver
+        # al panel. Son los MISMOS ajustes del panel de Control (fuente de verdad única):
+        # cambiarlos aquí los cambia allí. `window` queda deshabilitado mientras el control
+        # corre (igual que en el panel); confianza y duración se pueden tocar en marcha.
         cfg = QFormLayout()
+        self.conf_spin = QSpinBox()
+        self.conf_spin.setRange(0, 99)
+        self.conf_spin.setSuffix(" %")
+        self.conf_spin.setToolTip("Confianza mínima (probabilidad de la clase predicha) para "
+                                  "tener en cuenta una predicción; por debajo se ignora. "
+                                  "0 = aceptar todas. Mismo ajuste que el panel.")
         self.window_spin = QSpinBox()
         self.window_spin.setRange(16, 8192)
         self.window_spin.setSingleStep(32)
-        self.window_spin.setToolTip("Muestras por ventana a clasificar (mismo ajuste que el panel).")
+        self.window_spin.setToolTip("Muestras del tramo de señal que se clasifica cada vez "
+                                    "(duración = muestras ÷ frecuencia). Mismo ajuste que el panel.")
         self.hold_spin = QSpinBox()
         self.hold_spin.setRange(0, 10000)
         self.hold_spin.setSingleStep(250)
@@ -344,10 +351,13 @@ class _ArmFullscreen(QWidget):
                                   "ventana (0 = reaccionar a cada confirmación). Mismo ajuste "
                                   "que el panel.")
         if self._control is not None:                # valores iniciales antes de conectar
+            self.conf_spin.setValue(self._control.min_conf.value())
             self.window_spin.setValue(self._control.window.value())
             self.hold_spin.setValue(self._control.hold_ms.value())
+        self.conf_spin.valueChanged.connect(self._on_conf_changed)
         self.window_spin.valueChanged.connect(self._on_window_changed)
         self.hold_spin.valueChanged.connect(self._on_hold_changed)
+        cfg.addRow("Confianza mínima:", self.conf_spin)
         cfg.addRow("Ventana (muestras):", self.window_spin)
         cfg.addRow("Duración de la acción:", self.hold_spin)
         lay.addLayout(cfg)
@@ -380,6 +390,11 @@ class _ArmFullscreen(QWidget):
         i = self._control.model_combo.findData(name)
         if i >= 0 and i != self._control.model_combo.currentIndex():
             self._control.model_combo.setCurrentIndex(i)
+
+    def _on_conf_changed(self, v: int) -> None:
+        """La confianza mínima se cambia aquí -> se cambia en el panel."""
+        if self._control is not None and self._control.min_conf.value() != v:
+            self._control.min_conf.setValue(v)
 
     def _on_window_changed(self, v: int) -> None:
         """La ventana se cambia aquí -> se cambia en el panel (fuente de verdad única)."""
@@ -416,9 +431,10 @@ class _ArmFullscreen(QWidget):
                 self.model_combo.blockSignals(True)
                 self.model_combo.setCurrentIndex(i)
                 self.model_combo.blockSignals(False)
-        # Ventana y duración de la acción: reflejan el panel (valor y si está habilitado;
+        # Confianza, ventana y duración: reflejan el panel (valor y si está habilitado;
         # el panel deshabilita la ventana mientras el control corre).
-        for src, dst in ((c.window, self.window_spin), (c.hold_ms, self.hold_spin)):
+        for src, dst in ((c.min_conf, self.conf_spin), (c.window, self.window_spin),
+                         (c.hold_ms, self.hold_spin)):
             if dst.value() != src.value():
                 dst.blockSignals(True)
                 dst.setValue(src.value())
