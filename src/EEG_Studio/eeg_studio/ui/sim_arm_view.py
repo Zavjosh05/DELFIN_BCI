@@ -13,6 +13,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -338,11 +339,15 @@ class _ArmFullscreen(QWidget):
         self.conf_spin.setToolTip("Confianza mínima (probabilidad de la clase predicha) para "
                                   "tener en cuenta una predicción; por debajo se ignora. "
                                   "0 = aceptar todas. Mismo ajuste que el panel.")
-        self.window_spin = QSpinBox()
-        self.window_spin.setRange(16, 8192)
-        self.window_spin.setSingleStep(32)
-        self.window_spin.setToolTip("Muestras del tramo de señal que se clasifica cada vez "
-                                    "(duración = muestras ÷ frecuencia). Mismo ajuste que el panel.")
+        self.window_sec = QDoubleSpinBox()
+        self.window_sec.setRange(0.1, 30.0)
+        self.window_sec.setSingleStep(0.25)
+        self.window_sec.setDecimals(2)
+        self.window_sec.setSuffix(" s")
+        self.window_sec.setToolTip("Duración del tramo de señal que se clasifica cada vez "
+                                   "(al lado, a cuántas muestras equivale). Mismo ajuste que el panel.")
+        self.window_samples_lbl = QLabel()
+        self.window_samples_lbl.setStyleSheet(f"color: {MUTED};")
         self.hold_spin = QSpinBox()
         self.hold_spin.setRange(0, 10000)
         self.hold_spin.setSingleStep(250)
@@ -352,13 +357,19 @@ class _ArmFullscreen(QWidget):
                                   "que el panel.")
         if self._control is not None:                # valores iniciales antes de conectar
             self.conf_spin.setValue(self._control.min_conf.value())
-            self.window_spin.setValue(self._control.window.value())
+            self.window_sec.setValue(self._control.window_sec.value())
+            self.window_samples_lbl.setText(self._control.window_samples_lbl.text())
             self.hold_spin.setValue(self._control.hold_ms.value())
         self.conf_spin.valueChanged.connect(self._on_conf_changed)
-        self.window_spin.valueChanged.connect(self._on_window_changed)
+        self.window_sec.valueChanged.connect(self._on_window_changed)
         self.hold_spin.valueChanged.connect(self._on_hold_changed)
+        wrow = QHBoxLayout()
+        wrow.setContentsMargins(0, 0, 0, 0)
+        wrow.addWidget(self.window_sec)
+        wrow.addWidget(self.window_samples_lbl)
+        wrow.addStretch(1)
         cfg.addRow("Confianza mínima:", self.conf_spin)
-        cfg.addRow("Ventana (muestras):", self.window_spin)
+        cfg.addRow("Ventana:", wrow)
         cfg.addRow("Duración de la acción:", self.hold_spin)
         lay.addLayout(cfg)
 
@@ -396,10 +407,10 @@ class _ArmFullscreen(QWidget):
         if self._control is not None and self._control.min_conf.value() != v:
             self._control.min_conf.setValue(v)
 
-    def _on_window_changed(self, v: int) -> None:
-        """La ventana se cambia aquí -> se cambia en el panel (fuente de verdad única)."""
-        if self._control is not None and self._control.window.value() != v:
-            self._control.window.setValue(v)
+    def _on_window_changed(self, v: float) -> None:
+        """La ventana (segundos) se cambia aquí -> se cambia en el panel (fuente única)."""
+        if self._control is not None and abs(self._control.window_sec.value() - v) > 1e-9:
+            self._control.window_sec.setValue(v)
 
     def _on_hold_changed(self, v: int) -> None:
         """La duración de la acción se cambia aquí -> se cambia en el panel."""
@@ -433,13 +444,14 @@ class _ArmFullscreen(QWidget):
                 self.model_combo.blockSignals(False)
         # Confianza, ventana y duración: reflejan el panel (valor y si está habilitado;
         # el panel deshabilita la ventana mientras el control corre).
-        for src, dst in ((c.min_conf, self.conf_spin), (c.window, self.window_spin),
+        for src, dst in ((c.min_conf, self.conf_spin), (c.window_sec, self.window_sec),
                          (c.hold_ms, self.hold_spin)):
             if dst.value() != src.value():
                 dst.blockSignals(True)
                 dst.setValue(src.value())
                 dst.blockSignals(False)
             dst.setEnabled(src.isEnabled())
+        self.window_samples_lbl.setText(c.window_samples_lbl.text())   # "= N muestras"
         self.start_btn.setText(c.start_btn.text())
         self.start_btn.setEnabled(c.start_btn.isEnabled())
         self.pred_label.setText(c.pred_label.text())

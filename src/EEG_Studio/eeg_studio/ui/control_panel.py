@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QDoubleSpinBox,
     QPushButton,
     QSlider,
     QSpinBox,
@@ -48,6 +49,7 @@ from .sim_arm_view import SimArmView
 from ..core import stim as stim_core
 from ..core.csv_loader import load_recording
 from ..config import (
+    DEFAULT_SAMPLE_RATE,
     ONLINE_HOLD_MS,
     ONLINE_INTERVAL_MS,
     ONLINE_MIN_CONFIDENCE,
@@ -123,15 +125,28 @@ class ControlPanel(QWidget):
         # Parámetros de inferencia.
         cfg = QGroupBox("Inferencia")
         form = QFormLayout(cfg)
-        self.window = QSpinBox()
-        self.window.setRange(16, 8192)
-        self.window.setSingleStep(32)
-        self.window.setValue(ONLINE_WINDOW_SAMPLES)
-        self.window.setToolTip(
-            "Nº de muestras (no milisegundos) del último tramo de señal que se clasifica "
-            "cada vez. Su duración = muestras ÷ frecuencia de muestreo: p. ej. 256 muestras "
-            "a 128 Hz (Emotiv EPOC+) = 2 s. Ventanas más largas = más contexto pero más "
-            "lento en reaccionar.")
+        self.window_sec = QDoubleSpinBox()
+        self.window_sec.setRange(0.1, 30.0)
+        self.window_sec.setSingleStep(0.25)
+        self.window_sec.setDecimals(2)
+        self.window_sec.setSuffix(" s")
+        self.window_sec.setValue(ONLINE_WINDOW_SAMPLES / DEFAULT_SAMPLE_RATE)   # 2 s por defecto
+        self.window_sec.setToolTip(
+            "Duración del último tramo de señal que se clasifica cada vez. Se convierte a "
+            "muestras con la frecuencia de muestreo de la fuente (muestras = segundos × "
+            "frecuencia); al lado se muestra a cuántas equivale. Ventanas más largas = más "
+            "contexto pero más lento en reaccionar.")
+        self.window_samples_lbl = QLabel()
+        self.window_samples_lbl.setStyleSheet("color: #8a929b;")
+        self.window_samples_lbl.setToolTip("Muestras equivalentes a la frecuencia de la "
+                                            "fuente conectada (o 128 Hz por defecto).")
+        _wrow = QHBoxLayout()
+        _wrow.setContentsMargins(0, 0, 0, 0)
+        _wrow.addWidget(self.window_sec)
+        _wrow.addWidget(self.window_samples_lbl)
+        _wrow.addStretch(1)
+        self.window_sec.valueChanged.connect(self._update_window_label)
+        self._update_window_label()
         self.interval = QSpinBox()
         self.interval.setRange(20, 5000)
         self.interval.setValue(ONLINE_INTERVAL_MS)
@@ -141,7 +156,7 @@ class ControlPanel(QWidget):
         self.smooth_k.setValue(ONLINE_SMOOTH_K)
         self.smooth_k.setToolTip("Predicciones iguales seguidas para confirmar una clase "
                                  "(evita que el controlador oscile).")
-        form.addRow("Ventana (muestras):", self.window)
+        form.addRow("Ventana:", _wrow)
         form.addRow("Intervalo (ms):", self.interval)
         form.addRow("Confirmación (K):", self.smooth_k)
         layout.addWidget(cfg)
@@ -324,12 +339,13 @@ class ControlPanel(QWidget):
             return
         path = self._file_path
         project = self.controller.project
-        win = self.window.value()
+        win_sec = self.window_sec.value()
         # Clase esperada del nombre del archivo (p. ej. «Sujeto001_Abajo» -> «abajo»).
         expected = stim_core.class_from_filename(os.path.basename(path))
 
         def job():
             rec = load_recording(path)
+            win = max(1, int(round(win_sec * rec.sample_rate)))   # segundos -> muestras del archivo
             gt = None
             if expected is not None:                 # verdad-terreno constante = clase del nombre
                 gt = np.full(rec.n_samples, expected, dtype=object)
@@ -641,6 +657,24 @@ class ControlPanel(QWidget):
         self.sink_params.setCurrentIndex(idx)
 
     # ------------------------------------------------------------------ #
+    def _reference_fs(self) -> float:
+        """Frecuencia de muestreo para convertir la ventana (segundos↔muestras): la de la
+        fuente en vivo si está transmitiendo, si no la de referencia (128 Hz, EPOC+)."""
+        acq = getattr(self.controller, "acq_panel", None)
+        if acq is not None and acq.is_streaming():
+            fs = acq.stream_fs()
+            if fs:
+                return float(fs)
+        return DEFAULT_SAMPLE_RATE
+
+    def _window_samples(self, fs: float | None = None) -> int:
+        """Ventana en muestras a la frecuencia dada (o la de referencia)."""
+        return max(1, int(round(self.window_sec.value() * (fs or self._reference_fs()))))
+
+    def _update_window_label(self, *_) -> None:
+        """Muestra a cuántas muestras equivale la ventana (a la frecuencia de referencia)."""
+        self.window_samples_lbl.setText(f"= {self._window_samples()} muestras")
+
     def _selected_model(self):
         return self.controller.models.get(self.model_combo.currentData())
 
@@ -672,7 +706,9 @@ class ControlPanel(QWidget):
         if model.classes != self._classes:
             self._build_class_rows(model.classes)
         if model.input_kind == "raw" and model.nn_config:
-            self.window.setValue(int(model.nn_config.get("window_samples", self.window.value())))
+            ws = int(model.nn_config.get("window_samples", 0))
+            if ws:                                   # ajustar la ventana (en s) a la del modelo
+                self.window_sec.setValue(ws / self._reference_fs())
         self.start_btn.setEnabled(True)
         if hasattr(self, "file_btn"):
             self.file_btn.setEnabled(True)
@@ -744,6 +780,7 @@ class ControlPanel(QWidget):
         self.start_btn.setText("Detener control")
         self.detail_label.setText("Control en marcha…")
         self._set_inputs_enabled(False)
+        self._update_window_label()      # ya hay fuente en vivo: usar su frecuencia real
 
     def _stop(self) -> None:
         self._timer.stop()
@@ -759,6 +796,7 @@ class ControlPanel(QWidget):
         self.start_btn.setText("Iniciar control")
         self.detail_label.setText("Detenido.")
         self._set_inputs_enabled(True)
+        self._update_window_label()      # vuelve a la frecuencia de referencia
 
     def _sink_kwargs(self) -> dict:
         kind = self.sink_combo.currentData()
@@ -777,7 +815,7 @@ class ControlPanel(QWidget):
         # ajustes que uno quiere afinar viendo el control funcionar, y ninguno se
         # lee al arrancar (se consultan en cada tick), así que cambiarlos en marcha
         # es seguro y surte efecto al momento.
-        for w in (self.window, self.interval, self.smooth_k, self.sink_combo,
+        for w in (self.window_sec, self.interval, self.smooth_k, self.sink_combo,
                   self.map_box, self.profile_combo, self.file_btn):
             w.setEnabled(enabled)
 
@@ -805,7 +843,7 @@ class ControlPanel(QWidget):
         if self._inflight:
             self._dropped += 1      # la clasificación va más lenta que el timer: se salta
             return
-        window = acq.latest_window(self.window.value())
+        window = acq.latest_window(self._window_samples(acq.stream_fs()))
         if window is None:
             return   # aún no hay suficientes muestras
 

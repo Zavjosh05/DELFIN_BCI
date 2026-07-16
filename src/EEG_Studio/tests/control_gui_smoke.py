@@ -59,7 +59,7 @@ def main(csv_path) -> int:
 
     print("[3] Iniciando el control (salida de registro, K=1)")
     cp = win.control_panel
-    cp.window.setValue(128)
+    cp.window_sec.setValue(1.0)          # 1 s (= 128 muestras a 128 Hz)
     cp.smooth_k.setValue(1)
     # El modelo de esta prueba se entrena con 6 segmentos de una señal cualquiera:
     # predice ~al azar (≈54% con dos clases), así que el umbral de confianza por

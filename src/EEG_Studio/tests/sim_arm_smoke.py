@@ -219,27 +219,29 @@ def main() -> int:
     fs._sync_control()
     assert fs.pred_label.text() == "arriba  (87%)", fs.pred_label.text()
     assert fs.start_btn.text() == cp.start_btn.text()
-    # Confianza mínima, ventana y duración de la acción son configurables desde la pantalla
-    # completa y delegan en el panel (fuente de verdad única), en ambos sentidos.
-    assert fs.window_spin.value() == cp.window.value(), "la ventana inicial debe reflejar el panel"
+    # Confianza mínima, ventana (en SEGUNDOS) y duración de la acción son configurables desde
+    # la pantalla completa y delegan en el panel (fuente de verdad única), en ambos sentidos.
+    assert abs(fs.window_sec.value() - cp.window_sec.value()) < 1e-9, "la ventana inicial debe reflejar el panel"
     assert fs.conf_spin.value() == cp.min_conf.value(), "la confianza inicial debe reflejar el panel"
+    assert "muestras" in fs.window_samples_lbl.text(), "debe mostrar a cuántas muestras equivale"
     fs.conf_spin.setValue(75)
-    fs.window_spin.setValue(384)
+    fs.window_sec.setValue(3.0)
     fs.hold_spin.setValue(2000)
     assert cp.min_conf.value() == 75, "la FS debe cambiar la confianza del panel"
-    assert cp.window.value() == 384 and cp.hold_ms.value() == 2000, "la FS debe cambiar el panel"
-    cp.window.setValue(512)
+    assert abs(cp.window_sec.value() - 3.0) < 1e-9 and cp.hold_ms.value() == 2000, "la FS debe cambiar el panel"
+    cp.window_sec.setValue(4.0)
     cp.min_conf.setValue(40)
     fs._sync_control()
-    assert fs.window_spin.value() == 512 and fs.conf_spin.value() == 40, "el panel debe reflejarse en la FS"
+    assert abs(fs.window_sec.value() - 4.0) < 1e-9 and fs.conf_spin.value() == 40, "el panel debe reflejarse en la FS"
+    assert fs.window_samples_lbl.text() == cp.window_samples_lbl.text(), "la etiqueta de muestras se refleja"
     # Durante el control, la ventana se deshabilita (como en el panel); confianza y duración no.
     cp._set_inputs_enabled(False)
     fs._sync_control()
-    assert not fs.window_spin.isEnabled(), "en marcha la ventana queda fija"
+    assert not fs.window_sec.isEnabled(), "en marcha la ventana queda fija"
     assert fs.conf_spin.isEnabled() and fs.hold_spin.isEnabled(), \
         "confianza y duración se ajustan en marcha"
     cp._set_inputs_enabled(True)
-    print(f"    modelos={len(en_fs)} · confianza/ventana/duración configurables · sin bucle duplicado ✓")
+    print(f"    modelos={len(en_fs)} · confianza/ventana(s)/duración configurables · sin bucle duplicado ✓")
     fs.close()
     app.processEvents()
 

@@ -489,9 +489,9 @@ detectada a un controlador externo (brazo robótico, carrito…). Pestaña **Con
 1. Entrena o importa uno o varios modelos (pestaña *Clasificación*).
 2. Conecta una fuente en la pestaña **Tiempo real** (Simulado, LSL, Emotiv, CyKit).
 3. En **Control**: elige el **modelo** (si el proyecto tiene varios), ajusta la
-   **ventana** (muestras a clasificar), el **intervalo**
-   y la **confirmación K** (nº de predicciones iguales seguidas para confirmar una
-   clase — evita que el controlador oscile).
+   **ventana** (en **segundos**; al lado se indica a cuántas muestras equivale según la
+   frecuencia de la fuente), el **intervalo** y la **confirmación K** (nº de predicciones
+   iguales seguidas para confirmar una clase — evita que el controlador oscile).
 4. Ajusta la **estabilidad del comando** (ver abajo).
 5. Define el **comando por clase** (texto que se envía por cada clase; por defecto
    el nombre de la clase).

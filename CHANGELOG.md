@@ -14,6 +14,15 @@ cambios se agrupan por fecha de trabajo.
 
 ## [2026-07-16]
 
+### Cambiado
+- **La ventana del control en tiempo real se configura en SEGUNDOS** (antes en muestras), con
+  un texto al lado que muestra a **cuántas muestras equivale** (según la frecuencia de la
+  fuente conectada, o 128 Hz por defecto). Internamente se sigue clasificando por muestras:
+  la conversión usa la frecuencia real del stream en cada ventana. Pensar en segundos es más
+  intuitivo (2 s en lugar de «256 muestras a 128 Hz»). El cambio está en el panel y en la
+  pantalla completa (mismo ajuste, un solo estado). Cubierto por `control_gui_smoke` y
+  `sim_arm_smoke` [9e].
+
 ### Añadido
 - **La pantalla completa del brazo permite configurar la confianza mínima, la ventana y la
   duración de la acción**: además del selector de modelo y el botón de iniciar/detener, el
