@@ -14,9 +14,9 @@ El objetivo final del sistema es el despliegue de modelos de Machine Learning y 
 * M. en C. Jonathan Axel Cruz Vázquez
 
 ### 👨‍💻 Equipo de Ingeniería
-* Leonardo Lagos López
 * Joshua Iván Zavaleta Guerrero
 * Matthew Steve Robbin Ruiz Pacheco
+* Leonardo Lagos López
 
 ---
 
